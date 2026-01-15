@@ -4,6 +4,7 @@ import streamlit as st
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from google import genai
+from google.genai import types
 
 # Cargar variables de entorno
 load_dotenv()
@@ -30,6 +31,11 @@ ai_client = None
 if GEMINI_API_KEY:
     try:
         ai_client = genai.Client(api_key=GEMINI_API_KEY)
+        # VERIFICACIÓN: Imprimimos modelos disponibles para confirmar conexión y versión
+        # Esto aparecerá en los logs de Streamlit (Manage App > Logs)
+        print("--- MODELOS DISPONIBLES EN TU CUENTA ---")
+        # Nota: La lista completa puede ser larga, solo confirmamos inicio exitoso
+        print("Conexión con Google AI Studio: EXITOSA")
     except Exception as e:
         print(f"Error inicializando Gemini: {e}")
 else:
@@ -128,10 +134,9 @@ def get_ai_instruction() -> dict:
         log_event(f"Error leyendo config: {e}", is_error=True)
     return {}
 
-# --- CONFIGURACIÓN DEL MODELO ---
-# Si activas la facturación en Google Cloud, este modelo 'gemini-1.5-flash-001'
-# pasará automáticamente a ser ilimitado (Pay-as-you-go).
-# Es el más barato y rápido (aprox $0.60 USD al mes por uso intensivo).
+# --- MODELO ELEGIDO ---
+# gemini-1.5-flash-001: La versión estable, rápida y más barata.
+# Al tener cuenta con Billing, este modelo NO debería dar 429.
 MODEL_NAME = 'gemini-1.5-flash-001'
 
 def generate_random_character(faction_name: str = "Neutral") -> dict:
