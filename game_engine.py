@@ -4,7 +4,6 @@ import streamlit as st
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from google import genai
-from google.genai import types
 
 # Cargar variables de entorno
 load_dotenv()
@@ -26,20 +25,17 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 # Inicializar Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Inicializar Cliente de Google GenAI
+# --- INICIALIZACIÓN DE GEMINI ---
 ai_client = None
 if GEMINI_API_KEY:
     try:
         ai_client = genai.Client(api_key=GEMINI_API_KEY)
-        # VERIFICACIÓN: Imprimimos modelos disponibles para confirmar conexión y versión
-        # Esto aparecerá en los logs de Streamlit (Manage App > Logs)
-        print("--- MODELOS DISPONIBLES EN TU CUENTA ---")
-        # Nota: La lista completa puede ser larga, solo confirmamos inicio exitoso
-        print("Conexión con Google AI Studio: EXITOSA")
+        print("✅ Cliente Gemini conectado (Modo Avanzado).")
     except Exception as e:
-        print(f"Error inicializando Gemini: {e}")
+        print(f"Error inicializando cliente Gemini: {e}")
 else:
     print("WARNING: GEMINI_API_KEY no encontrada.")
+
 
 # --- SISTEMA DE HABILIDADES (SKILLS) ---
 SKILL_MAPPING = {
@@ -116,6 +112,8 @@ def calculate_skills(attributes: dict) -> dict:
 def log_event(text: str, is_error: bool = False):
     """Guarda un evento o error en Supabase."""
     prefix = "ERROR: " if is_error else ""
+    # Imprimir en consola local también para debug rápido
+    print(f"LOG: {prefix}{text}")
     try:
         supabase.table("logs").insert({
             "turno": 1, 
@@ -134,10 +132,10 @@ def get_ai_instruction() -> dict:
         log_event(f"Error leyendo config: {e}", is_error=True)
     return {}
 
-# --- MODELO ELEGIDO ---
-# gemini-1.5-flash-001: La versión estable, rápida y más barata.
-# Al tener cuenta con Billing, este modelo NO debería dar 429.
-MODEL_NAME = 'gemini-1.5-flash-001'
+# --- MODELO ELEGIDO (SEGÚN TU DIAGNÓSTICO) ---
+# Usamos gemini-2.5-flash porque apareció VERDE en tu lista.
+# Debería ser rápido, barato y moderno.
+MODEL_NAME = 'gemini-2.5-flash'
 
 def generate_random_character(faction_name: str = "Neutral") -> dict:
     if not ai_client: return None
@@ -159,6 +157,7 @@ def generate_random_character(faction_name: str = "Neutral") -> dict:
     """
     
     try:
+        # Llamada con el modelo nuevo
         response = ai_client.models.generate_content(
             model=MODEL_NAME,
             contents=prompt
