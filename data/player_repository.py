@@ -80,3 +80,43 @@ def register_player_account(
         raise Exception("Ocurrió un error en el sistema al crear la cuenta.")
     
     return None
+
+# --- Funciones de Gestión Económica ---
+
+def get_player_credits(player_id: int) -> int:
+    """
+    Obtiene la cantidad de créditos de un jugador.
+
+    Args:
+        player_id: El ID del jugador.
+
+    Returns:
+        La cantidad de créditos. Devuelve 0 si hay un error.
+    """
+    try:
+        response = supabase.table("players").select("creditos").eq("id", player_id).single().execute()
+        if response.data:
+            return response.data.get("creditos", 0)
+        return 0
+    except Exception as e:
+        log_event(f"Error al obtener créditos para el jugador ID {player_id}: {e}", player_id, is_error=True)
+        return 0
+
+def update_player_credits(player_id: int, new_credits: int) -> bool:
+    """
+    Actualiza la cantidad de créditos de un jugador.
+
+    Args:
+        player_id: El ID del jugador.
+        new_credits: La nueva cantidad de créditos.
+
+    Returns:
+        True si la actualización fue exitosa, False en caso contrario.
+    """
+    try:
+        supabase.table("players").update({"creditos": new_credits}).eq("id", player_id).execute()
+        log_event(f"Créditos del jugador ID {player_id} actualizados a {new_credits}.", player_id)
+        return True
+    except Exception as e:
+        log_event(f"Error al actualizar créditos para el jugador ID {player_id}: {e}", player_id, is_error=True)
+        return False

@@ -1,51 +1,98 @@
 # ui/main_game_page.py
 import streamlit as st
-from .state import logout_user
+from .state import logout_user, get_player, get_commander
 from data.log_repository import get_recent_logs
 from services.gemini_service import resolve_player_action
 
-def render_main_game_page(cookie_manager): # <--- Recibe el cookie_manager
-    # ... (Resto del código igual) ...
-    player = st.session_state.player_data
-    commander = st.session_state.commander_data
-    
-    stats = commander.get('stats_json', {}) if commander else {}
-    bio = stats.get('bio', {})
-    nombre_comandante = bio.get('nombre', 'Desconocido')
+# --- Importar las nuevas vistas ---
+from .faction_roster import show_faction_roster
+from .recruitment_center import show_recruitment_center
 
-    st.markdown(f"## Facción: {player['faccion_nombre']} | Comandante: {nombre_comandante}")
-    if player.get('banner_url'):
-        st.image(player['banner_url'], width=150)
 
-    _render_sidebar(bio, cookie_manager) # Pasamos el manager al sidebar
-    
-    tab_guerra, tab_datos = st.tabs(["Sala de Guerra", "Datos del Comandante"])
-    # ... (Resto de tabs igual) ...
-    with tab_guerra:
-        _render_war_room(nombre_comandante, player['id'])
+def render_main_game_page(cookie_manager):
+    """
+    Página principal del juego con navegación por sidebar.
+    """
+    player = get_player()
+    commander = get_commander()
 
-    with tab_datos:
-        _render_commander_sheet(stats)
+    if not player or not commander:
+        st.error("No se pudieron cargar los datos del jugador o comandante. Por favor, reinicia la sesión.")
+        return
 
-def _render_sidebar(bio: dict, cookie_manager):
-    st.sidebar.header("Terminal de Mando")
-    st.sidebar.success(f"Líder: {bio.get('nombre', 'N/A')}")
-    st.sidebar.info(f"Clase: {bio.get('clase', 'N/A')} | Raza: {bio.get('raza', 'N/A')}")
-    
-    if st.sidebar.button("Cerrar Sesión"):
-        logout_user(cookie_manager) # <--- Usamos el manager para borrar cookie
+    # --- Renderizar el Sidebar de Navegación ---
+    # Usamos st.session_state para guardar la página actual
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = "Puente de Mando"
         
-    st.sidebar.divider()
+    _render_navigation_sidebar(player, commander, cookie_manager)
 
-# ... (El resto de funciones auxiliares _render_war_room y _render_commander_sheet siguen igual)
-def _render_war_room(nombre_comandante: str, player_id: int):
+    # --- Renderizar la página seleccionada ---
+    # Mapeo de nombres de página a funciones que las renderizan
+    PAGES = {
+        "Puente de Mando": _render_war_room_page,
+        "Ficha del Comandante": _render_commander_sheet_page,
+        "Comando de Facción": show_faction_roster,
+        "Centro de Reclutamiento": show_recruitment_center,
+    }
+    
+    # Llama a la función correspondiente a la página seleccionada
+    render_func = PAGES.get(st.session_state.current_page, _render_war_room_page)
+    render_func()
+
+
+def _render_navigation_sidebar(player, commander, cookie_manager):
+    """Dibuja el sidebar con la información y los botones de navegación."""
+    with st.sidebar:
+        st.header(f"Facción: {player['faccion_nombre']}")
+        if player.get('banner_url'):
+            st.image(player['banner_url'], use_column_width=True)
+
+        st.subheader(f"Comandante: {commander['nombre']}")
+        
+        st.divider()
+        st.header("Navegación")
+
+        # Botones para cambiar de página
+        if st.button("Puente de Mando", use_container_width=True, type="primary" if st.session_state.current_page == "Puente de Mando" else "secondary"):
+            st.session_state.current_page = "Puente de Mando"
+            st.rerun()
+
+        if st.button("Ficha del Comandante", use_container_width=True, type="primary" if st.session_state.current_page == "Ficha del Comandante" else "secondary"):
+            st.session_state.current_page = "Ficha del Comandante"
+            st.rerun()
+
+        if st.button("Comando de Facción", use_container_width=True, type="primary" if st.session_state.current_page == "Comando de Facción" else "secondary"):
+            st.session_state.current_page = "Comando de Facción"
+            st.rerun()
+
+        if st.button("Centro de Reclutamiento", use_container_width=True, type="primary" if st.session_state.current_page == "Centro de Reclutamiento" else "secondary"):
+            st.session_state.current_page = "Centro de Reclutamiento"
+            st.rerun()
+
+        st.divider()
+        if st.button("Cerrar Sesión", use_container_width=True):
+            logout_user(cookie_manager)
+            st.rerun()
+
+
+# --- Adaptaciones de las vistas originales a funciones de página completas ---
+
+def _render_war_room_page():
+    """Página del Puente de Mando (antes tab 'Sala de Guerra')."""
+    st.title("Puente de Mando")
     st.subheader("Bitácora de Misión")
+    
+    player_id = get_player()['id']
+    commander_name = get_commander()['nombre']
+    
     log_container = st.container(height=300)
-    logs = get_recent_logs()
+    logs = get_recent_logs(player_id) # Asegurarse de pasar el player_id si es necesario
     for log in reversed(logs):
         if "ERROR" not in log['evento_texto']:
             log_container.chat_message("assistant", avatar="📜").write(log['evento_texto'])
-    action = st.chat_input(f"¿Órdenes, Comandante {nombre_comandante}?")
+            
+    action = st.chat_input(f"¿Órdenes, Comandante {commander_name}?")
     if action:
         with st.spinner("Transmitiendo órdenes..."):
             try:
@@ -54,14 +101,23 @@ def _render_war_room(nombre_comandante: str, player_id: int):
             except Exception as e:
                 st.error(f"⚠️ Error: {e}")
 
-def _render_commander_sheet(stats: dict):
-    st.subheader("Hoja de Servicio")
+def _render_commander_sheet_page():
+    """Página de la Ficha del Comandante (antes tab 'Datos')."""
+    st.title("Ficha de Servicio del Comandante")
+    
+    commander = get_commander()
+    stats = commander.get('stats_json', {})
+    
+    st.header(f"Informe de {commander['nombre']}")
+    
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("### Atributos")
-        st.json(stats.get('atributos', {}))
+        st.subheader("Biografía")
+        st.write(stats.get('bio', {}))
+
     with col2:
-        st.markdown("### Habilidades")
-        st.json(stats.get('habilidades', {}))
-    st.markdown("### Biografía")
-    st.write(stats.get('bio', {}))
+        st.subheader("Atributos")
+        st.json(stats.get('atributos', {}))
+
+    st.subheader("Habilidades")
+    st.json(stats.get('habilidades', {}))

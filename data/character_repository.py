@@ -69,6 +69,41 @@ def create_commander(
         log_event(f"Error creando comandante para el jugador ID {player_id}: {e}", player_id, is_error=True)
         raise Exception("Error del sistema al guardar el comandante.")
 
+def create_character(player_id: int, character_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Crea un nuevo personaje (no comandante) en la base de datos.
+    Usado para reclutamiento.
+
+    Args:
+        player_id: El ID del jugador que recluta.
+        character_data: Diccionario con los datos del nuevo personaje,
+                        preparado por recruitment_logic.
+
+    Returns:
+        El objeto del personaje creado o None si falla.
+    """
+    try:
+        # La lógica de negocio (cálculo de habilidades) se aplica aquí también
+        attributes = character_data.get("stats_json", {}).get("atributos", {})
+        habilidades = calculate_skills(attributes)
+        
+        # Asegurarse de que el JSON de stats esté completo
+        if "habilidades" not in character_data.get("stats_json", {}):
+            character_data["stats_json"]["habilidades"] = habilidades
+
+        response = supabase.table("characters").insert(character_data).execute()
+        
+        if response.data:
+            nombre = character_data.get('nombre', 'Nuevo Recluta')
+            log_event(f"Nuevo personaje '{nombre}' reclutado por el jugador ID {player_id}.", player_id)
+            return response.data[0]
+        return None
+
+    except Exception as e:
+        log_event(f"Error reclutando personaje para el jugador ID {player_id}: {e}", player_id, is_error=True)
+        raise Exception("Error del sistema al guardar el nuevo personaje.")
+
+
 def get_all_characters_by_player_id(player_id: int) -> list[Dict[str, Any]]:
     """
     Obtiene todos los personajes (no solo el comandante) de un jugador.
