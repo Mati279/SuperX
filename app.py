@@ -21,15 +21,27 @@ if 'commander_data' not in st.session_state:
 
 # Variables para el flujo de registro
 if 'is_registering' not in st.session_state:
-    st.session_state.is_registering = False  # NUEVO: Control maestro del modo registro
+    st.session_state.is_registering = False 
 if 'registration_step' not in st.session_state:
-    st.session_state.registration_step = 0 # 0: Auth, 1: Bio, 2: Atributos
+    st.session_state.registration_step = 0 
 if 'temp_player' not in st.session_state:
     st.session_state.temp_player = None 
 if 'temp_char_bio' not in st.session_state:
     st.session_state.temp_char_bio = {} 
 
-# --- MAIN GAME UI (Solo si ya está logueado y con personaje) ---
+# --- Helpers de Lógica de Atributos ---
+def calculate_single_attr_cost(start_val, target_val):
+    """Calcula el costo en puntos para subir de start_val a target_val."""
+    cost = 0
+    # Iteramos punto por punto para aplicar la regla de "sobre 15 cuesta doble"
+    for v in range(start_val + 1, target_val + 1):
+        if v > 15:
+            cost += 2 # Cuesta doble pasar de 15
+        else:
+            cost += 1
+    return cost
+
+# --- MAIN GAME UI ---
 def main_game_interface():
     player = st.session_state.player_data
     commander = st.session_state.commander_data
@@ -49,7 +61,7 @@ def main_game_interface():
         st.session_state.logged_in = False
         st.session_state.player_data = None
         st.session_state.commander_data = None
-        st.session_state.is_registering = False # Resetear registro
+        st.session_state.is_registering = False
         st.rerun()
         
     st.sidebar.divider()
@@ -90,17 +102,16 @@ def main_game_interface():
 # --- WIZARD DE REGISTRO ---
 
 def registration_wizard():
-    # Botón para cancelar y volver atrás
-    if st.button("⬅ Volver al Inicio"):
+    if st.button("⬅ Cancelar y Volver"):
         st.session_state.is_registering = False
         st.session_state.registration_step = 0
         st.rerun()
 
     st.title("Estación de Reclutamiento")
-    progress_text = ["Datos de Facción", "Expediente Personal", "Evaluación de Combate"]
+    progress_text = ["Datos de Facción", "Expediente Personal", "Matriz de Atributos"]
     st.progress((st.session_state.registration_step + 1) / 3, text=f"Fase {st.session_state.registration_step + 1}: {progress_text[st.session_state.registration_step]}")
     
-    # PASO 1: CUENTA DE JUGADOR (Auth)
+    # PASO 1: CUENTA DE JUGADOR (Auth) - Este sí usa Form porque no necesita interactividad inmediata
     if st.session_state.registration_step == 0:
         st.header("Paso 1: Registro de Facción")
         st.caption("Establece las credenciales de acceso seguro.")
@@ -111,10 +122,9 @@ def registration_wizard():
             faction = st.text_input("Nombre de la Facción*")
             banner = st.file_uploader("Estandarte de la Facción (Opcional)", type=['png', 'jpg'])
             
-            submit = st.form_submit_button("Establecer Facción y Continuar")
+            submit = st.form_submit_button("Continuar")
             
             if submit:
-                # Validaciones estrictas
                 errors = []
                 if not new_user.strip(): errors.append("- El nombre de usuario es obligatorio.")
                 if not faction.strip(): errors.append("- El nombre de la facción es obligatorio.")
@@ -131,116 +141,146 @@ def registration_wizard():
                             player = register_player_account(new_user, new_pin, faction, banner)
                             if player:
                                 st.session_state.temp_player = player
-                                st.session_state.registration_step = 1 # Avanzar al siguiente paso
+                                st.session_state.registration_step = 1
                                 st.rerun()
                             else:
-                                st.error("Error del sistema al crear la cuenta. Intente nuevamente.")
+                                st.error("Error del sistema al crear la cuenta.")
                     except Exception as e:
                         st.error(f"Error de conexión: {e}")
 
-    # PASO 2: DATOS BIOGRÁFICOS
+    # PASO 2: DATOS BIOGRÁFICOS - SIN FORM para que sea interactivo
     elif st.session_state.registration_step == 1:
         st.header("Paso 2: Expediente del Comandante")
-        st.info(f"Identidad confirmada: **{st.session_state.temp_player['nombre']}**")
         
-        with st.form("step2_form"):
-            st.text_input("Identidad (Nombre)", value=st.session_state.temp_player['nombre'], disabled=True)
+        # Nombre fijo
+        st.text_input("Identidad", value=st.session_state.temp_player['nombre'], disabled=True)
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            # Dropdowns fuera de formulario para reactividad
+            raza_opts = list(RACES.keys())
+            raza = st.selectbox("Seleccionar Raza", raza_opts)
+            # Info box que se actualiza al instante
+            st.info(f"🧬 **{raza}**: {RACES[raza]['desc']}\n\n✨ Bono: {RACES[raza]['bonus']}")
             
-            c1, c2 = st.columns(2)
-            with c1:
-                raza_opts = list(RACES.keys())
-                raza = st.selectbox("Raza", raza_opts)
-                st.info(f"🧬 **{raza}**: {RACES[raza]['desc']}\n\n✨ Bono: {RACES[raza]['bonus']}")
-                
-                edad = st.number_input("Edad", min_value=18, max_value=120, value=25)
+            edad = st.number_input("Edad", min_value=18, max_value=120, value=25)
 
-            with c2:
-                clase_opts = list(CLASSES.keys())
-                clase = st.selectbox("Clase / Especialidad", clase_opts)
-                st.info(f"🛡️ **{clase}**: {CLASSES[clase]['desc']}\n\n⭐ Atributo Principal: {CLASSES[clase]['bonus_attr'].capitalize()}")
+        with c2:
+            clase_opts = list(CLASSES.keys())
+            clase = st.selectbox("Seleccionar Clase", clase_opts)
+            # Info box reactiva
+            st.info(f"🛡️ **{clase}**: {CLASSES[clase]['desc']}\n\n⭐ Atributo Principal: {CLASSES[clase]['bonus_attr'].capitalize()}")
 
-                sexo = st.selectbox("Sexo", ["Hombre", "Mujer"])
-            
-            bio_text = st.text_area("Biografía / Antecedentes (Opcional)", placeholder="Escribe brevemente tu historia...")
+            sexo = st.selectbox("Sexo Biológico", ["Hombre", "Mujer"])
+        
+        bio_text = st.text_area("Biografía / Antecedentes", placeholder="Historia breve...")
 
-            if st.form_submit_button("Confirmar Datos y Asignar Atributos"):
-                st.session_state.temp_char_bio = {
-                    "nombre": st.session_state.temp_player['nombre'],
-                    "raza": raza,
-                    "clase": clase,
-                    "edad": edad,
-                    "sexo": sexo,
-                    "rol": "Comandante",
-                    "historia": bio_text
-                }
-                st.session_state.registration_step = 2
-                st.rerun()
+        st.markdown("---")
+        if st.button("Confirmar Datos y Pasar a Atributos", type="primary"):
+            st.session_state.temp_char_bio = {
+                "nombre": st.session_state.temp_player['nombre'],
+                "raza": raza,
+                "clase": clase,
+                "edad": edad,
+                "sexo": sexo,
+                "rol": "Comandante",
+                "historia": bio_text
+            }
+            st.session_state.registration_step = 2
+            st.rerun()
 
-    # PASO 3: ATRIBUTOS
+    # PASO 3: ATRIBUTOS (Sistema de Puntos)
     elif st.session_state.registration_step == 2:
-        st.header("Paso 3: Evaluación de Capacidades")
-        st.markdown("Asigna los niveles de atributos (Escala 1-20).")
+        st.header("Paso 3: Matriz de Atributos")
+        st.markdown("""
+        **Sistema de Asignación:**
+        - Todos los atributos comienzan en **10** (más bonos de Raza/Clase).
+        - Tienes **15 Puntos** disponibles para distribuir.
+        - Subir un atributo por encima de **15** cuesta el **doble de puntos**.
+        """)
         
+        # Recuperar bonos
         bio = st.session_state.temp_char_bio
         raza_bonus = RACES[bio['raza']]['bonus']
         clase_bonus_attr = CLASSES[bio['clase']]['bonus_attr']
         
-        st.success(f"Bonificaciones Activas: {raza_bonus} | +1 a {clase_bonus_attr.capitalize()} (Clase)")
+        # Definir atributos base (10 + Bonos)
+        base_stats = {
+            "fuerza": 10, "agilidad": 10, "intelecto": 10,
+            "tecnica": 10, "presencia": 10, "voluntad": 10
+        }
+        
+        # Aplicar bonos a la base
+        for attr, val in raza_bonus.items():
+            base_stats[attr] += val
+        base_stats[clase_bonus_attr] += 1
+        
+        # UI de Inputs (Sin Form para calcular puntos en vivo)
+        col1, col2, col3 = st.columns(3)
+        input_cols = [col1, col2, col3, col1, col2, col3]
+        attr_keys = ["fuerza", "agilidad", "intelecto", "tecnica", "presencia", "voluntad"]
+        
+        final_attrs = {}
+        total_spent = 0
+        
+        for i, attr in enumerate(attr_keys):
+            base = base_stats[attr]
+            with input_cols[i]:
+                # El valor mínimo es el base (no se puede bajar de lo que te da tu raza)
+                val = st.number_input(
+                    f"{attr.capitalize()} (Base: {base})", 
+                    min_value=base, 
+                    max_value=20, 
+                    value=base,
+                    key=f"attr_{attr}"
+                )
+                cost = calculate_single_attr_cost(base, val)
+                total_spent += cost
+                final_attrs[attr] = val
+                
+                # Feedback visual del costo
+                if cost > 0:
+                    st.caption(f"Gastado: {cost} pts")
 
-        with st.form("step3_form"):
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                fuerza = st.number_input("Fuerza", 1, 20, 10, help="Capacidad física y combate cuerpo a cuerpo.")
-                tecnica = st.number_input("Técnica", 1, 20, 10, help="Habilidad manual, uso de herramientas y armas.")
-            with c2:
-                agilidad = st.number_input("Agilidad", 1, 20, 10, help="Reflejos, velocidad y sigilo.")
-                presencia = st.number_input("Presencia", 1, 20, 10, help="Carisma, liderazgo y persuasión.")
-            with c3:
-                intelecto = st.number_input("Intelecto", 1, 20, 10, help="Capacidad lógica, memoria y hacking.")
-                voluntad = st.number_input("Voluntad", 1, 20, 10, help="Resistencia mental y determinación.")
-            
-            submitted = st.form_submit_button("Finalizar Reclutamiento")
-            
-            if submitted:
-                raw_attrs = {
-                    "fuerza": fuerza, "agilidad": agilidad, "intelecto": intelecto,
-                    "tecnica": tecnica, "presencia": presencia, "voluntad": voluntad
-                }
-                
-                # Sumar bonos automáticamente
-                for attr, val in raza_bonus.items():
-                    if attr in raw_attrs: raw_attrs[attr] += val
-                
-                if clase_bonus_attr in raw_attrs:
-                    raw_attrs[clase_bonus_attr] += 1
-                
+        # Resumen de Puntos
+        POINTS_AVAILABLE = 15
+        remaining = POINTS_AVAILABLE - total_spent
+        
+        st.markdown("---")
+        c_res1, c_res2 = st.columns([3, 1])
+        
+        with c_res1:
+            if remaining >= 0:
+                st.success(f"💎 Puntos Restantes: **{remaining}** / {POINTS_AVAILABLE}")
+            else:
+                st.error(f"⛔ Has gastado demasiados puntos: **{remaining}**")
+        
+        with c_res2:
+            # Botón deshabilitado si te pasas de puntos
+            disabled_btn = remaining < 0
+            if st.button("Finalizar Creación", type="primary", disabled=disabled_btn):
                 success = create_commander_manual(
                     st.session_state.temp_player['id'],
                     st.session_state.temp_player['nombre'],
                     st.session_state.temp_char_bio,
-                    raw_attrs
+                    final_attrs
                 )
                 
                 if success:
                     st.balloons()
-                    st.success("¡Comandante Registrado Exitosamente!")
                     # Auto-login
                     st.session_state.player_data = st.session_state.temp_player
                     c_res = supabase.table("characters").select("*").eq("player_id", st.session_state.temp_player['id']).single().execute()
                     st.session_state.commander_data = c_res.data
                     st.session_state.logged_in = True
-                    # Resetear variables de registro
                     st.session_state.is_registering = False
                     st.session_state.registration_step = 0
-                    st.session_state.temp_player = None
                     st.rerun()
                 else:
-                    st.error("Error crítico al guardar el personaje. Por favor contacta al soporte.")
+                    st.error("Error al guardar.")
 
-
-# --- AUTH SCREEN (LOGIN O REGISTRO) ---
+# --- AUTH SCREEN ---
 def authentication_screen():
-    # AHORA: Si la bandera 'is_registering' es True, mostramos el wizard, SIN IMPORTAR el paso.
     if st.session_state.is_registering:
         registration_wizard()
         return
@@ -265,14 +305,13 @@ def authentication_screen():
                     else:
                         st.error("Credenciales inválidas.")
                 except Exception as e:
-                    st.error("Error de acceso o usuario no encontrado.")
+                    st.error("Error de acceso.")
 
     with tab_reg:
         st.info("Crea una nueva Facción y diseña tu primer Comandante.")
-        # Este botón ahora activa la bandera MAESTRA 'is_registering'
         if st.button("Comenzar Protocolo de Reclutamiento"):
             st.session_state.is_registering = True
-            st.session_state.registration_step = 0 # Asegura inicio en paso 0
+            st.session_state.registration_step = 0
             st.rerun()
 
 # --- Main App Logic ---
