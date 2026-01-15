@@ -148,9 +148,9 @@ def generate_random_character(faction_name: str = "Neutral") -> dict:
     """
     
     try:
-        # CORREGIDO: Usamos el nombre específico con versión -001
+        # CORREGIDO 2026: Usamos gemini-2.0-flash
         response = ai_client.models.generate_content(
-            model='gemini-1.5-flash-001',
+            model='gemini-2.0-flash',
             contents=prompt
         )
         
@@ -204,9 +204,9 @@ def resolve_action(action_text: str, player_id: int) -> dict:
     """
 
     try:
-        # CORREGIDO: Usamos el nombre específico con versión -001
+        # CORREGIDO 2026: Usamos gemini-2.0-flash
         response = ai_client.models.generate_content(
-            model='gemini-1.5-flash-001',
+            model='gemini-2.0-flash',
             contents=prompt
         )
         
