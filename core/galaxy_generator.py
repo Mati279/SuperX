@@ -1,5 +1,6 @@
 # core/galaxy_generator.py
 import math
+import random
 from typing import List, Dict, Optional
 
 from .world_models import Galaxy, System, Star, Planet, Moon, AsteroidBelt, CelestialBody
