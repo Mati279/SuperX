@@ -102,7 +102,7 @@ def encode_image(image_file):
     return base64.b64encode(image_file.getvalue()).decode('utf-8')
 
 # --- Character Generation ---
-MODEL_NAME = 'gemini-1.5-flash'
+MODEL_NAME = 'gemini-2.5-flash'
 
 def generate_random_character(player_name: str, password: str, faction_name: str, banner_file) -> dict:
     if not ai_client: 
