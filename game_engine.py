@@ -39,7 +39,24 @@ else:
     print("WARNING: GEMINI_API_KEY not found.")
 
 
-# --- Skill System ---
+# --- DATA: RACES & CLASSES (Placeholders) ---
+RACES = {
+    "Humano": {"desc": "Versátiles y ambiciosos. Dominan la política galáctica.", "bonus": {"voluntad": 1}},
+    "Cyborg": {"desc": "Humanos mejorados con implantes. Resistentes y fríos.", "bonus": {"tecnica": 1}},
+    "Marciano": {"desc": "Nacidos en la baja gravedad roja. Ágiles pero frágiles.", "bonus": {"agilidad": 1}},
+    "Selenita": {"desc": "Habitantes del lado oscuro de la luna. Misteriosos y pálidos.", "bonus": {"intelecto": 1}},
+    "Androide": {"desc": "Inteligencia artificial en cuerpo sintético. Incansables.", "bonus": {"fuerza": 1}}
+}
+
+CLASSES = {
+    "Soldado": {"desc": "Entrenado en armas y tácticas militares.", "bonus_attr": "fuerza"},
+    "Piloto": {"desc": "Experto en navegación y combate vehicular.", "bonus_attr": "agilidad"},
+    "Ingeniero": {"desc": "Maestro de la reparación y la tecnología.", "bonus_attr": "tecnica"},
+    "Diplomático": {"desc": "La palabra es más fuerte que el láser.", "bonus_attr": "presencia"},
+    "Espía": {"desc": "El arte del sigilo y el subterfugio.", "bonus_attr": "agilidad"},
+    "Hacker": {"desc": "Domina el ciberespacio y los sistemas de seguridad.", "bonus_attr": "intelecto"}
+}
+
 SKILL_MAPPING = {
     "Combate Cercano": ("fuerza", "agilidad"),
     "Puntería": ("agilidad", "tecnica"),
@@ -72,15 +89,6 @@ def log_event(text: str, player_id: int = None, is_error: bool = False):
     except Exception as e:
         print(f"Failed to log to DB: {e}")
 
-def get_ai_instruction() -> dict:
-    try:
-        response = supabase.table("game_config").select("key", "value").execute()
-        if response.data:
-            return {item['key']: item['value'] for item in response.data}
-    except Exception as e:
-        log_event(f"Error reading config: {e}", is_error=True)
-    return {}
-
 # --- Authentication ---
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -91,20 +99,10 @@ def verify_password(stored_password: str, provided_password: str) -> bool:
 def encode_image(image_file):
     return base64.b64encode(image_file.getvalue()).decode('utf-8')
 
-# --- Registration & Character Generation ---
-MODEL_NAME = 'gemini-2.5-flash'
+# --- New Registration Flow ---
 
-def register_faction_and_commander(user_name: str, pin: str, faction_name: str, banner_file) -> dict:
-    """
-    1. Crea el Jugador (Usuario + Facción).
-    2. Genera y crea el Personaje (Comandante).
-    """
-    if not ai_client: 
-        log_event("Intento de registro fallido: Cliente AI no conectado.", is_error=True)
-        return None
-    
-    # 1. Crear Jugador (Dueño de la cuenta) -> Tabla PLAYERS
-    # NOTA: Aquí NO va 'estado' ni 'ubicacion'. Solo datos de cuenta.
+def register_player_account(user_name: str, pin: str, faction_name: str, banner_file) -> dict:
+    """Paso 1: Solo crea la cuenta del jugador (Usuario + Facción)."""
     banner_url = f"data:image/png;base64,{encode_image(banner_file)}" if banner_file else None
     
     new_player_data = {
@@ -115,79 +113,67 @@ def register_faction_and_commander(user_name: str, pin: str, faction_name: str, 
     }
     
     try:
-        # Insert Player
-        player_res = supabase.table("players").insert(new_player_data).execute()
-        if not player_res.data:
-            log_event("Error al insertar jugador en DB.", is_error=True)
-            return None
-        
-        player_id = player_res.data[0]['id']
-        
-        # 2. Generar Comandante (AI) -> Tabla CHARACTERS
-        game_config = get_ai_instruction()
-        world_desc = game_config.get('world_description', 'Sci-fi.')
-        
-        prompt = f"""
-        Generate the statistics for a Sci-Fi Commander (RPG Character).
-        World: {world_desc}
-        Faction: {faction_name}
-        Name: {user_name}
+        res = supabase.table("players").insert(new_player_data).execute()
+        if res.data:
+            return res.data[0]
+    except Exception as e:
+        log_event(f"Error registrando cuenta: {e}", is_error=True)
+        return None
+    return None
 
-        **CRITICAL RULE:** "sexo" must be "Hombre" or "Mujer".
+def create_commander_manual(player_id: int, name: str, bio_data: dict, attributes: dict) -> bool:
+    """Paso 2 y 3: Crea el personaje Comandante con datos manuales."""
+    try:
+        # Aplicar bonus de raza y clase si es necesario (lógica simple aquí)
+        # Por ahora guardamos los atributos tal cual los manda el front, 
+        # pero podríamos sumar los bonus aquí si quisiéramos automatizarlo.
+        
+        # Calcular habilidades derivadas
+        habilidades = calculate_skills(attributes)
+        
+        stats_json = {
+            "bio": bio_data,       # {nombre, raza, edad, sexo, rol, clase, historia}
+            "atributos": attributes,
+            "habilidades": habilidades
+        }
 
-        JSON Output (no markdown):
-        {{
-            "bio": {{"nombre": "{user_name}", "raza": "str", "edad": int, "sexo": "str", "rol": "Comandante"}},
-            "atributos": {{"fuerza": int(1-20), "agilidad": int, "intelecto": int, "tecnica": int, "presencia": int, "voluntad": int}},
-            "resumen": "str (max 30 words)"
-        }}
-        """
-        
-        response = ai_client.models.generate_content(model=MODEL_NAME, contents=prompt)
-        text = response.text.strip().replace('```json', '').replace('```', '')
-        char_stats = json.loads(text)
-        
-        char_stats["habilidades"] = calculate_skills(char_stats["atributos"])
-        
-        # Aquí SÍ va 'estado' y 'ubicacion' porque es un personaje
-        new_character_data = {
+        new_char = {
             "player_id": player_id,
-            "nombre": user_name,
+            "nombre": name,
             "rango": "Comandante",
             "es_comandante": True,
-            "stats_json": char_stats,
+            "stats_json": stats_json,
             "estado": "Activo",
             "ubicacion": "Puente de Mando"
         }
         
-        # Insert Character
-        char_res = supabase.table("characters").insert(new_character_data).execute()
+        res = supabase.table("characters").insert(new_char).execute()
+        return True if res.data else False
         
-        if char_res.data:
-            # Retornamos datos combinados para la sesión
-            full_data = player_res.data[0]
-            full_data['commander_stats'] = char_res.data[0]['stats_json']
-            return full_data
-            
     except Exception as e:
-        log_event(f"Error crítico en registro: {e}", is_error=True)
-        # Opcional: Podríamos borrar el player si falla el char, pero por ahora solo logueamos.
-        return None
-        
-    return None
+        log_event(f"Error creando comandante: {e}", player_id=player_id, is_error=True)
+        return False
 
 # --- Action Resolution ---
+MODEL_NAME = 'gemini-2.5-flash'
+
+def get_ai_instruction() -> dict:
+    try:
+        response = supabase.table("game_config").select("key", "value").execute()
+        if response.data:
+            return {item['key']: item['value'] for item in response.data}
+    except Exception as e:
+        log_event(f"Error reading config: {e}", is_error=True)
+    return {}
+
 def resolve_action(action_text: str, player_id: int) -> dict:
     if not ai_client: return {"narrative": "Error AI.", "updates": []}
 
     game_config = get_ai_instruction()
     
     try:
-        # Obtener datos del Comandante actual
         chars = supabase.table("characters").select("*").eq("player_id", player_id).eq("es_comandante", True).execute().data
-        if not chars:
-            return {"narrative": "Error: No se encontró al Comandante.", "updates": []}
-        
+        if not chars: return {"narrative": "Error: No se encontró al Comandante.", "updates": []}
         commander = chars[0]
     except Exception as e:
         return {"narrative": f"Error reading DB: {e}", "updates": []}
@@ -199,9 +185,7 @@ def resolve_action(action_text: str, player_id: int) -> dict:
     World: {game_config.get('world_description','')}
     Rules: {game_config.get('rules','')}
     Current State: {json.dumps(game_state, default=str)}
-    
     Player Action: "{action_text}"
-    
     JSON Output (no markdown):
     {{
         "narrative": "str",
