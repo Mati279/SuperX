@@ -103,7 +103,8 @@ def register_faction_and_commander(user_name: str, pin: str, faction_name: str, 
         log_event("Intento de registro fallido: Cliente AI no conectado.", is_error=True)
         return None
     
-    # 1. Crear Jugador (Dueño de la cuenta)
+    # 1. Crear Jugador (Dueño de la cuenta) -> Tabla PLAYERS
+    # NOTA: Aquí NO va 'estado' ni 'ubicacion'. Solo datos de cuenta.
     banner_url = f"data:image/png;base64,{encode_image(banner_file)}" if banner_file else None
     
     new_player_data = {
@@ -122,7 +123,7 @@ def register_faction_and_commander(user_name: str, pin: str, faction_name: str, 
         
         player_id = player_res.data[0]['id']
         
-        # 2. Generar Comandante (AI)
+        # 2. Generar Comandante (AI) -> Tabla CHARACTERS
         game_config = get_ai_instruction()
         world_desc = game_config.get('world_description', 'Sci-fi.')
         
@@ -148,6 +149,7 @@ def register_faction_and_commander(user_name: str, pin: str, faction_name: str, 
         
         char_stats["habilidades"] = calculate_skills(char_stats["atributos"])
         
+        # Aquí SÍ va 'estado' y 'ubicacion' porque es un personaje
         new_character_data = {
             "player_id": player_id,
             "nombre": user_name,
@@ -169,7 +171,7 @@ def register_faction_and_commander(user_name: str, pin: str, faction_name: str, 
             
     except Exception as e:
         log_event(f"Error crítico en registro: {e}", is_error=True)
-        # Opcional: Borrar el player si falló la creación del personaje para no dejar datos huérfanos
+        # Opcional: Podríamos borrar el player si falla el char, pero por ahora solo logueamos.
         return None
         
     return None
