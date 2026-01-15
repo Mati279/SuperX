@@ -78,6 +78,22 @@ def main_game_interface():
 # --- Authentication Screen ---
 def authentication_screen():
     st.title("SuperX: Galactic Command")
+    
+    # --- LOG VIEWER BUTTON (SIEMPRE VISIBLE) ---
+    with st.expander("🆘 Ver Logs de Error (Diagnóstico)"):
+        st.info("Usa esto si tienes problemas al registrarte o iniciar sesión.")
+        if st.button("Consultar Errores Recientes"):
+            try:
+                # Trae los ultimos 5 errores
+                errors = supabase.table("logs").select("*").ilike("evento_texto", "%ERROR%").order("id", desc=True).limit(5).execute()
+                if errors.data:
+                    for err in errors.data:
+                        st.error(f"ID {err['id']}: {err['evento_texto']}")
+                else:
+                    st.success("No se encontraron errores recientes en la base de datos.")
+            except Exception as e:
+                st.warning(f"No se pudo conectar a los logs: {e}")
+
     st.header("Acceso a la Terminal de Mando")
 
     login_tab, register_tab = st.tabs(["Iniciar Sesión", "Registrar Nuevo Comandante"])
@@ -86,7 +102,8 @@ def authentication_screen():
     with login_tab:
         with st.form("login_form"):
             commander_name = st.text_input("Nombre de Comandante")
-            password = st.text_input("Palabra Clave", type="password")
+            # CAMBIO: PIN de 4 dígitos
+            password = st.text_input("PIN de Acceso a Terminal", type="password", help="Tu código numérico de 4 dígitos", max_chars=4)
             submitted = st.form_submit_button("Acceder")
 
             if submitted:
@@ -98,22 +115,29 @@ def authentication_screen():
                         st.session_state.player_info = player_data
                         st.rerun()
                     else:
-                        st.error("Nombre de Comandante o Palabra Clave incorrectos.")
+                        st.error("Credenciales incorrectas.")
                 except Exception as e:
                     st.error("Error al verificar credenciales. Es posible que el comandante no exista.")
 
     # Registration Form
     with register_tab:
         with st.form("register_form", clear_on_submit=True):
+            st.markdown("### Nuevo Registro")
             new_commander_name = st.text_input("Asignar Nombre de Comandante")
-            new_password = st.text_input("Definir Palabra Clave", type="password")
+            
+            # CAMBIO: PIN de 4 dígitos
+            new_password = st.text_input("Definir PIN de Acceso (4 Dígitos)", type="password", max_chars=4, help="Usa 4 números, ej: 1234")
+            
             faction_name = st.text_input("Nombre de la Facción")
             banner_file = st.file_uploader("Estandarte de la Facción (Opcional, PNG/JPG)", type=['png', 'jpg'])
-            reg_submitted = st.form_submit_button("Registrar y Generar Perfil de Comandante")
+            reg_submitted = st.form_submit_button("Registrar y Generar Perfil")
 
             if reg_submitted:
+                # Validaciones
                 if not new_commander_name or not new_password or not faction_name:
-                    st.warning("Nombre, Palabra Clave y Nombre de Facción son obligatorios.")
+                    st.warning("Todos los campos de texto son obligatorios.")
+                elif not new_password.isdigit() or len(new_password) != 4:
+                    st.error("El PIN debe ser exactamente 4 números.")
                 else:
                     with st.spinner("Forjando un nuevo líder en las estrellas..."):
                         # Check if player already exists
@@ -121,9 +145,9 @@ def authentication_screen():
                             existing = supabase.table("players").select("id").eq("nombre", new_commander_name).execute()
                             if existing.data:
                                 st.error("Ese nombre de Comandante ya está en uso.")
-                                return
+                                st.stop()
                         except Exception:
-                            pass # Good, means user doesn't exist
+                            pass 
                             
                         new_player = generate_random_character(
                             player_name=new_commander_name,
@@ -132,9 +156,9 @@ def authentication_screen():
                             banner_file=banner_file
                         )
                         if new_player:
-                            st.success(f"¡Comandante {new_commander_name} registrado! Ahora puedes iniciar sesión.")
+                            st.success(f"¡Comandante {new_commander_name} registrado! Ahora puedes iniciar sesión con tu PIN.")
                         else:
-                            st.error("Error durante la creación del perfil. Inténtalo de nuevo.")
+                            st.error("Error crítico durante la creación. Abre 'Ver Logs de Error' arriba para ver el detalle.")
 
 # --- Main App Logic ---
 if st.session_state.logged_in:
