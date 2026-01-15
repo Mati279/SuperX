@@ -8,12 +8,12 @@ from data.game_config_repository import get_game_config
 from data.character_repository import get_commander_by_player_id, update_character
 
 # Constante para el nombre del modelo de texto
-TEXT_MODEL_NAME = 'gemini-1.5-flash'
+TEXT_MODEL_NAME = 'gemini-2.5-flash'
 
 # Constante para el nombre del modelo de imagen (ej: 'imagen-3.0-generate-001')
 # Usamos un modelo que soporte generación de imágenes.
 # Reemplazar con el modelo específico y más económico cuando se decida.
-IMAGE_MODEL_NAME = 'gemini-1.5-flash'
+IMAGE_MODEL_NAME = 'gemini-2.5-flash'
 
 
 def generate_image(prompt: str, player_id: int) -> Optional[Any]:
