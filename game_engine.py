@@ -3,7 +3,7 @@ import json
 import streamlit as st
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from google import genai # <--- LIBRERÍA NUEVA
+from google import genai
 
 # Cargar variables de entorno
 load_dotenv()
@@ -25,7 +25,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 # Inicializar Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Inicializar Cliente de Google GenAI (NUEVO SDK)
+# Inicializar Cliente de Google GenAI
 ai_client = None
 if GEMINI_API_KEY:
     try:
@@ -148,9 +148,9 @@ def generate_random_character(faction_name: str = "Neutral") -> dict:
     """
     
     try:
-        # NUEVA SINTAXIS DE LLAMADA
+        # CORREGIDO: Usamos el nombre específico con versión -001
         response = ai_client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-1.5-flash-001',
             contents=prompt
         )
         
@@ -204,9 +204,9 @@ def resolve_action(action_text: str, player_id: int) -> dict:
     """
 
     try:
-        # NUEVA SINTAXIS DE LLAMADA
+        # CORREGIDO: Usamos el nombre específico con versión -001
         response = ai_client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-1.5-flash-001',
             contents=prompt
         )
         
