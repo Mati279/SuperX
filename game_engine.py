@@ -1,224 +1,205 @@
 import os
 import json
-import streamlit as st  # Importamos streamlit para acceder a st.secrets
+import streamlit as st
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import google.generativeai as genai
 
-# Cargar variables de entorno (para local)
+# Cargar variables
 load_dotenv()
 
-# --- FUNCIÓN HELPER PARA GESTIONAR CLAVES ---
+# --- HELPER DE SECRETOS ---
 def get_secret(key):
-    """Busca la clave primero en variables de entorno, luego en st.secrets."""
     value = os.getenv(key)
-    if value:
-        return value
-    if key in st.secrets:
-        return st.secrets[key]
+    if value: return value
+    if key in st.secrets: return st.secrets[key]
     return None
 
-# Recuperar credenciales
 SUPABASE_URL = get_secret("SUPABASE_URL")
 SUPABASE_KEY = get_secret("SUPABASE_KEY")
 GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
 
-# Validación temprana para evitar errores cripticos
 if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("CRITICAL: Faltan las credenciales de SUPABASE_URL o SUPABASE_KEY en .env o Secrets.")
+    raise ValueError("CRITICAL: Faltan credenciales de Supabase.")
 
-# Inicializar clientes
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-else:
-    # No lanzamos error aquí para permitir que la UI cargue y avise
-    print("WARNING: GEMINI_API_KEY no encontrada.")
+
+# --- SISTEMA DE HABILIDADES (SKILLS) ---
+# Mapeo: Habilidad -> (Atributo 1, Atributo 2)
+SKILL_MAPPING = {
+    # I. Combate
+    "armas_mano": ("agilidad", "tecnica"),
+    "fusiles_asalto": ("agilidad", "fuerza"),
+    "armas_precision": ("agilidad", "voluntad"),
+    "armamento_pesado": ("fuerza", "tecnica"),
+    "combate_cuerpo_a_cuerpo": ("fuerza", "agilidad"),
+    "demoliciones": ("tecnica", "intelecto"),
+    "primeros_auxilios": ("intelecto", "tecnica"),
+    "uso_escudos": ("tecnica", "voluntad"),
+    "lanzables": ("agilidad", "fuerza"),
+    "tacticas_cobertura": ("intelecto", "agilidad"),
+    # II. Pilotaje
+    "pilotaje_cazas": ("agilidad", "intelecto"),
+    "pilotaje_fragatas": ("intelecto", "tecnica"),
+    "pilotaje_capital": ("intelecto", "presencia"),
+    "navegacion_hiperespacial": ("intelecto", "tecnica"),
+    "artilleria_torretas": ("agilidad", "tecnica"),
+    "defensa_de_punto": ("tecnica", "intelecto"),
+    "guerra_electronica": ("intelecto", "tecnica"),
+    "gestion_energia": ("intelecto", "voluntad"),
+    "maniobras_evasivas": ("agilidad", "intelecto"),
+    "anclaje_abordaje": ("tecnica", "agilidad"),
+    # III. Técnica
+    "hacking_sistemas": ("intelecto", "tecnica"),
+    "ingenieria_motores": ("tecnica", "fuerza"),
+    "robotica": ("tecnica", "intelecto"),
+    "cibernetica": ("tecnica", "intelecto"),
+    "xenobiologia": ("intelecto", "voluntad"),
+    "astrofisica": ("intelecto", "intelecto"),
+    "quimica_combustibles": ("tecnica", "intelecto"),
+    "sistemas_soporte_vital": ("tecnica", "intelecto"),
+    "mineria_asteroides": ("tecnica", "fuerza"),
+    "arqueologia_estelar": ("intelecto", "presencia"),
+    # IV. Diplomacia
+    "persuasion": ("presencia", "intelecto"),
+    "intimidacion": ("presencia", "fuerza"),
+    "engano": ("presencia", "intelecto"),
+    "negociacion_comercial": ("presencia", "intelecto"),
+    "protocolo_diplomatico": ("presencia", "voluntad"),
+    "liderazgo": ("presencia", "voluntad"),
+    "infiltracion": ("agilidad", "intelecto"),
+    "busqueda_informacion": ("presencia", "intelecto"),
+    "interrogatorio": ("voluntad", "presencia"),
+    "propaganda": ("presencia", "intelecto"),
+    # V. Supervivencia
+    "atletismo": ("fuerza", "agilidad"),
+    "salto_progresivo": ("fuerza", "agilidad"),
+    "natacion_buceo": ("fuerza", "voluntad"),
+    "maniobra_zero_g": ("agilidad", "voluntad"),
+    "resistencia_ambiental": ("fuerza", "voluntad"),
+    "percepcion_trampas": ("intelecto", "voluntad"),
+    "rastreo": ("intelecto", "voluntad"),
+    # VI. Gestión
+    "logistica_galactica": ("intelecto", "tecnica"),
+    "administracion_colonial": ("intelecto", "presencia"),
+    "xenolinguistica": ("intelecto", "presencia"),
+    "espionaje_industrial": ("intelecto", "agilidad"),
+    "seguridad_interna": ("intelecto", "voluntad")
+}
+
+def calculate_skills(attributes: dict) -> dict:
+    """Calcula nivel base de habilidades (Attr1 + Attr2)."""
+    skills = {}
+    attrs_safe = {k.lower(): v for k, v in attributes.items()}
+    for skill, (a1, a2) in SKILL_MAPPING.items():
+        val1 = attrs_safe.get(a1, 0)
+        val2 = attrs_safe.get(a2, 0)
+        skills[skill] = val1 + val2
+    return skills
 
 def get_ai_instruction() -> dict:
-    """Recupera la configuración del juego desde Supabase."""
     try:
         response = supabase.table("game_config").select("key", "value").execute()
         if response.data:
             return {item['key']: item['value'] for item in response.data}
-    except Exception as e:
-        print(f"Error conectando a DB: {e}")
+    except Exception:
+        pass
     return {}
 
-def generate_random_character() -> dict:
-    """
-    Usa Gemini para generar un personaje aleatorio y lo guarda en la base de datos.
-    """
-    if not GEMINI_API_KEY:
-        st.error("La API Key de Gemini no está configurada. No se puede generar un personaje.")
-        return None
-
-    world_description = get_ai_instruction().get('world_description', 'Universo de ciencia ficción genérico.')
-
+def generate_random_character(faction_name: str = "Neutral") -> dict:
+    """Genera un personaje completo con Gemini y calcula sus skills."""
+    game_config = get_ai_instruction()
+    world_desc = game_config.get('world_description', 'Ciencia ficción futurista.')
+    
     prompt = f"""
-    Actúa como un generador de personajes para un juego de rol de ciencia ficción.
-    Basado en la siguiente descripción del mundo, crea un único personaje memorable.
+    Genera un personaje para un juego de rol:
+    Mundo: {world_desc}
+    Facción: {faction_name}
     
-    **Descripción del Mundo:**
-    {world_description}
-
-    **Tu Tarea:**
-    Genera un personaje con los siguientes campos y devuelve SÓLO un objeto JSON válido.
-    Asegúrate de que los atributos sean coherentes con la biografía del personaje.
-    
-    **Formato de Salida (JSON estricto):**
+    Devuelve SOLO un JSON con esta estructura exacta:
     {{
-      "biografia": {{
-        "nombre": "Nombre del Personaje",
-        "raza": "Raza de Ciencia Ficción (ej: Humano, Cyborg, Alienígena)",
-        "edad": "Edad del personaje (numérico)",
-        "sexo": "Sexo del personaje"
-      }},
-      "atributos": {{
-        "fuerza": "Un valor de 1 a 20",
-        "agilidad": "Un valor de 1 a 20",
-        "intelecto": "Un valor de 1 a 20",
-        "tecnica": "Un valor de 1 a 20",
-        "presencia": "Un valor de 1 a 20",
-        "voluntad": "Un valor de 1 a 20"
-      }}
+        "bio": {{"nombre": "String", "raza": "String", "edad": Int, "sexo": "String", "rol": "String"}},
+        "atributos": {{"fuerza": Int(1-20), "agilidad": Int(1-20), "intelecto": Int(1-20), "tecnica": Int(1-20), "presencia": Int(1-20), "voluntad": Int(1-20)}},
+        "resumen": "Breve descripción narrativa del personaje."
     }}
+    Sé creativo con la raza y el rol.
     """
+    
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # CORRECCIÓN DEL MODELO AQUI
+        model = genai.GenerativeModel('gemini-1.5-flash-001') 
         response = model.generate_content(prompt)
+        text = response.text.strip().replace('```json', '').replace('```', '')
+        char_data = json.loads(text)
         
-        cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
-        char_data = json.loads(cleaned_response)
-
-        # Extraer nombre para la tabla principal y guardar el resto en stats_json
-        nombre_personaje = char_data.get("biografia", {}).get("nombre", "Sin Nombre")
+        # Calcular habilidades derivadas
+        char_data["habilidades"] = calculate_skills(char_data["atributos"])
         
-        # Guardar en la base de datos
-        db_response = supabase.table("entities").insert({
-            "nombre": nombre_personaje,
-            "tipo": "Operativo",
+        # Guardar en DB
+        new_entity = {
+            "nombre": char_data["bio"]["nombre"],
+            "tipo": "Personaje",
             "stats_json": char_data,
-            "estado": "Activo"
-        }).execute()
+            "estado": "Vivo",
+            "ubicacion": "Base Principal"
+        }
         
-        if db_response.data:
-            st.success(f"¡Operativo '{nombre_personaje}' reclutado y guardado en la base de datos!")
-            return db_response.data[0]
-        else:
-            st.error(f"Error al guardar el personaje en la base de datos: {db_response.error.message if db_response.error else 'Respuesta vacía'}")
-            return None
-
+        # Insertar y devolver
+        res = supabase.table("entities").insert(new_entity).execute()
+        if res.data:
+            return res.data[0]
+            
     except Exception as e:
-        st.error(f"Error al generar el personaje con Gemini: {e}")
+        print(f"Error generando personaje: {e}")
         return None
 
 def resolve_action(action_text: str, player_id: int) -> dict:
-    """
-    Resuelve una acción del jugador usando el LLM y actualiza la base de datos.
-    """
-    # 1. Recuperar configuración y reglas
+    # ... (Tu lógica existente, actualizada con el modelo correcto) ...
     game_config = get_ai_instruction()
-    rules = game_config.get('rules', 'No hay reglas definidas.')
-    world_description = game_config.get('world_description', 'No hay descripción del mundo.')
+    rules = game_config.get('rules', '')
+    world_description = game_config.get('world_description', '')
 
-    try:
-        # 2. Recuperar la entidad (personaje) del jugador que actúa
-        player_entity_response = supabase.table("entities").select("*").eq("id", player_id).single().execute()
-        player_character = player_entity_response.data
-        
-        # 3. Recuperar las demás entidades para el contexto
-        other_entities_response = supabase.table("entities").select("*").neq("id", player_id).execute()
-        
-        game_state = {
-            "other_entities": other_entities_response.data
-        }
-
-    except Exception as e:
-        print(f"Error recuperando datos del personaje: {e}")
-        return {"narrative": "Error crítico: No se pudo encontrar al personaje en la base de datos.", "updates": []}
-
-    # 4. Construir el prompt para Gemini con el nuevo formato
-    prompt = f"""
-    Actúa como un Game Master de ciencia ficción.
+    # Fetch simple del estado
+    players_response = supabase.table("players").select("*").execute()
+    entities_response = supabase.table("entities").select("*").execute()
     
-    **Descripción del Mundo:**
-    {world_description}
+    game_state = {
+        "players": players_response.data,
+        "entities": entities_response.data
+    }
 
-    **Reglas del Juego:**
-    {rules}
-
-    **Personaje que realiza la acción:**
-    {json.dumps(player_character, indent=2)}
-
-    **Otros en la escena:**
-    {json.dumps(game_state, indent=2)}
-
-    **Acción del Personaje:**
-    "{action_text}"
-
-    **Tu Tarea:**
-    Resuelve la acción basándote en los atributos del personaje (fuerza, agilidad, intelecto, tecnica, presencia, voluntad) y la situación.
-    Describe el resultado de forma cinemática y determina si alguna estadística debe cambiar.
-    Devuelve SÓLO un objeto JSON válido con dos claves:
-    1. "narrative": Un string que describe el resultado de la acción.
-    2. "updates": Una lista de objetos JSON para cambios en la base de datos (puede estar vacía).
-       Cada objeto debe tener "table", "id" y "data".
-
-    Ejemplo de respuesta:
-    {{
-      "narrative": "Zane activa su camuflaje óptico. Sus habilidades técnicas le permiten volverse casi invisible en las sombras del callejón, evadiendo a los guardias.",
-      "updates": []
-    }}
+    prompt = f"""
+    Actúa como GM.
+    Mundo: {world_description}
+    Reglas: {rules}
+    Estado: {json.dumps(game_state)}
+    Acción Jugador {player_id}: "{action_text}"
+    
+    Resuelve la acción. Devuelve JSON con "narrative" y "updates" (lista de objetos con table, id, data).
     """
 
-    # 5. Llamar a la API de Gemini
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # CORRECCIÓN DEL MODELO AQUI TAMBIÉN
+        model = genai.GenerativeModel('gemini-1.5-flash-001')
         response = model.generate_content(prompt)
-        
-        cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
-        result = json.loads(cleaned_response)
+        cleaned = response.text.strip().replace('```json', '').replace('```', '')
+        result = json.loads(cleaned)
 
-        # 6. Actualizar la base de datos
         if "updates" in result:
             for update in result["updates"]:
-                table_name = update.get("table")
-                record_id = update.get("id")
-                update_data = update.get("data")
-                
-                if table_name and record_id and update_data:
-                    supabase.table(table_name).update(update_data).eq("id", record_id).execute()
+                if update.get("table") and update.get("id") and update.get("data"):
+                    supabase.table(update["table"]).update(update["data"]).eq("id", update["id"]).execute()
 
-        # 7. Registrar el evento en los logs
         log_entry = {
-            "turno": 1,  # Simplificado
-            "evento_texto": result.get("narrative", "No se generó narrativa."),
+            "turno": 1,
+            "evento_texto": result.get("narrative", "Error narrativo"),
             "prompt_imagen": ""
         }
         supabase.table("logs").insert(log_entry).execute()
 
         return result
-
     except Exception as e:
-        print(f"Error al procesar la acción con Gemini: {e}")
-        # Intentar dar una respuesta de error más informativa a la UI
-        error_narrative = f"El Game Master está experimentando dificultades técnicas. Detalles: {str(e)}"
-        supabase.table("logs").insert({"turno": 1, "evento_texto": error_narrative}).execute()
-        return {"narrative": error_narrative, "updates": []}
-
-if __name__ == '__main__':
-    # Ejemplo de uso (requiere datos en Supabase)
-    # Crear un jugador para probar
-    # try:
-    #     supabase.table("players").insert({"nombre": "Tester", "faccion_nombre": "Aventureros"}).execute()
-    # except:
-    #     pass # Ignorar si ya existe
-
-    # player_id = supabase.table("players").select("id").eq("nombre", "Tester").single().execute().data['id']
-    
-    # test_action = "Intento atacar al goblin que tengo enfrente con mi espada."
-    # result = resolve_action(test_action, player_id)
-    # print(result)
-    pass
+        return {"narrative": f"Error del sistema: {e}", "updates": []}
