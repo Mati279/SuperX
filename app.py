@@ -20,12 +20,14 @@ if 'commander_data' not in st.session_state:
     st.session_state.commander_data = None
 
 # Variables para el flujo de registro
+if 'is_registering' not in st.session_state:
+    st.session_state.is_registering = False  # NUEVO: Control maestro del modo registro
 if 'registration_step' not in st.session_state:
     st.session_state.registration_step = 0 # 0: Auth, 1: Bio, 2: Atributos
 if 'temp_player' not in st.session_state:
-    st.session_state.temp_player = None # Guarda el usuario mientras crea el personaje
+    st.session_state.temp_player = None 
 if 'temp_char_bio' not in st.session_state:
-    st.session_state.temp_char_bio = {} # Guarda datos bio temporalmente
+    st.session_state.temp_char_bio = {} 
 
 # --- MAIN GAME UI (Solo si ya está logueado y con personaje) ---
 def main_game_interface():
@@ -47,6 +49,7 @@ def main_game_interface():
         st.session_state.logged_in = False
         st.session_state.player_data = None
         st.session_state.commander_data = None
+        st.session_state.is_registering = False # Resetear registro
         st.rerun()
         
     st.sidebar.divider()
@@ -87,69 +90,82 @@ def main_game_interface():
 # --- WIZARD DE REGISTRO ---
 
 def registration_wizard():
+    # Botón para cancelar y volver atrás
+    if st.button("⬅ Volver al Inicio"):
+        st.session_state.is_registering = False
+        st.session_state.registration_step = 0
+        st.rerun()
+
     st.title("Estación de Reclutamiento")
+    progress_text = ["Datos de Facción", "Expediente Personal", "Evaluación de Combate"]
+    st.progress((st.session_state.registration_step + 1) / 3, text=f"Fase {st.session_state.registration_step + 1}: {progress_text[st.session_state.registration_step]}")
     
     # PASO 1: CUENTA DE JUGADOR (Auth)
     if st.session_state.registration_step == 0:
         st.header("Paso 1: Registro de Facción")
+        st.caption("Establece las credenciales de acceso seguro.")
+        
         with st.form("step1_form"):
-            new_user = st.text_input("Nombre de Comandante (Tu Usuario)")
-            new_pin = st.text_input("PIN de Seguridad", type="password", max_chars=4, help="4 Dígitos")
-            faction = st.text_input("Nombre de la Facción")
-            banner = st.file_uploader("Estandarte (Opcional)", type=['png', 'jpg'])
+            new_user = st.text_input("Nombre de Comandante (Usuario)*")
+            new_pin = st.text_input("PIN de Seguridad (4 Números)*", type="password", max_chars=4)
+            faction = st.text_input("Nombre de la Facción*")
+            banner = st.file_uploader("Estandarte de la Facción (Opcional)", type=['png', 'jpg'])
             
-            if st.form_submit_button("Crear Cuenta y Continuar"):
-                if not new_user or len(new_pin) != 4 or not faction:
-                    st.warning("Completa todos los campos correctamente.")
+            submit = st.form_submit_button("Establecer Facción y Continuar")
+            
+            if submit:
+                # Validaciones estrictas
+                errors = []
+                if not new_user.strip(): errors.append("- El nombre de usuario es obligatorio.")
+                if not faction.strip(): errors.append("- El nombre de la facción es obligatorio.")
+                if not new_pin.isdigit() or len(new_pin) != 4: errors.append("- El PIN debe contener exactamente 4 números.")
+                
+                if errors:
+                    for err in errors: st.error(err)
                 else:
                     try:
                         check = supabase.table("players").select("id").eq("nombre", new_user).execute()
                         if check.data:
-                            st.error("Nombre de usuario ya existe.")
-                            return
-                    except: pass
-                    
-                    player = register_player_account(new_user, new_pin, faction, banner)
-                    if player:
-                        st.session_state.temp_player = player
-                        st.session_state.registration_step = 1
-                        st.rerun()
-                    else:
-                        st.error("Error al crear cuenta.")
+                            st.error("⚠️ Ese nombre de Comandante ya está en uso.")
+                        else:
+                            player = register_player_account(new_user, new_pin, faction, banner)
+                            if player:
+                                st.session_state.temp_player = player
+                                st.session_state.registration_step = 1 # Avanzar al siguiente paso
+                                st.rerun()
+                            else:
+                                st.error("Error del sistema al crear la cuenta. Intente nuevamente.")
+                    except Exception as e:
+                        st.error(f"Error de conexión: {e}")
 
     # PASO 2: DATOS BIOGRÁFICOS
     elif st.session_state.registration_step == 1:
         st.header("Paso 2: Expediente del Comandante")
-        st.info("Configura la identidad de tu primer Comandante.")
-        
-        player = st.session_state.temp_player
+        st.info(f"Identidad confirmada: **{st.session_state.temp_player['nombre']}**")
         
         with st.form("step2_form"):
-            # Nombre bloqueado (Mismo que el jugador)
-            st.text_input("Identidad (Nombre)", value=player['nombre'], disabled=True)
+            st.text_input("Identidad (Nombre)", value=st.session_state.temp_player['nombre'], disabled=True)
             
             c1, c2 = st.columns(2)
             with c1:
-                # Raza
                 raza_opts = list(RACES.keys())
                 raza = st.selectbox("Raza", raza_opts)
-                st.info(f"ℹ️ {RACES[raza]['desc']}\n\nBonificación: {RACES[raza]['bonus']}")
+                st.info(f"🧬 **{raza}**: {RACES[raza]['desc']}\n\n✨ Bono: {RACES[raza]['bonus']}")
                 
                 edad = st.number_input("Edad", min_value=18, max_value=120, value=25)
 
             with c2:
-                # Clase
                 clase_opts = list(CLASSES.keys())
                 clase = st.selectbox("Clase / Especialidad", clase_opts)
-                st.info(f"ℹ️ {CLASSES[clase]['desc']}\n\nAtributo Principal: {CLASSES[clase]['bonus_attr'].capitalize()}")
+                st.info(f"🛡️ **{clase}**: {CLASSES[clase]['desc']}\n\n⭐ Atributo Principal: {CLASSES[clase]['bonus_attr'].capitalize()}")
 
-                sexo = st.selectbox("Sexo Biológico", ["Hombre", "Mujer"])
+                sexo = st.selectbox("Sexo", ["Hombre", "Mujer"])
             
             bio_text = st.text_area("Biografía / Antecedentes (Opcional)", placeholder="Escribe brevemente tu historia...")
 
-            if st.form_submit_button("Siguiente: Asignar Atributos"):
+            if st.form_submit_button("Confirmar Datos y Asignar Atributos"):
                 st.session_state.temp_char_bio = {
-                    "nombre": player['nombre'],
+                    "nombre": st.session_state.temp_player['nombre'],
                     "raza": raza,
                     "clase": clase,
                     "edad": edad,
@@ -165,12 +181,11 @@ def registration_wizard():
         st.header("Paso 3: Evaluación de Capacidades")
         st.markdown("Asigna los niveles de atributos (Escala 1-20).")
         
-        # Recuperamos datos para mostrar bonos
         bio = st.session_state.temp_char_bio
         raza_bonus = RACES[bio['raza']]['bonus']
         clase_bonus_attr = CLASSES[bio['clase']]['bonus_attr']
         
-        st.caption(f"Bonos Activos -> Raza: {raza_bonus} | Clase: +1 a {clase_bonus_attr.capitalize()}")
+        st.success(f"Bonificaciones Activas: {raza_bonus} | +1 a {clase_bonus_attr.capitalize()} (Clase)")
 
         with st.form("step3_form"):
             c1, c2, c3 = st.columns(3)
@@ -184,24 +199,21 @@ def registration_wizard():
                 intelecto = st.number_input("Intelecto", 1, 20, 10, help="Capacidad lógica, memoria y hacking.")
                 voluntad = st.number_input("Voluntad", 1, 20, 10, help="Resistencia mental y determinación.")
             
-            submitted = st.form_submit_button("Finalizar y Comenzar Juego")
+            submitted = st.form_submit_button("Finalizar Reclutamiento")
             
             if submitted:
-                # Aplicar Bonos Simples (Sumar al valor base)
                 raw_attrs = {
                     "fuerza": fuerza, "agilidad": agilidad, "intelecto": intelecto,
                     "tecnica": tecnica, "presencia": presencia, "voluntad": voluntad
                 }
                 
-                # Sumar bono raza
+                # Sumar bonos automáticamente
                 for attr, val in raza_bonus.items():
                     if attr in raw_attrs: raw_attrs[attr] += val
                 
-                # Sumar bono clase (+1 placeholder)
                 if clase_bonus_attr in raw_attrs:
                     raw_attrs[clase_bonus_attr] += 1
                 
-                # Guardar en DB
                 success = create_commander_manual(
                     st.session_state.temp_player['id'],
                     st.session_state.temp_player['nombre'],
@@ -210,25 +222,26 @@ def registration_wizard():
                 )
                 
                 if success:
-                    st.success("¡Comandante Registrado!")
+                    st.balloons()
+                    st.success("¡Comandante Registrado Exitosamente!")
                     # Auto-login
                     st.session_state.player_data = st.session_state.temp_player
-                    # Fetch char data
                     c_res = supabase.table("characters").select("*").eq("player_id", st.session_state.temp_player['id']).single().execute()
                     st.session_state.commander_data = c_res.data
                     st.session_state.logged_in = True
-                    # Limpiar estado temporal
+                    # Resetear variables de registro
+                    st.session_state.is_registering = False
                     st.session_state.registration_step = 0
                     st.session_state.temp_player = None
                     st.rerun()
                 else:
-                    st.error("Error al guardar el personaje. Intenta de nuevo.")
+                    st.error("Error crítico al guardar el personaje. Por favor contacta al soporte.")
 
 
 # --- AUTH SCREEN (LOGIN O REGISTRO) ---
 def authentication_screen():
-    # Si estamos en medio de un registro (paso > 0), mostramos el wizard directamente
-    if st.session_state.registration_step > 0:
+    # AHORA: Si la bandera 'is_registering' es True, mostramos el wizard, SIN IMPORTAR el paso.
+    if st.session_state.is_registering:
         registration_wizard()
         return
 
@@ -252,13 +265,15 @@ def authentication_screen():
                     else:
                         st.error("Credenciales inválidas.")
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error("Error de acceso o usuario no encontrado.")
 
     with tab_reg:
-        # Este botón inicia el Wizard
+        st.info("Crea una nueva Facción y diseña tu primer Comandante.")
+        # Este botón ahora activa la bandera MAESTRA 'is_registering'
         if st.button("Comenzar Protocolo de Reclutamiento"):
-            st.session_state.registration_step = 0 # Asegura inicio
-            registration_wizard()
+            st.session_state.is_registering = True
+            st.session_state.registration_step = 0 # Asegura inicio en paso 0
+            st.rerun()
 
 # --- Main App Logic ---
 if st.session_state.logged_in:
