@@ -3,7 +3,7 @@ import json
 import streamlit as st
 from dotenv import load_dotenv
 from supabase import create_client, Client
-import google.generativeai as genai
+from google import genai  # [CAMBIO 1] Importación correcta para la nueva SDK
 import bcrypt
 import base64
 
@@ -31,8 +31,8 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 ai_client = None
 if GEMINI_API_KEY:
     try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        ai_client = genai.GenerativeModel('gemini-1.5-flash')
+        # [CAMBIO 2] Inicialización con la clase Client
+        ai_client = genai.Client(api_key=GEMINI_API_KEY)
         print("✅ Gemini client connected (Advanced Mode).")
     except Exception as e:
         print(f"Error initializing Gemini client: {e}")
@@ -115,7 +115,11 @@ def generate_random_character(player_name: str, password: str, faction_name: str
     """
     
     try:
-        response = ai_client.generate_content(prompt)
+        # [CAMBIO 3] Llamada actualizada a models.generate_content
+        response = ai_client.models.generate_content(
+            model=MODEL_NAME, 
+            contents=prompt
+        )
         text = response.text.strip().replace('```json', '').replace('```', '')
         char_data = json.loads(text)
         
@@ -172,7 +176,11 @@ def resolve_action(action_text: str, player_id: int) -> dict:
     """
 
     try:
-        response = ai_client.generate_content(prompt)
+        # [CAMBIO 4] Llamada actualizada a models.generate_content
+        response = ai_client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt
+        )
         text = response.text.strip().replace('```json', '').replace('```', '')
         result = json.loads(text)
 
