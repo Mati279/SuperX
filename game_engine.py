@@ -3,9 +3,9 @@ import json
 import streamlit as st
 from dotenv import load_dotenv
 from supabase import create_client, Client
-import google.generativeai as genai
+from google import genai # <--- LIBRERÍA NUEVA
 
-# Cargar variables
+# Cargar variables de entorno
 load_dotenv()
 
 # --- HELPER DE SECRETOS ---
@@ -22,13 +22,20 @@ GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("CRITICAL: Faltan credenciales de Supabase.")
 
+# Inicializar Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Inicializar Cliente de Google GenAI (NUEVO SDK)
+ai_client = None
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    try:
+        ai_client = genai.Client(api_key=GEMINI_API_KEY)
+    except Exception as e:
+        print(f"Error inicializando Gemini: {e}")
+else:
+    print("WARNING: GEMINI_API_KEY no encontrada.")
 
 # --- SISTEMA DE HABILIDADES (SKILLS) ---
-# Mapeo: Habilidad -> (Atributo 1, Atributo 2)
 SKILL_MAPPING = {
     # I. Combate
     "armas_mano": ("agilidad", "tecnica"),
@@ -100,45 +107,57 @@ def calculate_skills(attributes: dict) -> dict:
         skills[skill] = val1 + val2
     return skills
 
+def log_event(text: str, is_error: bool = False):
+    """Guarda un evento o error en Supabase."""
+    prefix = "ERROR: " if is_error else ""
+    try:
+        supabase.table("logs").insert({
+            "turno": 1, 
+            "evento_texto": f"{prefix}{text}",
+            "prompt_imagen": ""
+        }).execute()
+    except Exception as e:
+        print(f"Fallo al loguear en DB: {e}")
+
 def get_ai_instruction() -> dict:
     try:
         response = supabase.table("game_config").select("key", "value").execute()
         if response.data:
             return {item['key']: item['value'] for item in response.data}
-    except Exception:
-        pass
+    except Exception as e:
+        log_event(f"Error leyendo config: {e}", is_error=True)
     return {}
 
 def generate_random_character(faction_name: str = "Neutral") -> dict:
-    """Genera un personaje completo con Gemini y calcula sus skills."""
+    if not ai_client: return None
+    
     game_config = get_ai_instruction()
-    world_desc = game_config.get('world_description', 'Ciencia ficción futurista.')
+    world_desc = game_config.get('world_description', 'Ciencia ficción.')
     
     prompt = f"""
-    Genera un personaje para un juego de rol:
+    Genera un personaje sci-fi.
     Mundo: {world_desc}
     Facción: {faction_name}
     
-    Devuelve SOLO un JSON con esta estructura exacta:
+    Output JSON (sin markdown):
     {{
-        "bio": {{"nombre": "String", "raza": "String", "edad": Int, "sexo": "String", "rol": "String"}},
-        "atributos": {{"fuerza": Int(1-20), "agilidad": Int(1-20), "intelecto": Int(1-20), "tecnica": Int(1-20), "presencia": Int(1-20), "voluntad": Int(1-20)}},
-        "resumen": "Breve descripción narrativa del personaje."
+        "bio": {{"nombre": "str", "raza": "str", "edad": int, "sexo": "str", "rol": "str"}},
+        "atributos": {{"fuerza": int(1-20), "agilidad": int, "intelecto": int, "tecnica": int, "presencia": int, "voluntad": int}},
+        "resumen": "str (max 30 words)"
     }}
-    Sé creativo con la raza y el rol.
     """
     
     try:
-        # CORRECCIÓN DEL MODELO AQUI
-        model = genai.GenerativeModel('gemini-1.5-flash-001') 
-        response = model.generate_content(prompt)
+        # NUEVA SINTAXIS DE LLAMADA
+        response = ai_client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt
+        )
+        
         text = response.text.strip().replace('```json', '').replace('```', '')
         char_data = json.loads(text)
-        
-        # Calcular habilidades derivadas
         char_data["habilidades"] = calculate_skills(char_data["atributos"])
         
-        # Guardar en DB
         new_entity = {
             "nombre": char_data["bio"]["nombre"],
             "tipo": "Personaje",
@@ -147,59 +166,65 @@ def generate_random_character(faction_name: str = "Neutral") -> dict:
             "ubicacion": "Base Principal"
         }
         
-        # Insertar y devolver
         res = supabase.table("entities").insert(new_entity).execute()
         if res.data:
             return res.data[0]
             
     except Exception as e:
-        print(f"Error generando personaje: {e}")
+        log_event(f"Fallo generando personaje: {e}", is_error=True)
         return None
 
 def resolve_action(action_text: str, player_id: int) -> dict:
-    # ... (Tu lógica existente, actualizada con el modelo correcto) ...
-    game_config = get_ai_instruction()
-    rules = game_config.get('rules', '')
-    world_description = game_config.get('world_description', '')
+    if not ai_client: 
+        return {"narrative": "Error: IA no conectada.", "updates": []}
 
-    # Fetch simple del estado
-    players_response = supabase.table("players").select("*").execute()
-    entities_response = supabase.table("entities").select("*").execute()
+    game_config = get_ai_instruction()
     
-    game_state = {
-        "players": players_response.data,
-        "entities": entities_response.data
-    }
+    # Obtener estado actual
+    try:
+        players = supabase.table("players").select("*").execute().data
+        entities = supabase.table("entities").select("*").execute().data
+    except Exception as e:
+        return {"narrative": f"Error leyendo DB: {e}", "updates": []}
+    
+    game_state = {"players": players, "entities": entities}
 
     prompt = f"""
-    Actúa como GM.
-    Mundo: {world_description}
-    Reglas: {rules}
-    Estado: {json.dumps(game_state)}
-    Acción Jugador {player_id}: "{action_text}"
+    GM Sci-Fi.
+    Mundo: {game_config.get('world_description','')}
+    Reglas: {game_config.get('rules','')}
+    Estado: {json.dumps(game_state, default=str)}
+    Acción (ID {player_id}): "{action_text}"
     
-    Resuelve la acción. Devuelve JSON con "narrative" y "updates" (lista de objetos con table, id, data).
+    Output JSON (sin markdown):
+    {{
+        "narrative": "str",
+        "updates": [ {{"table": "str", "id": int, "data": {{...}} }} ]
+    }}
     """
 
     try:
-        # CORRECCIÓN DEL MODELO AQUI TAMBIÉN
-        model = genai.GenerativeModel('gemini-1.5-flash-001')
-        response = model.generate_content(prompt)
-        cleaned = response.text.strip().replace('```json', '').replace('```', '')
-        result = json.loads(cleaned)
+        # NUEVA SINTAXIS DE LLAMADA
+        response = ai_client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt
+        )
+        
+        text = response.text.strip().replace('```json', '').replace('```', '')
+        result = json.loads(text)
 
+        # Ejecutar actualizaciones
         if "updates" in result:
             for update in result["updates"]:
                 if update.get("table") and update.get("id") and update.get("data"):
                     supabase.table(update["table"]).update(update["data"]).eq("id", update["id"]).execute()
 
-        log_entry = {
-            "turno": 1,
-            "evento_texto": result.get("narrative", "Error narrativo"),
-            "prompt_imagen": ""
-        }
-        supabase.table("logs").insert(log_entry).execute()
+        # Loguear evento
+        log_event(result.get("narrative", "Acción sin narrativa."))
 
         return result
+
     except Exception as e:
-        return {"narrative": f"Error del sistema: {e}", "updates": []}
+        error_msg = f"Error resolviendo acción: {e}"
+        log_event(error_msg, is_error=True)
+        return {"narrative": error_msg, "updates": []}
