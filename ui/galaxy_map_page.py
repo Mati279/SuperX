@@ -1,5 +1,6 @@
 # ui/galaxy_map_page.py
 import streamlit as st
+import streamlit.components.v1 as components
 from core.galaxy_generator import get_galaxy
 from core.world_models import System, Planet, AsteroidBelt
 
@@ -16,28 +17,70 @@ def show_galaxy_map_page():
 
     # Enrutador de vistas
     if st.session_state.map_view == 'galaxy':
-        _render_galaxy_view()
+        _render_interactive_galaxy_map()
     elif st.session_state.map_view == 'system' and st.session_state.selected_system_id is not None:
         _render_system_view()
     elif st.session_state.map_view == 'planet' and st.session_state.selected_planet_id is not None:
         _render_planet_view()
 
-def _render_galaxy_view():
-    """Muestra la lista de sistemas estelares."""
+def _render_interactive_galaxy_map():
+    """Muestra el mapa galáctico interactivo como un componente HTML/SVG."""
     st.header("Sistemas Conocidos")
     galaxy = get_galaxy()
     
-    # Crear una cuadrícula de sistemas
-    cols = st.columns(4)
-    for i, system in enumerate(galaxy.systems):
-        with cols[i % 4]:
-            with st.container(border=True):
-                st.subheader(system.name)
-                st.caption(f"Tipo de Estrella: {system.star.type}")
-                if st.button("Explorar Sistema", key=f"sys_{system.id}"):
-                    st.session_state.map_view = 'system'
-                    st.session_state.selected_system_id = system.id
-                    st.rerun()
+    # --- Generación del Componente HTML/SVG ---
+    svg_elements = []
+    # Definir el color de cada estrella según su clase
+    star_colors = {"G": "#FFF", "O": "#A9D0F5", "M": "#F7BE81", "D": "#E6E6E6", "X": "#E2A9F3"}
+
+    for system in galaxy.systems:
+        cx, cy = system.position
+        color = star_colors.get(system.star.class_type, "#FFFFFF")
+        
+        # Círculo para la estrella
+        svg_elements.append(
+            f'<circle id="star-{system.id}" cx="{cx}" cy="{cy}" r="4" fill="{color}" class="star" onclick="handleClick({system.id})"></circle>'
+        )
+        # Texto con el nombre (inicialmente oculto)
+        svg_elements.append(
+            f'<text x="{cx + 10}" y="{cy + 5}" class="star-label" id="label-{system.id}">{system.name}</text>'
+        )
+
+    svg_content = "".join(svg_elements)
+
+    html_template = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <style>
+        body {{ margin: 0; background-color: #0F1116; }}
+        svg {{ cursor: pointer; }}
+        .star {{ transition: r 0.2s ease-in-out, filter 0.2s ease-in-out; }}
+        .star:hover {{ r: 8; filter: drop-shadow(0 0 5px #fff); }}
+        .star-label {{ fill: #ccc; font-family: sans-serif; font-size: 12px; pointer-events: none; visibility: hidden; }}
+        .star:hover + .star-label {{ visibility: visible; }}
+    </style>
+    </head>
+    <body>
+        <svg width="1000" height="800" viewbox="0 0 1000 800">
+            {svg_content}
+        </svg>
+        <script>
+            const streamlit = window.parent.Streamlit;
+            function handleClick(systemId) {{
+                streamlit.setComponentValue(systemId);
+            }}
+        </script>
+    </body>
+    </html>
+    """
+
+    selected_system_id = components.html(html_template, height=800)
+    
+    if selected_system_id:
+        st.session_state.map_view = 'system'
+        st.session_state.selected_system_id = selected_system_id
+        st.rerun()
 
 def _render_system_view():
     """Muestra los detalles de un sistema estelar seleccionado."""
@@ -62,7 +105,6 @@ def _render_system_view():
     
     st.subheader("Anillos Orbitales")
     
-    # Mostrar los 9 anillos
     for ring in range(1, 10):
         body = system.orbital_rings.get(ring)
         
@@ -96,7 +138,6 @@ def _render_planet_view():
         _reset_to_galaxy_view()
         return
 
-    # Encontrar el planeta dentro del sistema
     planet = None
     for body in system.orbital_rings.values():
         if isinstance(body, Planet) and body.id == st.session_state.selected_planet_id:
@@ -128,8 +169,6 @@ def _render_planet_view():
     else:
         st.write("_Este planeta no tiene lunas._")
 
-
-# --- Funciones de navegación de estado ---
 def _reset_to_galaxy_view():
     st.session_state.map_view = 'galaxy'
     st.session_state.selected_system_id = None

@@ -1,6 +1,5 @@
 # core/galaxy_generator.py
-import random
-import uuid
+import math
 from typing import List, Dict, Optional
 
 from .world_models import Galaxy, System, Star, Planet, Moon, AsteroidBelt, CelestialBody
@@ -16,7 +15,7 @@ class GalaxyGenerator:
     Clase responsable de la generación procedural de la galaxia.
     Utiliza un 'seed' para que la galaxia sea la misma en cada ejecución.
     """
-    def __init__(self, seed: int = 42, num_systems: int = 25):
+    def __init__(self, seed: int = 42, num_systems: int = 30):
         self.seed = seed
         self.num_systems = num_systems
         self.random = random.Random(seed)
@@ -90,15 +89,31 @@ class GalaxyGenerator:
             hazard_level=self.random.uniform(0.1, 0.9)
         )
 
-    def _create_system(self, system_id: int) -> System:
+    def _create_system(self, system_id: int, system_index: int) -> System:
         system_name = self._generate_unique_system_name()
         star = self._create_star()
+        
+        # --- Lógica de Posicionamiento en Espiral ---
+        # Estos valores se pueden ajustar para cambiar la forma de la galaxia
+        angle = system_index * 137.5  # Angulo dorado para distribución uniforme
+        radius_scale = 15  # Escala del radio
+        radius = radius_scale * math.sqrt(system_index)
+        
+        # Añadir algo de aleatoriedad para que no sea una espiral perfecta
+        angle_randomness = self.random.uniform(-10, 10)
+        radius_randomness = self.random.uniform(-5, 5)
+
+        # Coordenadas polares a cartesianas
+        # El centro de la galaxia estará en (500, 400)
+        center_x, center_y = 500, 400
+        x = center_x + (radius + radius_randomness) * math.cos(math.radians(angle + angle_randomness))
+        y = center_y + (radius + radius_randomness) * math.sin(math.radians(angle + angle_randomness))
         
         system = System(
             id=system_id,
             name=system_name,
             star=star,
-            position=(self.random.randint(0, 1000), self.random.randint(0, 800))
+            position=(x, y)
         )
 
         for ring in range(1, 10):
@@ -127,7 +142,7 @@ class GalaxyGenerator:
             return self.galaxy # No regenerar si ya existe
 
         for i in range(self.num_systems):
-            system = self._create_system(system_id=i)
+            system = self._create_system(system_id=i, system_index=i)
             self.galaxy.systems.append(system)
         
         return self.galaxy
