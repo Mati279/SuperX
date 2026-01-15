@@ -1,19 +1,15 @@
 # ui/auth_page.py
 import streamlit as st
+import time
 from .state import login_user, start_registration
-from data.player_repository import authenticate_player
+from data.player_repository import authenticate_player, create_session_token
 from data.character_repository import get_commander_by_player_id
 
-def render_auth_page():
-    """
-    Renderiza la página de autenticación, que incluye el formulario de login
-    y el botón para iniciar el proceso de registro.
-    """
+def render_auth_page(cookie_manager): # <--- Recibe el cookie_manager
     st.title("SuperX: Galactic Command")
     
     tab_login, tab_reg = st.tabs(["Acceso Identificado", "Nuevo Registro"])
     
-    # --- Pestaña de Login ---
     with tab_login:
         st.subheader("Terminal de Acceso")
         with st.form("login_form"):
@@ -25,29 +21,33 @@ def render_auth_page():
                     st.error("El usuario y el PIN son obligatorios.")
                 else:
                     try:
-                        # La lógica de autenticación está ahora en el repositorio
                         player = authenticate_player(user_name, pin)
                         
                         if player:
-                            # Si el jugador existe, buscamos su comandante
                             commander = get_commander_by_player_id(player['id'])
                             if commander:
-                                # La lógica de login está en el state manager
+                                # 1. Generar token seguro en DB
+                                token = create_session_token(player['id'])
+                                
+                                # 2. Guardar en Cookie (Expira en 30 días)
+                                cookie_manager.set('superx_session_token', token, expires_at=None, key="set_auth_cookie")
+                                
+                                # 3. Login en Estado
                                 login_user(player, commander)
+                                st.success("Acceso concedido. Iniciando sistemas...")
+                                time.sleep(0.5) # Pequeña pausa para asegurar que la cookie se escriba
                                 st.rerun()
                             else:
-                                # Caso borde: el jugador existe pero no tiene comandante
-                                st.error("Autenticación correcta, pero no se encontró un Comandante asignado.")
+                                st.error("Usuario sin Comandante asignado.")
                         else:
-                            st.error("Credenciales inválidas. Verifique su usuario y PIN.")
+                            st.error("Credenciales inválidas.")
                             
                     except Exception as e:
                         st.error(f"Error del sistema: {e}")
 
-    # --- Pestaña de Registro ---
     with tab_reg:
+        # ... (Igual que antes) ...
         st.subheader("Protocolo de Reclutamiento")
-        st.info("Crea una nueva Facción y diseña tu primer Comandante para unirte al conflicto galáctico.")
+        st.info("Crea una nueva Facción y diseña tu primer Comandante.")
         if st.button("Comenzar Reclutamiento"):
-            # Llama a la función del state manager para cambiar de estado
             start_registration()

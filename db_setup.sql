@@ -26,6 +26,8 @@ CREATE TABLE players (
     pin TEXT NOT NULL,               -- Tu PIN de 4 dígitos (encriptado)
     faccion_nombre TEXT NOT NULL,    -- Nombre de tu facción
     banner_url TEXT,                 -- URL del estandarte
+    -- Agregar columna para persistencia de sesión
+    session_token TEXT,
     fecha_registro TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
