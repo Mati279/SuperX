@@ -66,3 +66,13 @@ def cancel_registration() -> None:
 def next_registration_step() -> None:
     st.session_state.registration_step += 1
     st.rerun()
+
+# --- Funciones de Acceso a Datos de Sesión ---
+
+def get_player() -> Dict[str, Any] | None:
+    """Retorna los datos del jugador desde el estado de la sesión."""
+    return st.session_state.player_data
+
+def get_commander() -> Dict[str, Any] | None:
+    """Retorna los datos del comandante desde el estado de la sesión."""
+    return st.session_state.commander_data

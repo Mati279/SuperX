@@ -27,19 +27,25 @@ def log_event(text: str, player_id: Optional[int] = None, is_error: bool = False
         # Imprimir error en la consola del servidor si falla el logging a DB
         print(f"CRITICAL: Fallo al registrar evento en la base de datos: {e}")
 
-def get_recent_logs(limit: int = 10) -> list:
+def get_recent_logs(player_id: Optional[int] = None, limit: int = 10) -> list:
     """
-    Obtiene los logs más recientes de la base de datos.
+    Obtiene los logs más recientes de la base de datos, opcionalmente por jugador.
     
     Args:
+        player_id: (Opcional) El ID del jugador para filtrar los logs.
         limit: El número máximo de logs a obtener.
         
     Returns:
         Una lista de diccionarios con los datos de los logs.
     """
     try:
-        response = supabase.table("logs").select("*").order("id", desc=True).limit(limit).execute()
+        query = supabase.table("logs").select("*")
+        if player_id:
+            query = query.eq("player_id", player_id)
+            
+        response = query.order("id", desc=True).limit(limit).execute()
         return response.data if response.data else []
     except Exception as e:
-        log_event(f"Error al obtener logs: {e}", is_error=True)
+        log_event(f"Error al obtener logs para el jugador {player_id}: {e}", player_id=player_id, is_error=True)
         return []
+
