@@ -1,26 +1,49 @@
 import os
 import json
-import pandas as pd
+import streamlit as st  # Importamos streamlit para acceder a st.secrets
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import google.generativeai as genai
 
-# Cargar variables de entorno
+# Cargar variables de entorno (para local)
 load_dotenv()
 
-# Configuración de Supabase y Google AI
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# --- FUNCIÓN HELPER PARA GESTIONAR CLAVES ---
+def get_secret(key):
+    """Busca la clave primero en variables de entorno, luego en st.secrets."""
+    value = os.getenv(key)
+    if value:
+        return value
+    if key in st.secrets:
+        return st.secrets[key]
+    return None
 
+# Recuperar credenciales
+SUPABASE_URL = get_secret("SUPABASE_URL")
+SUPABASE_KEY = get_secret("SUPABASE_KEY")
+GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
+
+# Validación temprana para evitar errores cripticos
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("CRITICAL: Faltan las credenciales de SUPABASE_URL o SUPABASE_KEY en .env o Secrets.")
+
+# Inicializar clientes
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-genai.configure(api_key=GEMINI_API_KEY)
+
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+else:
+    # No lanzamos error aquí para permitir que la UI cargue y avise
+    print("WARNING: GEMINI_API_KEY no encontrada.")
 
 def get_ai_instruction() -> dict:
     """Recupera la configuración del juego desde Supabase."""
-    response = supabase.table("game_config").select("key", "value").execute()
-    if response.data:
-        return {item['key']: item['value'] for item in response.data}
+    try:
+        response = supabase.table("game_config").select("key", "value").execute()
+        if response.data:
+            return {item['key']: item['value'] for item in response.data}
+    except Exception as e:
+        print(f"Error conectando a DB: {e}")
     return {}
 
 def resolve_action(action_text: str, player_id: int) -> dict:

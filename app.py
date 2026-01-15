@@ -1,17 +1,11 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client
-import os
-from dotenv import load_dotenv
+# Eliminamos la creación de cliente duplicada
+# from supabase import create_client (Ya no hace falta aquí)
+# from dotenv import load_dotenv (Ya lo maneja game_engine)
 
-# Importar lógica del juego
-from game_engine import get_ai_instruction, resolve_action
-
-# Cargar variables de entorno y configurar clientes
-load_dotenv()
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Importamos la instancia de supabase ya creada en game_engine
+from game_engine import get_ai_instruction, resolve_action, supabase
 
 # --- Configuración de la página ---
 st.set_page_config(page_title="SuperX Engine", layout="wide")
@@ -26,21 +20,29 @@ if 'current_player_name' not in st.session_state:
 with st.sidebar:
     st.header("Configuración del Jugador")
 
-    # Simulación de login
-    players_response = supabase.table("players").select("id", "nombre").execute()
-    player_names = {player['nombre']: player['id'] for player in players_response.data}
-    
-    selected_player_name = st.selectbox(
-        "Selecciona tu personaje",
-        options=list(player_names.keys()),
-        index=0,
-        key="player_select"
-    )
+    try:
+        # Usamos la instancia importada
+        players_response = supabase.table("players").select("id", "nombre").execute()
+        player_names = {player['nombre']: player['id'] for player in players_response.data}
+        
+        if not player_names:
+            st.warning("No hay jugadores en la base de datos.")
+            selected_player_name = None
+        else:
+            selected_player_name = st.selectbox(
+                "Selecciona tu personaje",
+                options=list(player_names.keys()),
+                index=0,
+                key="player_select"
+            )
 
-    if st.button("Cargar Personaje"):
-        st.session_state.current_player_id = player_names[selected_player_name]
-        st.session_state.current_player_name = selected_player_name
-        st.success(f"Personaje '{selected_player_name}' cargado.")
+        if st.button("Cargar Personaje") and selected_player_name:
+            st.session_state.current_player_id = player_names[selected_player_name]
+            st.session_state.current_player_name = selected_player_name
+            st.success(f"Personaje '{selected_player_name}' cargado.")
+
+    except Exception as e:
+        st.error(f"Error de conexión con Base de Datos: {e}")
 
     st.info(f"Jugador actual: **{st.session_state.current_player_name}**")
 
@@ -54,9 +56,15 @@ with tab1:
     st.subheader("Registro de Eventos")
     log_container = st.container(height=400)
     
-    logs_response = supabase.table("logs").select("evento_texto").order("id", desc=True).limit(10).execute()
-    for log in reversed(logs_response.data):
-        log_container.chat_message("assistant", avatar="📜").write(log['evento_texto'])
+    try:
+        logs_response = supabase.table("logs").select("evento_texto").order("id", desc=True).limit(10).execute()
+        if logs_response.data:
+            for log in reversed(logs_response.data):
+                log_container.chat_message("assistant", avatar="📜").write(log['evento_texto'])
+        else:
+            log_container.info("No hay eventos registrados aún.")
+    except Exception as e:
+        log_container.error("No se pudieron cargar los logs.")
 
     # Input de acción
     st.subheader("¿Qué quieres hacer?")
