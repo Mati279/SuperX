@@ -1,166 +1,154 @@
 import streamlit as st
 from game_engine import (
     supabase,
-    generate_random_character,
+    register_faction_and_commander,
     resolve_action,
     verify_password
 )
 
-# --- Page Configuration ---
 st.set_page_config(page_title="SuperX Engine", layout="wide")
 
-# --- Session State Initialization ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
-if 'player_info' not in st.session_state:
-    st.session_state.player_info = None
+if 'player_data' not in st.session_state:
+    st.session_state.player_data = None
+if 'commander_data' not in st.session_state:
+    st.session_state.commander_data = None
 
 # --- Main Game UI ---
 def main_game_interface():
-    player = st.session_state.player_info
+    player = st.session_state.player_data
+    commander = st.session_state.commander_data
+    
+    stats = commander.get('stats_json', {}) if commander else {}
+    bio = stats.get('bio', {})
 
-    # Display Faction Banner and Name
-    st.markdown(f"## Comandante: {player['nombre']} | Facción: {player['faccion_nombre']}")
+    # Header
+    st.markdown(f"## Facción: {player['faccion_nombre']} | Líder: {bio.get('nombre', 'Desconocido')}")
     if player.get('banner_url'):
         st.image(player['banner_url'], width=150)
 
-    st.sidebar.header("SuperX Galactic")
-    st.sidebar.info(f"Sesión activa como: **{player['nombre']}**")
+    st.sidebar.header("Terminal de Mando")
+    st.sidebar.success(f"Usuario: {player['nombre']}")
+    st.sidebar.info(f"Personaje: {bio.get('nombre', 'N/A')} ({bio.get('rol', 'N/A')})")
+    
     if st.sidebar.button("Cerrar Sesión"):
         st.session_state.logged_in = False
-        st.session_state.player_info = None
+        st.session_state.player_data = None
+        st.session_state.commander_data = None
         st.rerun()
         
     st.sidebar.divider()
 
-    # Main game tabs
-    tab1, tab2 = st.tabs(["Juego", "Administración"])
+    tab1, tab2 = st.tabs(["Sala de Guerra", "Datos del Comandante"])
 
     with tab1:
-        st.header("Centro de Mando")
-        st.subheader("Últimos Eventos")
+        st.subheader("Bitácora de Misión")
         log_container = st.container(height=300)
         try:
+            # Logs filtrados por el usuario actual o globales
             logs_resp = supabase.table("logs").select("*").order("id", desc=True).limit(10).execute()
             for log in reversed(logs_resp.data):
                 if "ERROR" not in log['evento_texto']:
                     log_container.chat_message("assistant", avatar="📜").write(log['evento_texto'])
         except Exception:
-            log_container.info("Sin datos de eventos.")
+            log_container.info("Sin datos.")
 
-        action = st.chat_input("¿Cuáles son sus órdenes, Comandante?")
+        action = st.chat_input(f"¿Órdenes, Comandante {bio.get('nombre', '')}?")
         if action:
-            with st.spinner("Procesando directiva..."):
+            with st.spinner("Transmitiendo órdenes..."):
                 res = resolve_action(action, player['id'])
                 if res.get("narrative"):
                     st.rerun()
 
     with tab2:
-        st.header("Administración & Personaje")
-        st.subheader("Ficha del Personaje")
-        st.json(player.get('stats_json', {}))
+        st.subheader("Hoja de Servicio")
+        if commander:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("### Atributos")
+                st.json(stats.get('atributos', {}))
+            with c2:
+                st.markdown("### Habilidades")
+                st.json(stats.get('habilidades', {}))
+            
+            st.markdown("### Biografía")
+            st.write(stats.get('bio', {}))
+        else:
+            st.warning("No se encontraron datos del Comandante.")
         
-        st.subheader("Monitor del Sistema (Logs)")
-        if st.button("Refrescar Logs"):
-            st.rerun()
-        try:
-            all_logs = supabase.table("logs").select("*").order("id", desc=True).limit(20).execute()
-            if all_logs.data:
-                for log in all_logs.data:
-                    msg = log['evento_texto']
-                    if "ERROR" in msg:
-                        st.error(f"[{log['id']}] {msg}")
-                    else:
-                        st.text(f"[{log['id']}] {msg}")
-        except Exception as e:
-            st.error(f"No se pudo cargar el monitor: {e}")
+        st.divider()
+        st.subheader("Diagnóstico del Sistema")
+        if st.button("Ver Logs de Sistema"):
+            logs = supabase.table("logs").select("*").order("id", desc=True).limit(5).execute()
+            st.table(logs.data)
 
-# --- Authentication Screen ---
+# --- Auth Screen ---
 def authentication_screen():
     st.title("SuperX: Galactic Command")
     
-    # --- LOG VIEWER BUTTON (SIEMPRE VISIBLE) ---
-    with st.expander("🆘 Ver Logs de Error (Diagnóstico)"):
-        st.info("Usa esto si tienes problemas al registrarte o iniciar sesión.")
-        if st.button("Consultar Errores Recientes"):
+    with st.expander("🆘 Diagnóstico de Conexión"):
+        if st.button("Probar Conexión DB"):
             try:
-                # Trae los ultimos 5 errores
-                errors = supabase.table("logs").select("*").ilike("evento_texto", "%ERROR%").order("id", desc=True).limit(5).execute()
-                if errors.data:
-                    for err in errors.data:
-                        st.error(f"ID {err['id']}: {err['evento_texto']}")
-                else:
-                    st.success("No se encontraron errores recientes en la base de datos.")
+                logs = supabase.table("logs").select("id").limit(1).execute()
+                st.success("Conexión a Supabase: OK")
             except Exception as e:
-                st.warning(f"No se pudo conectar a los logs: {e}")
+                st.error(f"Error: {e}")
 
-    st.header("Acceso a la Terminal de Mando")
+    login_tab, register_tab = st.tabs(["Acceso Identificado", "Nueva Facción"])
 
-    login_tab, register_tab = st.tabs(["Iniciar Sesión", "Registrar Nuevo Comandante"])
-
-    # Login Form
     with login_tab:
         with st.form("login_form"):
-            commander_name = st.text_input("Nombre de Comandante")
-            # CAMBIO: PIN de 4 dígitos
-            password = st.text_input("PIN de Acceso a Terminal", type="password", help="Tu código numérico de 4 dígitos", max_chars=4)
-            submitted = st.form_submit_button("Acceder")
-
-            if submitted:
+            user_name = st.text_input("Usuario")
+            pin = st.text_input("PIN (4 dígitos)", type="password", max_chars=4)
+            if st.form_submit_button("Iniciar Enlace"):
                 try:
-                    response = supabase.table("players").select("*").eq("nombre", commander_name).single().execute()
-                    player_data = response.data
-                    if player_data and verify_password(player_data['password'], password):
+                    # 1. Buscar Jugador
+                    res = supabase.table("players").select("*").eq("nombre", user_name).single().execute()
+                    p_data = res.data
+                    
+                    if p_data and verify_password(p_data['pin'], pin):
+                        # 2. Buscar Comandante asociado
+                        c_res = supabase.table("characters").select("*").eq("player_id", p_data['id']).eq("es_comandante", True).single().execute()
+                        
                         st.session_state.logged_in = True
-                        st.session_state.player_info = player_data
+                        st.session_state.player_data = p_data
+                        st.session_state.commander_data = c_res.data # Puede ser None si hubo un error en creación
                         st.rerun()
                     else:
-                        st.error("Credenciales incorrectas.")
+                        st.error("Credenciales inválidas.")
                 except Exception as e:
-                    st.error("Error al verificar credenciales. Es posible que el comandante no exista.")
+                    st.error(f"Error de acceso: {e}")
 
-    # Registration Form
     with register_tab:
-        with st.form("register_form", clear_on_submit=True):
-            st.markdown("### Nuevo Registro")
-            new_commander_name = st.text_input("Asignar Nombre de Comandante")
+        st.markdown("### Establecer Nueva Facción")
+        with st.form("reg_form"):
+            new_user = st.text_input("Nombre de Usuario (Tú)")
+            new_pin = st.text_input("PIN de Seguridad", type="password", max_chars=4)
+            faction = st.text_input("Nombre de la Facción")
+            banner = st.file_uploader("Estandarte", type=['png', 'jpg'])
             
-            # CAMBIO: PIN de 4 dígitos
-            new_password = st.text_input("Definir PIN de Acceso (4 Dígitos)", type="password", max_chars=4, help="Usa 4 números, ej: 1234")
-            
-            faction_name = st.text_input("Nombre de la Facción")
-            banner_file = st.file_uploader("Estandarte de la Facción (Opcional, PNG/JPG)", type=['png', 'jpg'])
-            reg_submitted = st.form_submit_button("Registrar y Generar Perfil")
-
-            if reg_submitted:
-                # Validaciones
-                if not new_commander_name or not new_password or not faction_name:
-                    st.warning("Todos los campos de texto son obligatorios.")
-                elif not new_password.isdigit() or len(new_password) != 4:
-                    st.error("El PIN debe ser exactamente 4 números.")
+            if st.form_submit_button("Crear Facción y Comandante"):
+                if not new_user or len(new_pin) != 4 or not faction:
+                    st.warning("Completa todos los campos. El PIN debe ser de 4 dígitos.")
                 else:
-                    with st.spinner("Forjando un nuevo líder en las estrellas..."):
-                        # Check if player already exists
+                    with st.spinner("Inicializando protocolos de facción..."):
+                        # Verificar duplicados
                         try:
-                            existing = supabase.table("players").select("id").eq("nombre", new_commander_name).execute()
-                            if existing.data:
-                                st.error("Ese nombre de Comandante ya está en uso.")
+                            check = supabase.table("players").select("id").eq("nombre", new_user).execute()
+                            if check.data:
+                                st.error("Este usuario ya existe.")
                                 st.stop()
-                        except Exception:
-                            pass 
-                            
-                        new_player = generate_random_character(
-                            player_name=new_commander_name,
-                            password=new_password,
-                            faction_name=faction_name,
-                            banner_file=banner_file
-                        )
-                        if new_player:
-                            st.success(f"¡Comandante {new_commander_name} registrado! Ahora puedes iniciar sesión con tu PIN.")
+                        except: pass
+                        
+                        # Crear todo
+                        result = register_faction_and_commander(new_user, new_pin, faction, banner)
+                        
+                        if result:
+                            st.success("¡Facción establecida! Accede desde la pestaña de 'Acceso Identificado'.")
                         else:
-                            st.error("Error crítico durante la creación. Abre 'Ver Logs de Error' arriba para ver el detalle.")
+                            st.error("Error al crear la facción. Revisa los logs de diagnóstico.")
 
-# --- Main App Logic ---
 if st.session_state.logged_in:
     main_game_interface()
 else:
