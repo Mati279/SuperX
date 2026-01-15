@@ -3,7 +3,7 @@ import json
 import streamlit as st
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from google import genai  # [CAMBIO 1] Importación correcta para la nueva SDK
+from google import genai 
 import bcrypt
 import base64
 
@@ -31,7 +31,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 ai_client = None
 if GEMINI_API_KEY:
     try:
-        # [CAMBIO 2] Inicialización con la clase Client
+        # Inicialización con el nuevo cliente de Google GenAI
         ai_client = genai.Client(api_key=GEMINI_API_KEY)
         print("✅ Gemini client connected (Advanced Mode).")
     except Exception as e:
@@ -41,14 +41,25 @@ else:
 
 
 # --- Skill System ---
+# RELLENADO: Asigna habilidades basadas en dos atributos
 SKILL_MAPPING = {
-    # ... (skill mappings remain the same)
+    "Combate Cercano": ("fuerza", "agilidad"),
+    "Puntería": ("agilidad", "tecnica"),
+    "Hacking": ("intelecto", "tecnica"),
+    "Pilotaje": ("agilidad", "intelecto"),
+    "Persuasión": ("presencia", "voluntad"),
+    "Medicina": ("intelecto", "tecnica"),
+    "Sigilo": ("agilidad", "presencia"),
+    "Ingeniería": ("tecnica", "intelecto")
 }
 
 def calculate_skills(attributes: dict) -> dict:
     """Calculates base skill level (Attr1 + Attr2)."""
     skills = {}
+    if not attributes: return {}
+    
     attrs_safe = {k.lower(): v for k, v in attributes.items()}
+    
     for skill, (a1, a2) in SKILL_MAPPING.items():
         val1 = attrs_safe.get(a1, 0)
         val2 = attrs_safe.get(a2, 0)
@@ -79,11 +90,11 @@ def get_ai_instruction() -> dict:
 
 # --- Authentication ---
 def hash_password(password: str) -> str:
-    """Hashes a password for storing."""
+    """Hashes a password/PIN for storing."""
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 def verify_password(stored_password: str, provided_password: str) -> bool:
-    """Verifies a password against a stored hash."""
+    """Verifies a password/PIN against a stored hash."""
     return bcrypt.checkpw(provided_password.encode('utf-8'), stored_password.encode('utf-8'))
 
 def encode_image(image_file):
@@ -94,7 +105,9 @@ def encode_image(image_file):
 MODEL_NAME = 'gemini-1.5-flash'
 
 def generate_random_character(player_name: str, password: str, faction_name: str, banner_file) -> dict:
-    if not ai_client: return None
+    if not ai_client: 
+        log_event("Intento de registro fallido: Cliente AI no conectado.", is_error=True)
+        return None
     
     game_config = get_ai_instruction()
     world_desc = game_config.get('world_description', 'Sci-fi.')
@@ -115,7 +128,7 @@ def generate_random_character(player_name: str, password: str, faction_name: str
     """
     
     try:
-        # [CAMBIO 3] Llamada actualizada a models.generate_content
+        # Llamada actualizada para google.genai
         response = ai_client.models.generate_content(
             model=MODEL_NAME, 
             contents=prompt
@@ -176,7 +189,7 @@ def resolve_action(action_text: str, player_id: int) -> dict:
     """
 
     try:
-        # [CAMBIO 4] Llamada actualizada a models.generate_content
+        # Llamada actualizada para google.genai
         response = ai_client.models.generate_content(
             model=MODEL_NAME,
             contents=prompt
