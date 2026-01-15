@@ -48,7 +48,7 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
     with st.sidebar:
         st.header(f"Facción: {player['faccion_nombre']}")
         if player.get('banner_url'):
-            st.image(player['banner_url'], use_column_width=True)
+            st.image(player['banner_url'], use_column_width='auto')
 
         st.subheader(f"Comandante: {commander['nombre']}")
         
