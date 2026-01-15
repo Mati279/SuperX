@@ -1,19 +1,55 @@
 # services/gemini_service.py
 import json
 from typing import Dict, Any, Optional
+
+from google.generativeai.types import GenerateContentResponse
 from data.database import ai_client
 from data.log_repository import log_event
 from data.game_config_repository import get_game_config
 from data.character_repository import get_commander_by_player_id, update_character
 
-# Constante para el nombre del modelo
-MODEL_NAME = 'gemini-2.5-flash' # Reemplazado por gemini-2.5-flash
+# Constante para el nombre del modelo de texto
+TEXT_MODEL_NAME = 'gemini-1.5-flash'
+
+# Constante para el nombre del modelo de imagen (ej: 'imagen-3.0-generate-001')
+# Usamos un modelo que soporte generación de imágenes.
+# Reemplazar con el modelo específico y más económico cuando se decida.
+IMAGE_MODEL_NAME = 'gemini-1.5-flash'
+
+
+def generate_image(prompt: str, player_id: int) -> Optional[GenerateContentResponse]:
+    """
+    Genera una imagen usando el modelo de IA de Gemini.
+
+    Args:
+        prompt: La descripción de la imagen a generar.
+        player_id: El ID del jugador que solicita la imagen.
+
+    Returns:
+        La respuesta del servicio de IA o None si ocurre un error.
+    """
+    if not ai_client:
+        log_event("Intento de generar imagen sin cliente de IA inicializado.", player_id, is_error=True)
+        raise ConnectionError("El servicio de IA no está disponible.")
+
+    try:
+        # Llama a la API de Gemini para generar la imagen
+        response = ai_client.generate_content(
+            model=IMAGE_MODEL_NAME,
+            prompt=prompt
+        )
+        log_event(f"Se ha generado una imagen con el prompt: '{prompt}'", player_id)
+        return response
+    except Exception as e:
+        log_event(f"Error durante la generación de la imagen con la IA: {e}", player_id, is_error=True)
+        raise ConnectionError("Ocurrió un error al comunicarse con el servicio de IA para generar la imagen.")
+
 
 def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str, Any]]:
     """
     Resuelve la acción de un jugador usando el modelo de IA de Gemini.
 
-    REGLA: Esta función es el ÚNICO lugar donde se debe llamar a la IA.
+    REGLA: Esta función es el ÚNICO lugar donde se debe llamar a la IA de texto.
 
     Args:
         action_text: La acción que el jugador quiere realizar.
@@ -28,7 +64,7 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
         raise ConnectionError("El servicio de IA no está disponible.")
 
     # 1. Obtener la configuración del juego (mundo, reglas)
-    game_config = get_game_config()
+    game__config = get_game_config()
     if not game_config:
         raise ValueError("No se pudo cargar la configuración del juego desde la base de datos.")
 
@@ -66,7 +102,7 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
 
     try:
         # 4. Llamar a la API de Gemini
-        response = ai_client.models.generate_content(model=MODEL_NAME, contents=prompt)
+        response = ai_client.models.generate_content(model=TEXT_MODEL_NAME, contents=prompt)
         
         # Limpiar la respuesta para asegurar que sea un JSON válido
         cleaned_text = response.text.strip().replace('```json', '').replace('```', '')

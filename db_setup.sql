@@ -7,6 +7,7 @@ DROP TABLE IF EXISTS logs CASCADE;
 DROP TABLE IF EXISTS characters CASCADE;
 DROP TABLE IF EXISTS players CASCADE;
 DROP TABLE IF EXISTS game_config CASCADE;
+DROP TABLE IF EXISTS generated_images CASCADE;
 
 -- 2. Configuración del Juego
 CREATE TABLE game_config (
@@ -59,5 +60,14 @@ CREATE TABLE logs (
     fecha_evento TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 6. Refrescar la API de Supabase
+-- 6. Tabla de Imágenes Generadas
+CREATE TABLE generated_images (
+    id SERIAL PRIMARY KEY,
+    player_id INTEGER REFERENCES players(id) ON DELETE CASCADE,
+    prompt TEXT NOT NULL,
+    image_url TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 7. Refrescar la API de Supabase
 NOTIFY pgrst, 'reload config';

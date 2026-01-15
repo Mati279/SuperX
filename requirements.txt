@@ -6,3 +6,5 @@ pandas
 bcrypt
 extra-streamlit-components
 uuid
+Pillow
+ipython
