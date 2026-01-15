@@ -2,7 +2,6 @@
 import json
 from typing import Dict, Any, Optional
 
-from google.generativeai.types import GenerateContentResponse
 from data.database import ai_client
 from data.log_repository import log_event
 from data.game_config_repository import get_game_config
@@ -17,7 +16,7 @@ TEXT_MODEL_NAME = 'gemini-1.5-flash'
 IMAGE_MODEL_NAME = 'gemini-1.5-flash'
 
 
-def generate_image(prompt: str, player_id: int) -> Optional[GenerateContentResponse]:
+def generate_image(prompt: str, player_id: int) -> Optional[Any]:
     """
     Genera una imagen usando el modelo de IA de Gemini.
 
@@ -64,7 +63,7 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
         raise ConnectionError("El servicio de IA no está disponible.")
 
     # 1. Obtener la configuración del juego (mundo, reglas)
-    game__config = get_game_config()
+    game_config = get_game_config()
     if not game_config:
         raise ValueError("No se pudo cargar la configuración del juego desde la base de datos.")
 
