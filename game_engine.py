@@ -128,10 +128,6 @@ def get_ai_instruction() -> dict:
         log_event(f"Error leyendo config: {e}", is_error=True)
     return {}
 
-# --- MODELO ESTABLE ---
-# Usamos el nombre completo para evitar error 404 y tener el rate-limit alto
-MODEL_NAME = 'gemini-1.5-flash-001'
-
 def generate_random_character(faction_name: str = "Neutral") -> dict:
     if not ai_client: return None
     
@@ -152,8 +148,9 @@ def generate_random_character(faction_name: str = "Neutral") -> dict:
     """
     
     try:
+        # CORREGIDO 2026: Usamos gemini-2.0-flash
         response = ai_client.models.generate_content(
-            model=MODEL_NAME,
+            model='gemini-2.0-flash',
             contents=prompt
         )
         
@@ -174,12 +171,7 @@ def generate_random_character(faction_name: str = "Neutral") -> dict:
             return res.data[0]
             
     except Exception as e:
-        error_msg = str(e)
-        # Manejo de error de cuota
-        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-            log_event(f"Límite de cuota alcanzado en {MODEL_NAME}. Espera 30s.", is_error=True)
-        else:
-            log_event(f"Fallo generando personaje ({MODEL_NAME}): {e}", is_error=True)
+        log_event(f"Fallo generando personaje: {e}", is_error=True)
         return None
 
 def resolve_action(action_text: str, player_id: int) -> dict:
@@ -212,8 +204,9 @@ def resolve_action(action_text: str, player_id: int) -> dict:
     """
 
     try:
+        # CORREGIDO 2026: Usamos gemini-2.0-flash
         response = ai_client.models.generate_content(
-            model=MODEL_NAME,
+            model='gemini-2.0-flash',
             contents=prompt
         )
         
@@ -232,11 +225,6 @@ def resolve_action(action_text: str, player_id: int) -> dict:
         return result
 
     except Exception as e:
-        error_msg = str(e)
-        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-            friendly_msg = "⚠️ La IA está descansando (Límite de cuota). Espera unos segundos."
-            log_event(friendly_msg, is_error=True)
-            return {"narrative": friendly_msg, "updates": []}
-        
-        log_event(f"Error resolviendo acción: {e}", is_error=True)
-        return {"narrative": f"Error del sistema: {e}", "updates": []}
+        error_msg = f"Error resolviendo acción: {e}"
+        log_event(error_msg, is_error=True)
+        return {"narrative": error_msg, "updates": []}
