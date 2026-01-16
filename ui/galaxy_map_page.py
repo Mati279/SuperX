@@ -107,6 +107,13 @@ def _planet_color_for_biome(biome: str) -> str:
     return "#7ec7ff"
 
 
+def _resource_radius_factor(probability: float) -> float:
+    if probability is None:
+        return 1.0
+    clamped = max(0.0, min(probability, 100.0))
+    return 0.6 + (clamped / 100.0) * 1.2
+
+
 def _render_interactive_galaxy_map():
     st.header("Sistemas Conocidos")
     galaxy = get_galaxy()
@@ -156,6 +163,11 @@ def _render_interactive_galaxy_map():
     systems_payload = []
     for system in galaxy.systems:
         x, y = scaled_positions[system.id]
+        base_radius = size_by_class.get(system.star.class_type, 7) * star_scale
+        resource_prob = _resource_probability(selected_resource, system.star.class_type) if resource_filter_active else None
+        radius = base_radius
+        if resource_filter_active and resource_prob is not None:
+            radius = base_radius * _resource_radius_factor(resource_prob)
         systems_payload.append(
             {
                 "id": system.id,
@@ -167,8 +179,8 @@ def _render_interactive_galaxy_map():
                 "x": round(x, 2),
                 "y": round(y, 2),
                 "color": star_colors.get(system.star.class_type, "#FFFFFF"),
-                "radius": round(size_by_class.get(system.star.class_type, 7) * star_scale, 2),
-                "resource_prob": _resource_probability(selected_resource, system.star.class_type) if resource_filter_active else None,
+                "radius": round(radius, 2),
+                "resource_prob": resource_prob,
             }
         )
 
