@@ -110,9 +110,22 @@ def _planet_color_for_biome(biome: str) -> str:
 def _render_interactive_galaxy_map():
     st.header("Sistemas Conocidos")
     galaxy = get_galaxy()
+    systems_sorted = sorted(galaxy.systems, key=lambda s: s.id)
+    system_options = {f"(ID {s.id}) {s.name}": s.id for s in systems_sorted}
+    placeholder_opt = "(Seleccionar sistema)"
 
     col_map, col_controls = st.columns([5, 2])
     with col_controls:
+        chooser = st.selectbox(
+            "Abrir sistema manualmente",
+            [placeholder_opt] + list(system_options.keys()),
+            index=0,
+            key="manual_system_selector",
+        )
+        if chooser and chooser != placeholder_opt:
+            st.session_state.map_view = "system"
+            st.session_state.selected_system_id = system_options[chooser]
+            st.rerun()
         search_term = st.text_input("Buscar sistema", placeholder="Ej. Alpha-Orionis")
         class_options = sorted({s.star.class_type for s in galaxy.systems})
         selected_classes = st.multiselect(
@@ -410,16 +423,6 @@ def _render_interactive_galaxy_map():
     if selected_system_id is not None:
         st.session_state.map_view = "system"
         st.session_state.selected_system_id = selected_system_id
-        st.rerun()
-
-    # Fallback: selector por lista si el click no funciona en el navegador
-    systems_sorted = sorted(galaxy.systems, key=lambda s: s.id)
-    system_options = {f"(ID {s.id}) {s.name}": s.id for s in systems_sorted}
-    placeholder_opt = "(Seleccionar sistema)"
-    chooser = st.selectbox("Abrir sistema manualmente", [placeholder_opt] + list(system_options.keys()), index=0, key="manual_system_selector")
-    if chooser and chooser != placeholder_opt:
-        st.session_state.map_view = "system"
-        st.session_state.selected_system_id = system_options[chooser]
         st.rerun()
 
 
