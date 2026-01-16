@@ -19,19 +19,18 @@ def show_galaxy_map_page():
         st.session_state.selected_planet_id = None
 
     # --- LÓGICA DE NAVEGACIÓN (Bridging JS -> Python) ---
-    # Detectamos el parametro system_id inyectado por el JS
+    # Captura el parametro de URL si el mapa lo envía
     if "system_id" in st.query_params:
         try:
             target_system_id = int(st.query_params["system_id"])
             st.session_state.selected_system_id = target_system_id
             st.session_state.map_view = "system"
             
-            # Limpiamos INMEDIATAMENTE el parametro para evitar recargas infinitas
+            # Limpiar URL inmediatamente
             del st.query_params["system_id"]
         except (ValueError, TypeError):
              if "system_id" in st.query_params:
                 del st.query_params["system_id"]
-        # Forzamos rerun para limpiar la URL visualmente y cambiar la vista
         st.rerun()
 
     # --- Renderizado de Vistas ---
@@ -226,7 +225,7 @@ def _render_interactive_galaxy_map():
     <style>
         :root {{
             --bg-1: #0b0f18;
-            --panel-bg: rgba(16, 26, 42, 0.85);
+            --panel-bg: rgba(16, 26, 42, 0.95);
             --stroke: #1f2a3d;
             --text: #e6ecff;
             --highlight: #5b7bff;
@@ -237,7 +236,7 @@ def _render_interactive_galaxy_map():
             font-family: "Inter", system-ui, -apple-system, sans-serif;
             background: #000;
             color: var(--text);
-            overflow: hidden; /* Prevent iframe scrolling */
+            overflow: hidden;
         }}
         .wrapper {{ width: 100%; height: 100%; position: relative; }}
         .map-frame {{
@@ -259,10 +258,9 @@ def _render_interactive_galaxy_map():
         .star:hover {{ r: 12; filter: drop-shadow(0 0 16px rgba(255,255,255,0.9)); }}
         .route {{ stroke: #5b7bff; stroke-opacity: 0.25; stroke-width: 2; stroke-linecap: round; pointer-events: none; }}
         
-        /* UI OVERLAYS */
         .legend {{
             position: absolute; top: 16px; left: 16px;
-            background: var(--panel-bg); padding: 12px 14px;
+            background: rgba(16, 26, 42, 0.85); padding: 12px 14px;
             border-radius: 12px; border: 1px solid var(--stroke);
             backdrop-filter: blur(8px);
         }}
@@ -273,75 +271,68 @@ def _render_interactive_galaxy_map():
         
         .toolbar {{ position: absolute; top: 16px; right: 16px; display: flex; gap: 8px; }}
         .btn {{ 
-            background: var(--panel-bg); color: #e6ecff; border: 1px solid var(--stroke); 
+            background: rgba(16, 26, 42, 0.85); color: #e6ecff; border: 1px solid var(--stroke); 
             padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: 0.2s;
         }}
         .btn:hover {{ border-color: var(--highlight); color: var(--highlight); }}
 
-        /* INFO PANEL (Fixed Right Side) */
+        /* INFO PANEL - Floating */
         #info-panel {{
             position: absolute;
-            top: 60px; right: 16px;
-            width: 300px;
-            background: rgba(12, 18, 30, 0.95);
+            /* Coordenadas se asignan dinámicamente vía JS */
+            width: 280px;
+            background: var(--panel-bg);
             border: 1px solid var(--highlight);
-            box-shadow: 0 0 30px rgba(0,0,0,0.6);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.8);
             border-radius: 12px;
-            padding: 20px;
-            display: none; /* Hidden by default */
+            padding: 16px;
+            display: none;
             flex-direction: column;
             backdrop-filter: blur(12px);
-            animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-            z-index: 100;
+            z-index: 9999;
+            pointer-events: all;
+            animation: fadeIn 0.15s ease-out;
         }}
-        @keyframes slideIn {{
-            from {{ opacity: 0; transform: translateX(20px); }}
-            to {{ opacity: 1; transform: translateX(0); }}
-        }}
-        #info-panel h2 {{ margin: 0 0 10px 0; font-size: 20px; color: #fff; }}
-        .info-row {{ display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; color: #aeb9cc; border-bottom: 1px solid #1f2a3d; padding-bottom: 4px; }}
+        @keyframes fadeIn {{ from {{ opacity: 0; transform: scale(0.95); }} to {{ opacity: 1; transform: scale(1); }} }}
         
-        /* BOTÓN DE ENTRADA (Ahora es un <a> real para evitar bloqueos) */
+        #info-panel h2 {{ margin: 0 0 10px 0; font-size: 18px; color: #fff; border-bottom: 1px solid var(--stroke); padding-bottom: 8px; }}
+        .info-row {{ display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; color: #aeb9cc; }}
+        .info-val {{ color: #e6ecff; font-weight: 500; }}
+        
+        /* BOTÓN DE ENTRADA ROBUSTO */
         .enter-btn {{
-            margin-top: 15px;
+            margin-top: 12px;
             display: block;
             text-align: center;
             text-decoration: none;
             background: linear-gradient(135deg, #2b4570, #1a2a44);
             border: 1px solid #5b7bff;
             color: white;
-            padding: 12px;
+            padding: 10px;
             width: 100%;
             border-radius: 6px;
             cursor: pointer;
             font-weight: bold;
-            font-size: 14px;
+            font-size: 13px;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
             transition: all 0.2s;
         }}
         .enter-btn:hover {{ background: #5b7bff; box-shadow: 0 0 15px rgba(91, 123, 255, 0.4); color: #fff; }}
+        .enter-btn:active {{ transform: translateY(1px); }}
         
         .close-panel {{
-            position: absolute; top: 10px; right: 10px;
-            background: transparent; border: none; color: #555;
-            cursor: pointer; font-size: 16px;
+            position: absolute; top: 8px; right: 8px;
+            background: transparent; border: none; color: #666;
+            cursor: pointer; font-size: 18px; line-height: 1;
         }}
         .close-panel:hover {{ color: #fff; }}
         
-        /* HOVER TOOLTIP (Mouse follower - Simplified) */
         #mini-tooltip {{
-            position: absolute;
-            pointer-events: none;
-            background: rgba(0,0,0,0.8);
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 11px;
-            color: #fff;
-            display: none;
-            border: 1px solid #333;
-            transform: translateY(-25px);
-            white-space: nowrap;
+            position: absolute; pointer-events: none; background: rgba(0,0,0,0.9);
+            padding: 4px 8px; border-radius: 4px; font-size: 11px; color: #fff;
+            display: none; border: 1px solid #444; transform: translateY(-30px);
+            white-space: nowrap; z-index: 500;
         }}
     </style>
     </head>
@@ -353,14 +344,14 @@ def _render_interactive_galaxy_map():
                 <div id="info-panel">
                     <button class="close-panel" onclick="closePanel()">×</button>
                     <h2 id="panel-title">System Name</h2>
-                    <div class="info-row"><span>Clase:</span> <span id="panel-class">-</span></div>
-                    <div class="info-row"><span>Rareza:</span> <span id="panel-rarity">-</span></div>
-                    <div class="info-row"><span>Energía:</span> <span id="panel-energy">-</span></div>
-                    <div class="info-row"><span>Regla:</span> <span id="panel-rule">-</span></div>
+                    <div class="info-row"><span>Clase</span> <span class="info-val" id="panel-class">-</span></div>
+                    <div class="info-row"><span>Rareza</span> <span class="info-val" id="panel-rarity">-</span></div>
+                    <div class="info-row"><span>Energía</span> <span class="info-val" id="panel-energy">-</span></div>
+                    <div class="info-row"><span>Regla</span> <span class="info-val" id="panel-rule">-</span></div>
                     <div id="panel-resource-row" class="info-row" style="display:none">
-                        <span>Recurso:</span> <span id="panel-resource" style="color: #f1d26a">-</span>
+                        <span>Recurso</span> <span class="info-val" id="panel-resource" style="color: #f1d26a">-</span>
                     </div>
-                    <a id="btn-enter-system" href="#" target="_top" class="enter-btn">ENTRAR AL SISTEMA 🚀</a>
+                    <a id="btn-enter-system" href="#" target="_parent" class="enter-btn">ENTRAR AL SISTEMA 🚀</a>
                 </div>
 
                 <div class="legend">
@@ -426,6 +417,7 @@ def _render_interactive_galaxy_map():
                         circle.classList.add("dim");
                     }}
                     
+                    // Mouse hover (tooltip simple)
                     circle.addEventListener("mouseenter", () => {{
                         miniTooltip.style.display = "block";
                         miniTooltip.textContent = sys.name;
@@ -438,20 +430,22 @@ def _render_interactive_galaxy_map():
                         miniTooltip.style.display = "none";
                     }});
                     
+                    // Click (Selection) - Pasamos el evento 'evt'
                     circle.addEventListener("click", (evt) => {{
                         evt.stopPropagation();
                         evt.preventDefault();
-                        selectSystem(sys);
+                        selectSystem(sys, evt);
                     }});
                     
                     starsLayer.appendChild(circle);
                 }});
             }}
 
-            // -- Selection Logic --
-            function selectSystem(sys) {{
+            // -- Selection & Positioning Logic --
+            function selectSystem(sys, evt) {{
                 currentSelectedSystemId = sys.id;
                 
+                // 1. Populate Info
                 document.getElementById("panel-title").textContent = `(ID ${{sys.id}}) ${{sys.name}}`;
                 document.getElementById("panel-class").textContent = sys.class;
                 document.getElementById("panel-rarity").textContent = sys.rarity;
@@ -467,23 +461,45 @@ def _render_interactive_galaxy_map():
                     resRow.style.display = "none";
                 }}
                 
-                // ACTUALIZAR LINK DEL BOTÓN
-                // Intentamos construir la URL del padre. 
-                // Si falla por cross-origin, document.referrer suele funcionar en componentes de Streamlit.
+                // 2. Navigation Link Construction (Fix for "Not working")
+                // Intentamos construir una URL absoluta relativa al padre
+                // Si estamos en localhost:8501, queremos localhost:8501/?system_id=1
+                let finalHref = "?system_id=" + sys.id;
                 try {{
-                    let baseUrl = window.parent.location.href;
-                    // Fallback simple si window.parent falla
-                    if (!baseUrl) baseUrl = document.referrer;
-                    
-                    const url = new URL(baseUrl);
-                    url.searchParams.set("system_id", sys.id);
-                    enterBtn.href = url.toString();
+                    // Intento obtener la URL base del padre
+                    if (window.parent && window.parent.location.href) {{
+                        const url = new URL(window.parent.location.href);
+                        url.searchParams.set("system_id", sys.id);
+                        finalHref = url.toString();
+                    }}
                 }} catch (e) {{
-                    console.warn("No se pudo acceder a parent URL, usando fallback relativo", e);
-                    // Último recurso: intentar inferir ruta o usar referrer
-                    enterBtn.href = "?system_id=" + sys.id;
+                    console.log("Cross-origin restricted, using relative path fallback");
                 }}
+                enterBtn.href = finalHref;
                 
+                // 3. Positioning (Near Mouse)
+                // Usamos las coordenadas del click (pageX, pageY)
+                const panelW = 280; 
+                const panelH = 260; 
+                const margin = 10;
+                
+                let posX = evt.pageX + 20;
+                let posY = evt.pageY - 40;
+
+                // Boundary Checks (para que no se salga de la pantalla)
+                const viewportW = document.body.clientWidth;
+                const viewportH = document.body.clientHeight;
+
+                if (posX + panelW > viewportW) {{
+                    posX = evt.pageX - panelW - 20; // Voltear a la izquierda
+                }}
+                if (posY + panelH > viewportH) {{
+                    posY = viewportH - panelH - margin; // Empujar hacia arriba
+                }}
+                if (posY < 0) posY = margin;
+
+                infoPanel.style.left = posX + "px";
+                infoPanel.style.top = posY + "px";
                 infoPanel.style.display = "flex";
             }}
 
@@ -492,10 +508,24 @@ def _render_interactive_galaxy_map():
                 currentSelectedSystemId = null;
             }}
 
+            // Global Click handler to close panel
             document.querySelector(".map-frame").addEventListener("click", (e) => {{
                 if (!e.target.classList.contains("star") && !infoPanel.contains(e.target)) {{
                     closePanel();
                 }}
+            }});
+            
+            // Backup click handler for the button if href fails
+            enterBtn.addEventListener("click", (e) => {{
+                // Dejamos que el href funcione primero (middle click, etc)
+                // Pero intentamos forzar la navegación en el top window también
+                setTimeout(() => {{
+                     try {{
+                        window.parent.location.search = "?system_id=" + currentSelectedSystemId;
+                     }} catch(err) {{
+                        console.warn("JS Nav Failed, relying on href target attribute");
+                     }}
+                }}, 50);
             }});
 
             drawRoutes();
