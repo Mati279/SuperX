@@ -324,12 +324,10 @@ Procede a usar las herramientas necesarias.
 
                         # Responder a la IA con el resultado
                         response = chat.send_message(
-                            types.Content(parts=[
-                                types.Part.from_function_response(
-                                    name=fname,
-                                    response={"result": result_str}
-                                )
-                            ])
+                            types.Part.from_function_response(
+                                name=fname,
+                                response={"result": result_str}
+                            )
                         )
                         break # Procesar una llamada a la vez
 
