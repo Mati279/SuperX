@@ -13,25 +13,29 @@ def show_galaxy_map_page():
     st.title("Mapa de la Galaxia")
     st.markdown("---")
 
+    # Inicialización de estado
     if "map_view" not in st.session_state:
         st.session_state.map_view = "galaxy"
+    if "selected_system_id" not in st.session_state:
         st.session_state.selected_system_id = None
+    if "preview_system_id" not in st.session_state:
+        st.session_state.preview_system_id = None # ID del sistema seleccionado en el mapa (click)
+    if "selected_planet_id" not in st.session_state:
         st.session_state.selected_planet_id = None
 
     # --- LÓGICA DE NAVEGACIÓN (Bridging JS -> Python) ---
-    # Capturamos el parámetro system_id que el JS inyecta en la URL
-    if "system_id" in st.query_params:
+    # Si el mapa envía un 'preview_id' (al hacer click en una estrella), actualizamos la previsualización
+    if "preview_id" in st.query_params:
         try:
-            target_system_id = int(st.query_params["system_id"])
-            st.session_state.selected_system_id = target_system_id
-            st.session_state.map_view = "system"
-            
-            # Limpiamos la URL para que no se quede el parámetro pegado
-            del st.query_params["system_id"]
-            st.rerun()
+            p_id = int(st.query_params["preview_id"])
+            st.session_state.preview_system_id = p_id
+            # Limpiamos la URL para evitar recargas en bucle, pero mantenemos el estado
+            del st.query_params["preview_id"]
         except (ValueError, TypeError):
-             if "system_id" in st.query_params:
-                del st.query_params["system_id"]
+             if "preview_id" in st.query_params:
+                del st.query_params["preview_id"]
+        # Rerun para mostrar la info en la barra lateral
+        st.rerun()
 
     # --- Renderizado de Vistas ---
     if st.session_state.map_view == "galaxy":
@@ -139,37 +143,85 @@ def _render_interactive_galaxy_map():
     st.header("Sistemas Conocidos")
     galaxy = get_galaxy()
     systems_sorted = sorted(galaxy.systems, key=lambda s: s.id)
-    system_options = {f"(ID {s.id}) {s.name}": s.id for s in systems_sorted}
-    placeholder_opt = "(Seleccionar sistema)"
-
+    
+    # Columnas: Mapa (izquierda grande) - Controles/Info (derecha pequeña)
     col_map, col_controls = st.columns([5, 2])
+    
+    # --- COLUMNA DERECHA: FILTROS Y DETALLES ---
     with col_controls:
-        chooser = st.selectbox(
-            "Abrir sistema manualmente",
-            [placeholder_opt] + list(system_options.keys()),
-            index=0,
-            key="manual_system_selector",
-        )
-        if chooser and chooser != placeholder_opt:
-            st.session_state.map_view = "system"
-            st.session_state.selected_system_id = system_options[chooser]
-            st.rerun()
+        # 1. Filtros
         search_term = st.text_input("Buscar sistema", placeholder="Ej. Alpha-Orionis")
+        
+        # Sincronizar el selectbox con el estado de preview si existe
+        # Esto permite que si clickeas en el mapa, el selectbox se actualice (truco visual)
+        # o si usas el selectbox, se actualice el preview.
+        current_idx = 0
+        sys_options = [s.name for s in systems_sorted]
+        if st.session_state.preview_system_id:
+            for i, s in enumerate(systems_sorted):
+                if s.id == st.session_state.preview_system_id:
+                    current_idx = i
+                    break
+        
+        # Selector manual
+        selected_name = st.selectbox(
+            "Seleccionar sistema",
+            sys_options,
+            index=current_idx,
+            key="manual_system_selector"
+        )
+        
+        # Si el usuario cambia el selectbox manualmente, actualizamos el preview
+        selected_sys_obj = systems_sorted[sys_options.index(selected_name)]
+        if selected_sys_obj.id != st.session_state.preview_system_id:
+            st.session_state.preview_system_id = selected_sys_obj.id
+            st.rerun()
+
+        st.markdown("---")
+        
         class_options = sorted({s.star.class_type for s in galaxy.systems})
         selected_classes = st.multiselect(
             "Clases visibles", class_options, default=class_options
         )
         show_routes = st.toggle("Mostrar rutas", value=True)
         star_scale = st.slider("Tamano relativo", 0.8, 2.0, 1.0, 0.05)
+        
         resource_options = ["(sin filtro)"] + list(METAL_RESOURCES.keys())
         selected_resource = st.selectbox("Recurso a resaltar", resource_options, index=0)
-        resource_filter_active = selected_resource != "(sin filtro)"
-        if resource_filter_active:
-            st.caption("Probabilidad por clase estelar:")
-            probs = {k: _resource_probability(selected_resource, k) for k in class_options}
-            for cls in class_options:
-                st.write(f"{cls}: {probs.get(cls, 0):.1f}%")
+        
+        st.markdown("---")
 
+        # 2. PANEL DE INFORMACIÓN DEL SISTEMA SELECCIONADO
+        # Aquí es donde mostramos la info cuando se hace click en el mapa
+        if st.session_state.preview_system_id:
+            # Buscar el sistema en la lista
+            preview_sys = next((s for s in galaxy.systems if s.id == st.session_state.preview_system_id), None)
+            
+            if preview_sys:
+                st.subheader(f"🔭 {preview_sys.name}")
+                st.caption(f"ID: {preview_sys.id} | Coordenadas: {preview_sys.position}")
+                
+                with st.container(border=True):
+                    c1, c2 = st.columns(2)
+                    c1.metric("Clase", preview_sys.star.class_type)
+                    c2.metric("Rareza", preview_sys.star.rarity)
+                    
+                    st.write(f"**Energía:** {preview_sys.star.energy_modifier:+.0%}")
+                    st.info(f"📜 {preview_sys.star.special_rule}")
+                    
+                    # Botón de acción principal
+                    if st.button("🚀 ENTRAR AL SISTEMA", type="primary", use_container_width=True):
+                        st.session_state.selected_system_id = preview_sys.id
+                        st.session_state.map_view = "system"
+                        st.rerun()
+            else:
+                st.warning("Sistema seleccionado no encontrado.")
+        else:
+            st.info("Selecciona una estrella en el mapa o en la lista para ver detalles.")
+
+    # --- LÓGICA DE DATOS PARA EL MAPA ---
+    resource_filter_active = selected_resource != "(sin filtro)"
+    
     canvas_width, canvas_height = 1400, 900
     scaled_positions = _scale_positions(galaxy.systems, canvas_width, canvas_height)
 
@@ -180,6 +232,10 @@ def _render_interactive_galaxy_map():
     highlight_ids = {
         s.id for s in galaxy.systems if search_term and search_term.lower() in s.name.lower()
     }
+    
+    # Si hay uno seleccionado en preview, lo resaltamos también
+    if st.session_state.preview_system_id:
+        highlight_ids.add(st.session_state.preview_system_id)
 
     systems_payload = []
     for system in galaxy.systems:
@@ -197,9 +253,6 @@ def _render_interactive_galaxy_map():
                 "id": system.id,
                 "name": system.name,
                 "class": system.star.class_type,
-                "rarity": system.star.rarity,
-                "energy": f"{system.star.energy_modifier:+.0%}",
-                "rule": system.star.special_rule,
                 "x": round(x, 2),
                 "y": round(y, 2),
                 "color": color,
@@ -214,8 +267,8 @@ def _render_interactive_galaxy_map():
     connections_json = json.dumps(connections)
     filtered_json = json.dumps(list(filtered_ids))
     highlight_json = json.dumps(list(highlight_ids))
-    resource_name_js = json.dumps(selected_resource if resource_filter_active else "")
 
+    # --- HTML DEL MAPA ---
     html_template = f"""
     <!DOCTYPE html>
     <html>
@@ -225,174 +278,48 @@ def _render_interactive_galaxy_map():
     <style>
         :root {{
             --bg-1: #0b0f18;
-            --panel-bg: rgba(13, 19, 30, 0.95);
             --stroke: #1f2a3d;
             --text: #e6ecff;
-            --highlight: #5b7bff;
         }}
-        * {{ box-sizing: border-box; }}
         body {{
-            margin: 0;
-            font-family: "Inter", system-ui, -apple-system, sans-serif;
-            background: #000;
-            color: var(--text);
-            overflow: hidden;
+            margin: 0; font-family: "Inter", sans-serif; background: #000; color: var(--text); overflow: hidden;
         }}
-        .wrapper {{ width: 100%; height: 100%; position: relative; }}
+        .wrapper {{ width: 100%; height: 100%; }}
         .map-frame {{
-            position: relative;
-            width: 100%;
-            height: 820px;
-            border-radius: 18px;
-            overflow: hidden;
-            border: 1px solid var(--stroke);
+            width: 100%; height: 860px;
+            border-radius: 12px; overflow: hidden; border: 1px solid var(--stroke);
             background: radial-gradient(circle at 50% 35%, #0f1c2d, #070b12 75%);
         }}
         svg {{ width: 100%; height: 100%; cursor: grab; }}
         .star {{
-            transition: r 0.25s ease, filter 0.25s ease, opacity 0.25s ease;
-            filter: drop-shadow(0 0 6px rgba(255,255,255,0.35));
-            cursor: pointer;
+            transition: all 0.2s ease; cursor: pointer;
+            filter: drop-shadow(0 0 4px rgba(255,255,255,0.3));
         }}
-        .star.dim {{ opacity: 0.2; pointer-events: none; }}
-        .star:hover {{ r: 14; filter: drop-shadow(0 0 16px rgba(255,255,255,0.9)); stroke: white; stroke-width: 2px; }}
-        .route {{ stroke: #5b7bff; stroke-opacity: 0.25; stroke-width: 2; stroke-linecap: round; pointer-events: none; }}
+        .star.dim {{ opacity: 0.15; pointer-events: none; }}
+        .star:hover {{ r: 16; stroke: white; stroke-width: 2px; filter: drop-shadow(0 0 12px rgba(255,255,255,0.8)); }}
+        .star.selected {{ stroke: #5b7bff; stroke-width: 3px; r: 16; filter: drop-shadow(0 0 15px rgba(91, 123, 255, 0.8)); }}
         
-        .legend {{
-            position: absolute; top: 16px; left: 16px;
-            background: rgba(16, 26, 42, 0.85); padding: 12px 14px;
-            border-radius: 12px; border: 1px solid var(--stroke);
-            backdrop-filter: blur(8px);
-        }}
-        .swatch {{ width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }}
-        .swatch.g {{ background: #f8f5ff; }} .swatch.o {{ background: #8ec5ff; }}
-        .swatch.m {{ background: #f2b880; }} .swatch.d {{ background: #d7d7d7; }} .swatch.x {{ background: #d6a4ff; }}
-        .legend-row {{ font-size: 12px; color: #cfd8f5; margin-bottom: 4px; }}
+        .route {{ stroke: #5b7bff; stroke-opacity: 0.2; stroke-width: 1.5; pointer-events: none; }}
         
-        .toolbar {{ position: absolute; top: 16px; right: 16px; display: flex; gap: 8px; z-index: 10; }}
-        .btn {{ 
-            background: rgba(16, 26, 42, 0.85); color: #e6ecff; border: 1px solid var(--stroke); 
-            padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: 0.2s;
-        }}
-        .btn:hover {{ border-color: var(--highlight); color: var(--highlight); }}
-
-        /* --- SIDE PANEL (Fixed Right) --- */
-        #side-panel {{
-            position: absolute;
-            top: 0; right: 0; bottom: 0;
-            width: 320px;
-            background: var(--panel-bg);
-            border-left: 1px solid var(--stroke);
-            box-shadow: -10px 0 30px rgba(0,0,0,0.5);
-            padding: 24px;
-            display: flex;
-            flex-direction: column;
-            transform: translateX(100%);
-            transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-            z-index: 100;
-            backdrop-filter: blur(10px);
-        }}
-        #side-panel.open {{ transform: translateX(0); }}
-        
-        .panel-header {{ border-bottom: 1px solid var(--stroke); padding-bottom: 16px; margin-bottom: 16px; }}
-        .panel-title {{ margin: 0 0 4px 0; font-size: 22px; color: #fff; font-weight: 700; }}
-        .panel-subtitle {{ font-size: 13px; color: var(--highlight); font-weight: 500; text-transform: uppercase; letter-spacing: 1px; }}
-        
-        .info-grid {{ display: grid; gap: 12px; margin-bottom: 24px; }}
-        .info-item {{ display: flex; justify-content: space-between; font-size: 13px; border-bottom: 1px solid #1f2a3d; padding-bottom: 6px; }}
-        .info-label {{ color: #8fa5c4; }}
-        .info-val {{ color: #e6ecff; font-weight: 600; text-align: right; }}
-        
-        .special-rule-box {{ 
-            background: rgba(91, 123, 255, 0.1); border: 1px solid rgba(91, 123, 255, 0.3);
-            border-radius: 8px; padding: 12px; font-size: 12px; color: #d0dfff; margin-bottom: 24px;
-            line-height: 1.4;
-        }}
-        
-        .action-area {{ margin-top: auto; }}
-        .enter-btn {{
-            width: 100%;
-            background: linear-gradient(135deg, #2b4570, #1a2a44);
-            border: 1px solid #5b7bff;
-            color: white;
-            padding: 14px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: bold;
-            font-size: 14px;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            transition: all 0.2s;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-        }}
-        .enter-btn:hover {{ 
-            background: #5b7bff; 
-            box-shadow: 0 0 20px rgba(91, 123, 255, 0.6); 
-            transform: translateY(-2px);
-        }}
-        
-        .close-panel {{
-            position: absolute; top: 16px; right: 16px;
-            background: transparent; border: none; color: #555;
-            cursor: pointer; font-size: 24px; line-height: 1;
-        }}
-        .close-panel:hover {{ color: #fff; }}
-        
-        #mini-tooltip {{
-            position: absolute; pointer-events: none; background: rgba(0,0,0,0.9);
+        #tooltip {{
+            position: absolute; pointer-events: none; background: rgba(0,0,0,0.8);
             padding: 4px 8px; border-radius: 4px; font-size: 11px; color: #fff;
-            display: none; border: 1px solid #444; transform: translateY(-30px);
-            white-space: nowrap; z-index: 50;
+            display: none; border: 1px solid #444; z-index: 100;
         }}
+        .toolbar {{ position: absolute; top: 10px; right: 10px; }}
+        .btn {{ background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #333; cursor:pointer; padding: 5px 10px; border-radius: 4px; }}
     </style>
     </head>
     <body>
         <div class="wrapper">
             <div class="map-frame">
-                <div id="mini-tooltip"></div>
-                
-                <div id="side-panel">
-                    <button class="close-panel" onclick="closePanel()">×</button>
-                    <div class="panel-header">
-                        <h2 class="panel-title" id="p-name">Alpha Centauri</h2>
-                        <div class="panel-subtitle" id="p-id">ID: 001</div>
-                    </div>
-                    
-                    <div class="info-grid">
-                        <div class="info-item"><span class="info-label">Clase Estelar</span><span class="info-val" id="p-class">G</span></div>
-                        <div class="info-item"><span class="info-label">Rareza</span><span class="info-val" id="p-rarity">Común</span></div>
-                        <div class="info-item"><span class="info-label">Energía</span><span class="info-val" id="p-energy">100%</span></div>
-                        <div class="info-item" id="row-resource" style="display:none">
-                            <span class="info-label">Recurso</span>
-                            <span class="info-val" id="p-resource" style="color:#f1d26a">Oro</span>
-                        </div>
-                    </div>
-                    
-                    <div class="special-rule-box">
-                        <strong style="display:block; margin-bottom:4px; color:#fff;">Regla Especial:</strong>
-                        <span id="p-rule">Sin efectos adversos detectados.</span>
-                    </div>
-                    
-                    <div class="action-area">
-                        <button id="btn-enter" class="enter-btn">ENTRAR AL SISTEMA</button>
-                    </div>
-                </div>
-
-                <div class="legend">
-                    <div class="legend-row"><span class="swatch g"></span> G (Amarilla)</div>
-                    <div class="legend-row"><span class="swatch o"></span> O (Azul)</div>
-                    <div class="legend-row"><span class="swatch m"></span> M (Roja)</div>
-                    <div class="legend-row"><span class="swatch d"></span> D (Blanca)</div>
-                    <div class="legend-row"><span class="swatch x"></span> X (Exótica)</div>
-                </div>
-                
+                <div id="tooltip"></div>
                 <div class="toolbar">
-                    <button id="resetView" class="btn">Centrar</button>
-                    <button id="zoomIn" class="btn">+</button>
-                    <button id="zoomOut" class="btn">-</button>
+                    <button class="btn" id="reset">Reset</button>
+                    <button class="btn" id="zin">+</button>
+                    <button class="btn" id="zout">-</button>
                 </div>
-                
-                <svg id="galaxy-map" viewBox="0 0 {canvas_width} {canvas_height}" preserveAspectRatio="xMidYMid meet">
+                <svg id="galaxy-map" viewBox="0 0 {canvas_width} {canvas_height}">
                     <g id="routes-layer"></g>
                     <g id="stars-layer"></g>
                 </svg>
@@ -404,131 +331,62 @@ def _render_interactive_galaxy_map():
             const routes = {connections_json};
             const filteredIds = new Set({filtered_json});
             const highlightIds = new Set({highlight_json});
-            const resourceMode = {"true" if resource_filter_active else "false"};
-            const resourceName = {resource_name_js};
             
             const starsLayer = document.getElementById("stars-layer");
             const routesLayer = document.getElementById("routes-layer");
-            const miniTooltip = document.getElementById("mini-tooltip");
-            const sidePanel = document.getElementById("side-panel");
-            const enterBtn = document.getElementById("btn-enter");
-            
-            let currentSelectedId = null;
+            const tooltip = document.getElementById("tooltip");
 
-            // -- Drawing Functions --
-            function drawRoutes() {{
-                routesLayer.innerHTML = "";
-                routes.forEach(route => {{
-                    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-                    line.setAttribute("x1", route.ax); line.setAttribute("y1", route.ay);
-                    line.setAttribute("x2", route.bx); line.setAttribute("y2", route.by);
-                    line.setAttribute("class", "route");
-                    routesLayer.appendChild(line);
+            // Dibujar Rutas
+            routes.forEach(r => {{
+                const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                line.setAttribute("x1", r.ax); line.setAttribute("y1", r.ay);
+                line.setAttribute("x2", r.bx); line.setAttribute("y2", r.by);
+                line.setAttribute("class", "route");
+                routesLayer.appendChild(line);
+            }});
+
+            // Dibujar Estrellas
+            systems.forEach(sys => {{
+                const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                c.setAttribute("cx", sys.x); c.setAttribute("cy", sys.y);
+                c.setAttribute("r", sys.radius);
+                c.setAttribute("fill", sys.color);
+                c.setAttribute("class", "star");
+                
+                if (!filteredIds.has(sys.id)) c.classList.add("dim");
+                if (highlightIds.has(sys.id)) c.classList.add("selected");
+                
+                // Hover simple
+                c.addEventListener("mouseenter", () => {{
+                    tooltip.style.display = "block";
+                    tooltip.textContent = sys.name;
                 }});
-            }}
-
-            function drawStars() {{
-                starsLayer.innerHTML = "";
-                systems.forEach(sys => {{
-                    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-                    circle.setAttribute("cx", sys.x);
-                    circle.setAttribute("cy", sys.y);
-                    circle.setAttribute("r", sys.radius);
-                    circle.setAttribute("fill", sys.color);
-                    circle.setAttribute("class", "star");
-                    
-                    if (!filteredIds.has(sys.id)) {{
-                        circle.classList.add("dim");
-                    }}
-                    
-                    // Hover simple (solo nombre)
-                    circle.addEventListener("mouseenter", () => {{
-                        miniTooltip.style.display = "block";
-                        miniTooltip.textContent = sys.name;
-                    }});
-                    circle.addEventListener("mousemove", (e) => {{
-                        miniTooltip.style.left = (e.pageX + 10) + "px";
-                        miniTooltip.style.top = (e.pageY - 25) + "px";
-                    }});
-                    circle.addEventListener("mouseleave", () => {{
-                        miniTooltip.style.display = "none";
-                    }});
-                    
-                    // CLICK: Abrir Panel Lateral
-                    circle.addEventListener("click", (evt) => {{
-                        evt.stopPropagation();
-                        evt.preventDefault();
-                        openPanel(sys);
-                    }});
-                    
-                    starsLayer.appendChild(circle);
+                c.addEventListener("mousemove", (e) => {{
+                    tooltip.style.left = (e.pageX + 10) + "px";
+                    tooltip.style.top = (e.pageY - 20) + "px";
                 }});
-            }}
-
-            // -- Panel Logic --
-            function openPanel(sys) {{
-                currentSelectedId = sys.id;
+                c.addEventListener("mouseleave", () => tooltip.style.display = "none");
                 
-                // Rellenar datos
-                document.getElementById("p-name").textContent = sys.name;
-                document.getElementById("p-id").textContent = "ID SISTEMA: " + sys.id;
-                document.getElementById("p-class").textContent = sys.class;
-                document.getElementById("p-rarity").textContent = sys.rarity;
-                document.getElementById("p-energy").textContent = sys.energy;
-                document.getElementById("p-rule").textContent = sys.rule;
+                // CLICK: Navegación simple y robusta
+                c.addEventListener("click", () => {{
+                    console.log("Click en sistema:", sys.id);
+                    // Forzar recarga de la ventana PADRE con el parámetro
+                    const targetWin = window.parent || window.top || window;
+                    const url = new URL(targetWin.location.href);
+                    url.searchParams.set("preview_id", sys.id);
+                    targetWin.location.href = url.toString();
+                }});
                 
-                const resRow = document.getElementById("row-resource");
-                if (resourceMode && sys.resource_prob) {{
-                    resRow.style.display = "flex";
-                    document.getElementById("p-resource").textContent = `${{resourceName}} (${{sys.resource_prob}}%)`;
-                }} else {{
-                    resRow.style.display = "none";
-                }}
-                
-                // Mostrar panel
-                sidePanel.classList.add("open");
-            }}
-
-            function closePanel() {{
-                sidePanel.classList.remove("open");
-                currentSelectedId = null;
-            }}
-
-            // Cerrar panel al hacer clic en el fondo
-            document.querySelector(".map-frame").addEventListener("click", (e) => {{
-                if (!e.target.classList.contains("star") && !sidePanel.contains(e.target)) {{
-                    closePanel();
-                }}
-            }});
-            
-            // -- NAVEGACIÓN ROBUSTA --
-            enterBtn.addEventListener("click", () => {{
-                if (currentSelectedId !== null) {{
-                    console.log("Navegando a sistema:", currentSelectedId);
-                    // Truco para forzar recarga en Streamlit: modificar window.top.location
-                    try {{
-                        const targetWin = window.top || window.parent || window;
-                        const currentUrl = new URL(targetWin.location.href);
-                        currentUrl.searchParams.set("system_id", currentSelectedId);
-                        targetWin.location.href = currentUrl.toString();
-                    }} catch (e) {{
-                        console.error("Error navegando:", e);
-                        // Fallback desesperado
-                        window.location.search = "?system_id=" + currentSelectedId;
-                    }}
-                }}
+                starsLayer.appendChild(c);
             }});
 
-            drawRoutes();
-            drawStars();
-
-            const panZoom = svgPanZoom("#galaxy-map", {{
-                zoomEnabled: true, controlIconsEnabled: false, fit: true, center: true, minZoom: 0.6, maxZoom: 12
+            // Pan y Zoom
+            const pz = svgPanZoom("#galaxy-map", {{
+                zoomEnabled: true, controlIconsEnabled: false, fit: true, center: true, minZoom: 0.5, maxZoom: 10
             }});
-            
-            document.getElementById("resetView").onclick = () => {{ panZoom.resetZoom(); panZoom.resetPan(); }};
-            document.getElementById("zoomIn").onclick = () => panZoom.zoomIn();
-            document.getElementById("zoomOut").onclick = () => panZoom.zoomOut();
+            document.getElementById("reset").onclick = () => {{ pz.resetZoom(); pz.resetPan(); }};
+            document.getElementById("zin").onclick = () => pz.zoomIn();
+            document.getElementById("zout").onclick = () => pz.zoomOut();
         </script>
     </body>
     </html>
