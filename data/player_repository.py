@@ -1,9 +1,8 @@
 # data/player_repository.py
 from typing import Dict, Any, Optional, IO
-import uuid 
-# Importamos supabase primero para asegurar que el módulo base esté cargado
+import uuid # IMPORTANTE: Para generar tokens únicos
+# CORRECCIÓN: Importación absoluta confirmada
 from data.database import supabase
-# Importamos log_event después. Si log_repository importa database, ya estará en caché.
 from data.log_repository import log_event
 from utils.security import hash_password, verify_password
 from utils.helpers import encode_image
@@ -64,6 +63,7 @@ def register_player_account(
         "pin": hash_password(pin),
         "faccion_nombre": faction_name,
         "banner_url": banner_url,
+        # Valores iniciales por defecto definidos en DB, pero se pueden forzar aquí si se desea
     }
     
     try:
@@ -80,7 +80,12 @@ def register_player_account(
 # --- Funciones de Gestión Económica (MMFR) ---
 
 def get_player_finances(player_id: int) -> Dict[str, int]:
-    """Obtiene todos los recursos económicos del jugador."""
+    """
+    Obtiene todos los recursos económicos del jugador.
+    
+    Returns:
+        Diccionario con creditos, materiales, componentes, celulas_energia, influencia.
+    """
     try:
         response = supabase.table("players")\
             .select("creditos, materiales, componentes, celulas_energia, influencia")\
@@ -100,12 +105,21 @@ def get_player_finances(player_id: int) -> Dict[str, int]:
         }
 
 def get_player_credits(player_id: int) -> int:
+    """Wrapper legacy para obtener solo créditos."""
     finances = get_player_finances(player_id)
     return finances.get("creditos", 0)
 
 def update_player_resources(player_id: int, updates: Dict[str, int]) -> bool:
+    """
+    Actualiza uno o varios recursos del jugador.
+    
+    Args:
+        player_id: ID del jugador.
+        updates: Diccionario con los campos a actualizar (ej: {"creditos": 500, "materiales": 10})
+    """
     try:
         supabase.table("players").update(updates).eq("id", player_id).execute()
+        # Log simplificado para no saturar
         log_event(f"Recursos actualizados: {list(updates.keys())}", player_id)
         return True
     except Exception as e:
@@ -113,4 +127,5 @@ def update_player_resources(player_id: int, updates: Dict[str, int]) -> bool:
         return False
 
 def update_player_credits(player_id: int, new_credits: int) -> bool:
+    """Wrapper legacy para actualizar solo créditos."""
     return update_player_resources(player_id, {"creditos": new_credits})
