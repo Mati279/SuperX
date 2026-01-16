@@ -1,27 +1,40 @@
 # data/database.py
-from supabase import create_client, Client
-from google import genai
+import os
 import logging
-# CORRECCIÓN: Importamos el módulo como objeto para evitar KeyError en la búsqueda de símbolos
-import config.settings as settings
+from supabase import create_client, Client
+from config.settings import SUPABASE_URL, SUPABASE_KEY
 
-# Extraer variables del módulo importado
-SUPABASE_URL = settings.SUPABASE_URL
-SUPABASE_KEY = settings.SUPABASE_KEY
-GEMINI_API_KEY = settings.GEMINI_API_KEY
+# Configurar logger nativo para evitar dependencias circulares con data.log_repository
+logger = logging.getLogger(__name__)
 
-# --- Inicialización de Clientes ---
+ai_client = None
 
-# Cliente de Supabase
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# Cliente de Gemini AI
-ai_client: genai.Client | None = None
-if GEMINI_API_KEY:
-    try:
+# Intentar configurar Google Generative AI (Gemini)
+try:
+    import google.genai as genai
+    from config.settings import GEMINI_API_KEY
+    
+    if GEMINI_API_KEY:
         ai_client = genai.Client(api_key=GEMINI_API_KEY)
-        print("✅ Cliente de Google Gemini conectado exitosamente.")
-    except Exception as e:
-        print(f"⚠️ Error al inicializar el cliente de Gemini: {e}")
-else:
-    print("📢 Advertencia: No se encontró la GEMINI_API_KEY. Las funciones de IA estarán desactivadas.")
+    else:
+        logger.warning("GEMINI_API_KEY no encontrada en la configuración.")
+except ImportError:
+    logger.error("Librería google-genai no instalada.")
+except Exception as e:
+    logger.error(f"Error inicializando Gemini AI: {e}")
+
+# Inicializar Supabase
+supabase: Client = None
+
+try:
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise ValueError("Faltan credenciales de Supabase (URL o KEY).")
+    
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    # Prueba de conexión silenciosa
+    # supabase.table("app_config").select("count", count="exact").execute()
+
+except Exception as e:
+    logger.critical(f"❌ ERROR CRÍTICO DE CONEXIÓN A BASE DE DATOS: {e}")
+    # NO llamamos a log_event aquí porque causaría ImportError circular
+    raise e
