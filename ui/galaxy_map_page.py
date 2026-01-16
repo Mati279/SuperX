@@ -383,7 +383,6 @@ def _render_interactive_galaxy_map():
             html_template,
             height=860,
             scrolling=False,
-            key="galaxy_map_component",
         )
 
     selected_system_id = None
