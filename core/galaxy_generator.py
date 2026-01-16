@@ -4,7 +4,14 @@ import random
 from typing import List, Dict, Optional
 
 from .world_models import Galaxy, System, Star, Planet, Moon, AsteroidBelt, CelestialBody
-from .world_constants import STAR_TYPES, STAR_RARITY_WEIGHTS, PLANET_BIOMES, ORBITAL_ZONES, ASTEROID_BELT_CHANCE
+from .world_constants import (
+    STAR_TYPES,
+    STAR_RARITY_WEIGHTS,
+    PLANET_BIOMES,
+    ORBITAL_ZONES,
+    ASTEROID_BELT_CHANCE,
+    RESOURCE_STAR_WEIGHTS,
+)
 
 # --- Listas de Nombres Predefinidos para dar Sabor ---
 STAR_NAME_PREFIXES = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Omega"]
@@ -56,13 +63,40 @@ class GalaxyGenerator:
             class_type=star_data['class']
         )
 
-    def _create_planet(self, ring: int, system_name: str, zone_weights: Dict[str, int]) -> Planet:
+    def _pick_planet_size(self) -> str:
+        """Devuelve un tamaño basico para el planeta."""
+        roll = self.random.random()
+        if roll < 0.25:
+            return "Pequeno"
+        if roll < 0.75:
+            return "Mediano"
+        return "Grande"
+
+    def _sample_resources(self, star_class: str, max_items: int = 3) -> List[str]:
+        """Selecciona entre 1 y max_items recursos metalicos segun la clase estelar."""
+        weights = RESOURCE_STAR_WEIGHTS.get(star_class, {})
+        items = [(name, w) for name, w in weights.items() if w > 0]
+        if not items:
+            return []
+
+        chosen = set()
+        count = self.random.randint(1, max_items)
+        for _ in range(count):
+            names, w = zip(*items)
+            pick = self.random.choices(names, weights=w, k=1)[0]
+            chosen.add(pick)
+        return list(chosen)
+
+    def _create_planet(self, ring: int, system_name: str, zone_weights: Dict[str, int], star_class: str) -> Planet:
         biome_name = self.random.choices(
             list(zone_weights.keys()),
             weights=list(zone_weights.values()),
             k=1
         )[0]
         biome_data = PLANET_BIOMES[biome_name]
+        size = self._pick_planet_size()
+        explored_pct = round(self.random.uniform(5, 35), 2)
+        resources = self._sample_resources(star_class, max_items=3)
 
         # Generar lunas
         num_moons = self.random.randint(0, 5)
@@ -76,9 +110,12 @@ class GalaxyGenerator:
             name=f"{system_name}-{ring}",
             ring=ring,
             biome=biome_name,
+            size=size,
             bonuses=biome_data['bonuses'],
             construction_slots=biome_data['construction_slots'],
             maintenance_mod=biome_data['maintenance_mod'],
+            explored_pct=explored_pct,
+            resources=resources,
             moons=moons
         )
 
@@ -131,7 +168,9 @@ class GalaxyGenerator:
             else:
                 # No crear planeta si la zona no tiene opciones (ej. Oceánico en Zona Caliente)
                 if sum(current_zone['planet_weights'].values()) > 0:
-                    system.orbital_rings[ring] = self._create_planet(ring, system_name, current_zone['planet_weights'])
+                    system.orbital_rings[ring] = self._create_planet(
+                        ring, system_name, current_zone['planet_weights'], star.class_type
+                    )
                 else:
                     system.orbital_rings[ring] = None # Anillo vacío
 

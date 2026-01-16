@@ -116,3 +116,71 @@ BASE_CLASSES: Dict[str, Dict[str, Any]] = {
     "Ciudadela Militar": {"size": "Grande", "module_capacity": 10, "function": "Astilleros pesados y defensa orbital."},
     "Matriz Científica": {"size": "Mediana", "module_capacity": 4, "function": "Investigación y escaneo profundo."}
 }
+
+# --- Recursos metálicos ---
+# Cinco metales reales y tres ficticios (muy raros e inestables)
+METAL_RESOURCES: Dict[str, Dict[str, Any]] = {
+    "Hierro": {"rarity": "Comun", "stability": "Estable"},
+    "Cobre": {"rarity": "Comun", "stability": "Estable"},
+    "Niquel": {"rarity": "Poco comun", "stability": "Estable"},
+    "Titanio": {"rarity": "Poco comun", "stability": "Estable"},
+    "Platino": {"rarity": "Raro", "stability": "Estable"},
+    "Oricalco Oscuro": {"rarity": "Muy raro", "stability": "Inestable"},
+    "Neutrilium": {"rarity": "Muy raro", "stability": "Inestable"},
+    "Aetherion": {"rarity": "Extremo", "stability": "Volatil"},
+}
+
+# Probabilidades relativas de cada recurso segun clase estelar
+# (se normalizan al asignar recursos a planetas)
+RESOURCE_STAR_WEIGHTS: Dict[str, Dict[str, int]] = {
+    "G": {
+        "Hierro": 30,
+        "Cobre": 25,
+        "Niquel": 18,
+        "Titanio": 15,
+        "Platino": 8,
+        "Oricalco Oscuro": 3,
+        "Neutrilium": 1,
+        "Aetherion": 0,
+    },
+    "O": {
+        "Hierro": 20,
+        "Cobre": 10,
+        "Niquel": 20,
+        "Titanio": 20,
+        "Platino": 15,
+        "Oricalco Oscuro": 7,
+        "Neutrilium": 5,
+        "Aetherion": 3,
+    },
+    "M": {
+        "Hierro": 35,
+        "Cobre": 30,
+        "Niquel": 15,
+        "Titanio": 10,
+        "Platino": 5,
+        "Oricalco Oscuro": 2,
+        "Neutrilium": 1,
+        "Aetherion": 0,
+    },
+    "D": {
+        "Hierro": 25,
+        "Cobre": 15,
+        "Niquel": 20,
+        "Titanio": 15,
+        "Platino": 10,
+        "Oricalco Oscuro": 7,
+        "Neutrilium": 5,
+        "Aetherion": 3,
+    },
+    "X": {
+        "Hierro": 10,
+        "Cobre": 8,
+        "Niquel": 10,
+        "Titanio": 10,
+        "Platino": 10,
+        "Oricalco Oscuro": 12,
+        "Neutrilium": 12,
+        "Aetherion": 18,
+    },
+}

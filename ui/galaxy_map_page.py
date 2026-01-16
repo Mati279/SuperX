@@ -5,6 +5,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from core.galaxy_generator import get_galaxy
 from core.world_models import System, Planet, AsteroidBelt
+from core.world_constants import RESOURCE_STAR_WEIGHTS, METAL_RESOURCES
 
 
 def show_galaxy_map_page():
@@ -26,7 +27,6 @@ def show_galaxy_map_page():
 
 
 def _scale_positions(systems: list[System], target_width: int = 1400, target_height: int = 900, margin: int = 80):
-    """Escala las coordenadas originales para aprovechar mejor el canvas."""
     xs = [s.position[0] for s in systems]
     ys = [s.position[1] for s in systems]
     min_x, max_x = min(xs), max(xs)
@@ -48,7 +48,6 @@ def _scale_positions(systems: list[System], target_width: int = 1400, target_hei
 
 
 def _build_connections(systems: list[System], positions: dict[int, tuple[float, float]], neighbors: int = 3):
-    """Genera rutas simples conectando cada sistema con sus vecinos mas cercanos."""
     edges = set()
     for system in systems:
         x1, y1 = positions[system.id]
@@ -74,8 +73,15 @@ def _build_connections(systems: list[System], positions: dict[int, tuple[float, 
     return connections
 
 
+def _resource_probability(resource_name: str, star_class: str) -> float:
+    weights = RESOURCE_STAR_WEIGHTS.get(star_class, {})
+    total = sum(weights.values())
+    if total <= 0:
+        return 0.0
+    return round((weights.get(resource_name, 0) / total) * 100, 2)
+
+
 def _render_interactive_galaxy_map():
-    """Muestra el mapa galactico interactivo como un componente HTML/SVG mejorado."""
     st.header("Sistemas Conocidos")
     galaxy = get_galaxy()
 
@@ -88,6 +94,14 @@ def _render_interactive_galaxy_map():
         )
         show_routes = st.toggle("Mostrar rutas", value=True)
         star_scale = st.slider("Tamano relativo", 0.8, 2.0, 1.0, 0.05)
+        resource_options = ["(sin filtro)"] + list(METAL_RESOURCES.keys())
+        selected_resource = st.selectbox("Recurso a resaltar", resource_options, index=0)
+        resource_filter_active = selected_resource != "(sin filtro)"
+        if resource_filter_active:
+            st.caption("Probabilidad por clase estelar:")
+            probs = {k: _resource_probability(selected_resource, k) for k in class_options}
+            for cls in class_options:
+                st.write(f"{cls}: {probs.get(cls, 0):.1f}%")
         st.caption("Click en una estrella abre el detalle del sistema.")
 
     canvas_width, canvas_height = 1400, 900
@@ -116,6 +130,7 @@ def _render_interactive_galaxy_map():
                 "y": round(y, 2),
                 "color": star_colors.get(system.star.class_type, "#FFFFFF"),
                 "radius": round(size_by_class.get(system.star.class_type, 7) * star_scale, 2),
+                "resource_prob": _resource_probability(selected_resource, system.star.class_type) if resource_filter_active else None,
             }
         )
 
@@ -125,6 +140,7 @@ def _render_interactive_galaxy_map():
     connections_json = json.dumps(connections)
     filtered_json = json.dumps(list(filtered_ids))
     highlight_json = json.dumps(list(highlight_ids))
+    resource_name_js = json.dumps(selected_resource if resource_filter_active else "")
 
     html_template = f"""
     <!DOCTYPE html>
@@ -147,10 +163,7 @@ def _render_interactive_galaxy_map():
             background: radial-gradient(circle at 30% 20%, #142034, #0a0f18 55%, #050910 85%);
             color: var(--text);
         }}
-        .wrapper {{
-            width: 100%;
-            height: 100%;
-        }}
+        .wrapper {{ width: 100%; height: 100%; }}
         .map-frame {{
             position: relative;
             width: 100%;
@@ -161,16 +174,13 @@ def _render_interactive_galaxy_map():
             box-shadow: 0 25px 60px rgba(0,0,0,0.35);
             background: radial-gradient(circle at 50% 35%, #0f1c2d, #070b12 75%);
         }}
-        svg {{
-            width: 100%;
-            height: 100%;
-            cursor: grab;
-        }}
+        svg {{ width: 100%; height: 100%; cursor: grab; }}
         .star {{
             transition: r 0.25s ease, filter 0.25s ease, opacity 0.25s ease;
             filter: drop-shadow(0 0 6px rgba(255,255,255,0.35));
         }}
         .star.dim {{ opacity: 0.2; filter: drop-shadow(0 0 3px rgba(255,255,255,0.1)); }}
+        .star.resource-dim {{ opacity: 0.12; filter: drop-shadow(0 0 2px rgba(255,255,255,0.05)); }}
         .star.highlight {{ filter: drop-shadow(0 0 14px rgba(150, 255, 255, 0.9)); r: 11; }}
         .star:hover {{ r: 12; filter: drop-shadow(0 0 16px rgba(255,255,255,0.9)); }}
         .route {{ stroke: #5b7bff; stroke-opacity: 0.25; stroke-width: 2; stroke-linecap: round; }}
@@ -186,49 +196,16 @@ def _render_interactive_galaxy_map():
             box-shadow: 0 10px 25px rgba(0,0,0,0.3);
             backdrop-filter: blur(6px);
         }}
-        .legend h4 {{
-            margin: 0 0 8px 0;
-            font-size: 14px;
-            letter-spacing: 0.4px;
-            color: #9fb2d9;
-        }}
-        .legend-row {{
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 13px;
-            margin: 4px 0;
-            color: #cfd8f5;
-        }}
-        .swatch {{
-            width: 14px;
-            height: 14px;
-            border-radius: 50%;
-            display: inline-block;
-            box-shadow: 0 0 10px rgba(255,255,255,0.35);
-        }}
+        .legend h4 {{ margin: 0 0 8px 0; font-size: 14px; letter-spacing: 0.4px; color: #9fb2d9; }}
+        .legend-row {{ display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 4px 0; color: #cfd8f5; }}
+        .swatch {{ width: 14px; height: 14px; border-radius: 50%; display: inline-block; box-shadow: 0 0 10px rgba(255,255,255,0.35); }}
         .swatch.g {{ background: #f8f5ff; }}
         .swatch.o {{ background: #8ec5ff; }}
         .swatch.m {{ background: #f2b880; }}
         .swatch.d {{ background: #d7d7d7; }}
         .swatch.x {{ background: #d6a4ff; }}
-        .toolbar {{
-            position: absolute;
-            top: 16px;
-            right: 16px;
-            display: flex;
-            gap: 8px;
-        }}
-        .btn {{
-            background: rgba(16, 26, 42, 0.9);
-            color: #e6ecff;
-            border: 1px solid var(--stroke);
-            padding: 8px 10px;
-            border-radius: 10px;
-            cursor: pointer;
-            font-size: 12px;
-            transition: all 0.2s ease;
-        }}
+        .toolbar {{ position: absolute; top: 16px; right: 16px; display: flex; gap: 8px; }}
+        .btn {{ background: rgba(16, 26, 42, 0.9); color: #e6ecff; border: 1px solid var(--stroke); padding: 8px 10px; border-radius: 10px; cursor: pointer; font-size: 12px; transition: all 0.2s ease; }}
         .btn:hover {{ border-color: #5b7bff; color: #9fb2ff; }}
         #tooltip {{
             position: absolute;
@@ -263,15 +240,6 @@ def _render_interactive_galaxy_map():
                     <button id="zoomOut" class="btn">-</button>
                 </div>
                 <svg id="galaxy-map" viewBox="0 0 {canvas_width} {canvas_height}" preserveAspectRatio="xMidYMid meet">
-                    <defs>
-                        <filter id="halo">
-                            <feGaussianBlur stdDeviation="6" result="blur" />
-                            <feMerge>
-                                <feMergeNode in="blur" />
-                                <feMergeNode in="SourceGraphic" />
-                            </feMerge>
-                        </filter>
-                    </defs>
                     <g id="routes-layer"></g>
                     <g id="stars-layer"></g>
                 </svg>
@@ -284,6 +252,8 @@ def _render_interactive_galaxy_map():
             const routes = {connections_json};
             const filteredIds = new Set({filtered_json});
             const highlightIds = new Set({highlight_json});
+            const resourceMode = {"true" if resource_filter_active else "false"};
+            const resourceName = {resource_name_js};
 
             const starsLayer = document.getElementById("stars-layer");
             const routesLayer = document.getElementById("routes-layer");
@@ -320,8 +290,14 @@ def _render_interactive_galaxy_map():
                     circle.setAttribute("data-rarity", sys.rarity);
                     circle.setAttribute("data-energy", sys.energy);
                     circle.setAttribute("data-rule", sys.rule);
+                    if (resourceMode && sys.resource_prob !== null && sys.resource_prob !== undefined) {{
+                        circle.setAttribute("data-resource-prob", sys.resource_prob);
+                    }}
                     if (!filteredIds.has(sys.id)) {{
                         circle.classList.add("dim");
+                    }}
+                    if (resourceMode && (!sys.resource_prob || sys.resource_prob <= 0)) {{
+                        circle.classList.add("resource-dim");
                     }}
                     if (highlightIds.has(sys.id)) {{
                         circle.classList.add("highlight");
@@ -337,11 +313,12 @@ def _render_interactive_galaxy_map():
                 tooltip.style.display = "block";
                 tooltip.style.left = (evt.pageX + 14) + "px";
                 tooltip.style.top = (evt.pageY + 14) + "px";
+                const resourceLine = resourceMode ? `<br/>${{resourceName}}: ${{sys.resource_prob ?? 0}}%` : "";
                 tooltip.innerHTML = `
                     <strong>${{sys.name}}</strong><br/>
                     Clase: ${{sys.class}} - Rareza: ${{sys.rarity}}<br/>
                     Energia: ${{sys.energy}}<br/>
-                    Regla: ${{sys.rule}}
+                    Regla: ${{sys.rule}}${{resourceLine}}
                 `;
             }}
 
@@ -379,11 +356,7 @@ def _render_interactive_galaxy_map():
     """
 
     with col_map:
-        selection_raw = components.html(
-            html_template,
-            height=860,
-            scrolling=False,
-        )
+        selection_raw = components.html(html_template, height=860, scrolling=False)
 
     selected_system_id = None
     if selection_raw not in (None, "", "null"):
@@ -396,6 +369,118 @@ def _render_interactive_galaxy_map():
         st.session_state.map_view = "system"
         st.session_state.selected_system_id = selected_system_id
         st.rerun()
+
+
+def _render_system_orbits(system: System):
+    """Visual simple del sol y planetas orbitando."""
+    star_colors = {"G": "#f8f5ff", "O": "#8ec5ff", "M": "#f2b880", "D": "#d7d7d7", "X": "#d6a4ff"}
+    center_x = 320
+    center_y = 320
+    orbit_step = 35
+    planets = []
+    for ring, body in sorted(system.orbital_rings.items()):
+        if isinstance(body, Planet):
+            angle_deg = (ring * 33) % 360
+            angle_rad = math.radians(angle_deg)
+            radius = 60 + ring * orbit_step
+            px = center_x + radius * math.cos(angle_rad)
+            py = center_y + radius * math.sin(angle_rad)
+            size_map = {"Pequeno": 6, "Mediano": 8, "Grande": 11}
+            pr = size_map.get(body.size, 7)
+            resources = ", ".join(body.resources[:3]) if body.resources else "Sin recursos"
+            planets.append({
+                "name": body.name,
+                "biome": body.biome,
+                "size": body.size,
+                "resources": resources,
+                "explored": body.explored_pct,
+                "x": round(px, 2),
+                "y": round(py, 2),
+                "r": pr,
+                "ring": ring,
+            })
+
+    planets_json = json.dumps(planets)
+    star_color = star_colors.get(system.star.class_type, "#f8f5ff")
+
+    html = f"""
+    <style>
+    .sys-wrapper {{ width: 100%; height: 660px; display: flex; justify-content: center; align-items: center; }}
+    .sys-canvas {{
+        width: 640px; height: 640px; border-radius: 12px;
+        background: radial-gradient(circle at 30% 20%, #111a2e, #080c16 70%);
+        border: 1px solid #1d2a3c; position: relative; overflow: hidden;
+    }}
+    .sys-tooltip {{
+        position: absolute; background: rgba(8,12,22,0.95); color: #e6ecff;
+        border: 1px solid #1f2a3d; padding: 8px 10px; border-radius: 8px;
+        font-size: 12px; pointer-events: none; display: none; max-width: 220px;
+    }}
+    </style>
+    <div class="sys-wrapper">
+        <svg id="system-orbits" class="sys-canvas" viewBox="0 0 {center_x*2} {center_y*2}" preserveAspectRatio="xMidYMid meet">
+            <defs>
+                <radialGradient id="starGlow" cx="50%" cy="50%" r="50%">
+                    <stop offset="0%" stop-color="{star_color}" stop-opacity="0.95" />
+                    <stop offset="100%" stop-color="{star_color}" stop-opacity="0.1" />
+                </radialGradient>
+            </defs>
+            <circle cx="{center_x}" cy="{center_y}" r="16" fill="url(#starGlow)" stroke="{star_color}" stroke-width="2" />
+        </svg>
+        <div id="sys-tooltip" class="sys-tooltip"></div>
+    </div>
+    <script>
+      const planets = {planets_json};
+      const svg = document.getElementById("system-orbits");
+      const tooltip = document.getElementById("sys-tooltip");
+      const centerX = {center_x};
+      const centerY = {center_y};
+
+      // draw orbits
+      planets.forEach(p => {{
+        const orbit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        orbit.setAttribute("cx", centerX);
+        orbit.setAttribute("cy", centerY);
+        orbit.setAttribute("r", Math.hypot(p.x - centerX, p.y - centerY));
+        orbit.setAttribute("fill", "none");
+        orbit.setAttribute("stroke", "rgba(255,255,255,0.08)");
+        orbit.setAttribute("stroke-width", "1");
+        svg.appendChild(orbit);
+      }});
+
+      // draw planets
+      planets.forEach(p => {{
+        const planet = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        planet.setAttribute("cx", p.x);
+        planet.setAttribute("cy", p.y);
+        planet.setAttribute("r", p.r);
+        planet.setAttribute("fill", "#7ec7ff");
+        planet.setAttribute("stroke", "#b2d7ff");
+        planet.setAttribute("stroke-width", "1");
+        planet.addEventListener("mousemove", (evt) => {{
+            tooltip.style.display = "block";
+            tooltip.style.left = (evt.pageX + 10) + "px";
+            tooltip.style.top = (evt.pageY + 10) + "px";
+            tooltip.innerHTML = `<strong>${{p.name}}</strong><br/>
+                Bioma: ${{p.biome}}<br/>
+                Tamano: ${{p.size}}<br/>
+                Explorado: ${{p.explored}}%<br/>
+                Recursos: ${{p.resources}}`;
+        }});
+        planet.addEventListener("mouseleave", () => tooltip.style.display = "none");
+        svg.appendChild(planet);
+
+        const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        label.setAttribute("x", p.x + 10);
+        label.setAttribute("y", p.y + 4);
+        label.setAttribute("fill", "#dfe8ff");
+        label.setAttribute("font-size", "11");
+        label.textContent = `${{p.name}} (R${{p.ring}})`;
+        svg.appendChild(label);
+      }});
+    </script>
+    """
+    components.html(html, height=700)
 
 
 def _render_system_view():
@@ -418,26 +503,30 @@ def _render_system_view():
         st.info(f"Regla Especial: {system.star.special_rule}")
         st.caption(f"Clase: {system.star.class_type} | Rareza: {system.star.rarity}")
 
-    st.subheader("Anillos Orbitales")
+    st.subheader("Vista orbital")
+    _render_system_orbits(system)
 
+    st.subheader("Anillos Orbitales")
     for ring in range(1, 10):
         body = system.orbital_rings.get(ring)
-
         with st.container(border=True):
-            col1, col2, col3 = st.columns([1, 3, 2])
+            col1, col2, col3 = st.columns([1, 2, 3])
             with col1:
                 st.subheader(f"Anillo {ring}")
-
             with col2:
                 if body is None:
                     st.write("_(Vacio)_")
                 elif isinstance(body, Planet):
-                    st.write(f"**Planeta:** {body.name} ({body.biome})")
+                    st.write(f"**Planeta:** {body.name}")
+                    st.write(f"Bioma: {body.biome}")
+                    st.write(f"Tamano: {body.size}")
                 elif isinstance(body, AsteroidBelt):
                     st.write(f"**Cinturon de Asteroides:** {body.name}")
-
             with col3:
                 if isinstance(body, Planet):
+                    st.progress(body.explored_pct / 100.0, text=f"Explorado {body.explored_pct}%")
+                    top_res = ", ".join(body.resources[:3]) if body.resources else "Sin recursos"
+                    st.write(f"Recursos: {top_res}")
                     if st.button("Ver Detalles", key=f"planet_{body.id}"):
                         st.session_state.map_view = "planet"
                         st.session_state.selected_planet_id = body.id
@@ -474,9 +563,12 @@ def _render_planet_view():
         st.metric("Anillo Orbital", planet.ring)
         st.metric("Slots de Construccion", planet.construction_slots)
         st.metric("Mod. Mantenimiento", f"{planet.maintenance_mod:+.0%}")
+        st.metric("Tamano", planet.size)
+        st.metric("Explorado", f"{planet.explored_pct}%")
     with col2:
         st.subheader(f"Bioma: {planet.biome}")
         st.info(f"Bonus: {planet.bonuses}")
+        st.write(f"Recursos: {', '.join(planet.resources[:3]) if planet.resources else 'Sin recursos'}")
 
     st.subheader("Satelites Naturales (Lunas)")
     if planet.moons:

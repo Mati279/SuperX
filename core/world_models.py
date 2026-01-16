@@ -31,9 +31,12 @@ class Planet(CelestialBody):
     """Representa un planeta en un anillo orbital."""
     id: int
     biome: str
+    size: str
     bonuses: str
     construction_slots: int
     maintenance_mod: float
+    explored_pct: float = 0.0
+    resources: List[str] = field(default_factory=list)
     moons: List[Moon] = field(default_factory=list)
 
 @dataclass
