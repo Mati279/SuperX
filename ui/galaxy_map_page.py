@@ -361,7 +361,7 @@ def _render_interactive_galaxy_map():
     """
 
     with col_map:
-        selection_raw = components.html(html_template, height=860, scrolling=False, key="galaxy_map_html")
+        selection_raw = components.html(html_template, height=860, scrolling=False)
 
     selected_system_id = None
     if selection_raw not in (None, "", "null"):
