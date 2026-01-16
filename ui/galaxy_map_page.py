@@ -19,19 +19,19 @@ def show_galaxy_map_page():
         st.session_state.selected_planet_id = None
 
     # --- LÓGICA DE NAVEGACIÓN (Bridging JS -> Python) ---
-    # Captura el parametro de URL si el mapa lo envía
+    # Capturamos el parámetro system_id que el JS inyecta en la URL
     if "system_id" in st.query_params:
         try:
             target_system_id = int(st.query_params["system_id"])
             st.session_state.selected_system_id = target_system_id
             st.session_state.map_view = "system"
             
-            # Limpiar URL inmediatamente
+            # Limpiamos la URL para que no se quede el parámetro pegado
             del st.query_params["system_id"]
+            st.rerun()
         except (ValueError, TypeError):
              if "system_id" in st.query_params:
                 del st.query_params["system_id"]
-        st.rerun()
 
     # --- Renderizado de Vistas ---
     if st.session_state.map_view == "galaxy":
@@ -225,7 +225,7 @@ def _render_interactive_galaxy_map():
     <style>
         :root {{
             --bg-1: #0b0f18;
-            --panel-bg: rgba(16, 26, 42, 0.95);
+            --panel-bg: rgba(13, 19, 30, 0.95);
             --stroke: #1f2a3d;
             --text: #e6ecff;
             --highlight: #5b7bff;
@@ -255,7 +255,7 @@ def _render_interactive_galaxy_map():
             cursor: pointer;
         }}
         .star.dim {{ opacity: 0.2; pointer-events: none; }}
-        .star:hover {{ r: 12; filter: drop-shadow(0 0 16px rgba(255,255,255,0.9)); }}
+        .star:hover {{ r: 14; filter: drop-shadow(0 0 16px rgba(255,255,255,0.9)); stroke: white; stroke-width: 2px; }}
         .route {{ stroke: #5b7bff; stroke-opacity: 0.25; stroke-width: 2; stroke-linecap: round; pointer-events: none; }}
         
         .legend {{
@@ -269,62 +269,72 @@ def _render_interactive_galaxy_map():
         .swatch.m {{ background: #f2b880; }} .swatch.d {{ background: #d7d7d7; }} .swatch.x {{ background: #d6a4ff; }}
         .legend-row {{ font-size: 12px; color: #cfd8f5; margin-bottom: 4px; }}
         
-        .toolbar {{ position: absolute; top: 16px; right: 16px; display: flex; gap: 8px; }}
+        .toolbar {{ position: absolute; top: 16px; right: 16px; display: flex; gap: 8px; z-index: 10; }}
         .btn {{ 
             background: rgba(16, 26, 42, 0.85); color: #e6ecff; border: 1px solid var(--stroke); 
             padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: 0.2s;
         }}
         .btn:hover {{ border-color: var(--highlight); color: var(--highlight); }}
 
-        /* INFO PANEL - Floating */
-        #info-panel {{
+        /* --- SIDE PANEL (Fixed Right) --- */
+        #side-panel {{
             position: absolute;
-            /* Coordenadas se asignan dinámicamente vía JS */
-            width: 280px;
+            top: 0; right: 0; bottom: 0;
+            width: 320px;
             background: var(--panel-bg);
-            border: 1px solid var(--highlight);
-            box-shadow: 0 10px 40px rgba(0,0,0,0.8);
-            border-radius: 12px;
-            padding: 16px;
-            display: none;
+            border-left: 1px solid var(--stroke);
+            box-shadow: -10px 0 30px rgba(0,0,0,0.5);
+            padding: 24px;
+            display: flex;
             flex-direction: column;
-            backdrop-filter: blur(12px);
-            z-index: 9999;
-            pointer-events: all;
-            animation: fadeIn 0.15s ease-out;
+            transform: translateX(100%);
+            transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+            z-index: 100;
+            backdrop-filter: blur(10px);
         }}
-        @keyframes fadeIn {{ from {{ opacity: 0; transform: scale(0.95); }} to {{ opacity: 1; transform: scale(1); }} }}
+        #side-panel.open {{ transform: translateX(0); }}
         
-        #info-panel h2 {{ margin: 0 0 10px 0; font-size: 18px; color: #fff; border-bottom: 1px solid var(--stroke); padding-bottom: 8px; }}
-        .info-row {{ display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; color: #aeb9cc; }}
-        .info-val {{ color: #e6ecff; font-weight: 500; }}
+        .panel-header {{ border-bottom: 1px solid var(--stroke); padding-bottom: 16px; margin-bottom: 16px; }}
+        .panel-title {{ margin: 0 0 4px 0; font-size: 22px; color: #fff; font-weight: 700; }}
+        .panel-subtitle {{ font-size: 13px; color: var(--highlight); font-weight: 500; text-transform: uppercase; letter-spacing: 1px; }}
         
-        /* BOTÓN DE ENTRADA ROBUSTO */
+        .info-grid {{ display: grid; gap: 12px; margin-bottom: 24px; }}
+        .info-item {{ display: flex; justify-content: space-between; font-size: 13px; border-bottom: 1px solid #1f2a3d; padding-bottom: 6px; }}
+        .info-label {{ color: #8fa5c4; }}
+        .info-val {{ color: #e6ecff; font-weight: 600; text-align: right; }}
+        
+        .special-rule-box {{ 
+            background: rgba(91, 123, 255, 0.1); border: 1px solid rgba(91, 123, 255, 0.3);
+            border-radius: 8px; padding: 12px; font-size: 12px; color: #d0dfff; margin-bottom: 24px;
+            line-height: 1.4;
+        }}
+        
+        .action-area {{ margin-top: auto; }}
         .enter-btn {{
-            margin-top: 12px;
-            display: block;
-            text-align: center;
-            text-decoration: none;
+            width: 100%;
             background: linear-gradient(135deg, #2b4570, #1a2a44);
             border: 1px solid #5b7bff;
             color: white;
-            padding: 10px;
-            width: 100%;
-            border-radius: 6px;
+            padding: 14px;
+            border-radius: 8px;
             cursor: pointer;
             font-weight: bold;
-            font-size: 13px;
+            font-size: 14px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 1.5px;
             transition: all 0.2s;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         }}
-        .enter-btn:hover {{ background: #5b7bff; box-shadow: 0 0 15px rgba(91, 123, 255, 0.4); color: #fff; }}
-        .enter-btn:active {{ transform: translateY(1px); }}
+        .enter-btn:hover {{ 
+            background: #5b7bff; 
+            box-shadow: 0 0 20px rgba(91, 123, 255, 0.6); 
+            transform: translateY(-2px);
+        }}
         
         .close-panel {{
-            position: absolute; top: 8px; right: 8px;
-            background: transparent; border: none; color: #666;
-            cursor: pointer; font-size: 18px; line-height: 1;
+            position: absolute; top: 16px; right: 16px;
+            background: transparent; border: none; color: #555;
+            cursor: pointer; font-size: 24px; line-height: 1;
         }}
         .close-panel:hover {{ color: #fff; }}
         
@@ -332,7 +342,7 @@ def _render_interactive_galaxy_map():
             position: absolute; pointer-events: none; background: rgba(0,0,0,0.9);
             padding: 4px 8px; border-radius: 4px; font-size: 11px; color: #fff;
             display: none; border: 1px solid #444; transform: translateY(-30px);
-            white-space: nowrap; z-index: 500;
+            white-space: nowrap; z-index: 50;
         }}
     </style>
     </head>
@@ -341,17 +351,31 @@ def _render_interactive_galaxy_map():
             <div class="map-frame">
                 <div id="mini-tooltip"></div>
                 
-                <div id="info-panel">
+                <div id="side-panel">
                     <button class="close-panel" onclick="closePanel()">×</button>
-                    <h2 id="panel-title">System Name</h2>
-                    <div class="info-row"><span>Clase</span> <span class="info-val" id="panel-class">-</span></div>
-                    <div class="info-row"><span>Rareza</span> <span class="info-val" id="panel-rarity">-</span></div>
-                    <div class="info-row"><span>Energía</span> <span class="info-val" id="panel-energy">-</span></div>
-                    <div class="info-row"><span>Regla</span> <span class="info-val" id="panel-rule">-</span></div>
-                    <div id="panel-resource-row" class="info-row" style="display:none">
-                        <span>Recurso</span> <span class="info-val" id="panel-resource" style="color: #f1d26a">-</span>
+                    <div class="panel-header">
+                        <h2 class="panel-title" id="p-name">Alpha Centauri</h2>
+                        <div class="panel-subtitle" id="p-id">ID: 001</div>
                     </div>
-                    <a id="btn-enter-system" href="#" target="_parent" class="enter-btn">ENTRAR AL SISTEMA 🚀</a>
+                    
+                    <div class="info-grid">
+                        <div class="info-item"><span class="info-label">Clase Estelar</span><span class="info-val" id="p-class">G</span></div>
+                        <div class="info-item"><span class="info-label">Rareza</span><span class="info-val" id="p-rarity">Común</span></div>
+                        <div class="info-item"><span class="info-label">Energía</span><span class="info-val" id="p-energy">100%</span></div>
+                        <div class="info-item" id="row-resource" style="display:none">
+                            <span class="info-label">Recurso</span>
+                            <span class="info-val" id="p-resource" style="color:#f1d26a">Oro</span>
+                        </div>
+                    </div>
+                    
+                    <div class="special-rule-box">
+                        <strong style="display:block; margin-bottom:4px; color:#fff;">Regla Especial:</strong>
+                        <span id="p-rule">Sin efectos adversos detectados.</span>
+                    </div>
+                    
+                    <div class="action-area">
+                        <button id="btn-enter" class="enter-btn">ENTRAR AL SISTEMA</button>
+                    </div>
                 </div>
 
                 <div class="legend">
@@ -386,10 +410,10 @@ def _render_interactive_galaxy_map():
             const starsLayer = document.getElementById("stars-layer");
             const routesLayer = document.getElementById("routes-layer");
             const miniTooltip = document.getElementById("mini-tooltip");
-            const infoPanel = document.getElementById("info-panel");
-            const enterBtn = document.getElementById("btn-enter-system");
+            const sidePanel = document.getElementById("side-panel");
+            const enterBtn = document.getElementById("btn-enter");
             
-            let currentSelectedSystemId = null;
+            let currentSelectedId = null;
 
             // -- Drawing Functions --
             function drawRoutes() {{
@@ -417,115 +441,82 @@ def _render_interactive_galaxy_map():
                         circle.classList.add("dim");
                     }}
                     
-                    // Mouse hover (tooltip simple)
+                    // Hover simple (solo nombre)
                     circle.addEventListener("mouseenter", () => {{
                         miniTooltip.style.display = "block";
                         miniTooltip.textContent = sys.name;
                     }});
                     circle.addEventListener("mousemove", (e) => {{
-                        miniTooltip.style.left = e.pageX + "px";
-                        miniTooltip.style.top = e.pageY + "px";
+                        miniTooltip.style.left = (e.pageX + 10) + "px";
+                        miniTooltip.style.top = (e.pageY - 25) + "px";
                     }});
                     circle.addEventListener("mouseleave", () => {{
                         miniTooltip.style.display = "none";
                     }});
                     
-                    // Click (Selection) - Pasamos el evento 'evt'
+                    // CLICK: Abrir Panel Lateral
                     circle.addEventListener("click", (evt) => {{
                         evt.stopPropagation();
                         evt.preventDefault();
-                        selectSystem(sys, evt);
+                        openPanel(sys);
                     }});
                     
                     starsLayer.appendChild(circle);
                 }});
             }}
 
-            // -- Selection & Positioning Logic --
-            function selectSystem(sys, evt) {{
-                currentSelectedSystemId = sys.id;
+            // -- Panel Logic --
+            function openPanel(sys) {{
+                currentSelectedId = sys.id;
                 
-                // 1. Populate Info
-                document.getElementById("panel-title").textContent = `(ID ${{sys.id}}) ${{sys.name}}`;
-                document.getElementById("panel-class").textContent = sys.class;
-                document.getElementById("panel-rarity").textContent = sys.rarity;
-                document.getElementById("panel-energy").textContent = sys.energy;
-                document.getElementById("panel-rule").textContent = sys.rule;
+                // Rellenar datos
+                document.getElementById("p-name").textContent = sys.name;
+                document.getElementById("p-id").textContent = "ID SISTEMA: " + sys.id;
+                document.getElementById("p-class").textContent = sys.class;
+                document.getElementById("p-rarity").textContent = sys.rarity;
+                document.getElementById("p-energy").textContent = sys.energy;
+                document.getElementById("p-rule").textContent = sys.rule;
                 
-                const resRow = document.getElementById("panel-resource-row");
-                const resVal = document.getElementById("panel-resource");
+                const resRow = document.getElementById("row-resource");
                 if (resourceMode && sys.resource_prob) {{
                     resRow.style.display = "flex";
-                    resVal.textContent = `${{resourceName}} (${{sys.resource_prob}}%)`;
+                    document.getElementById("p-resource").textContent = `${{resourceName}} (${{sys.resource_prob}}%)`;
                 }} else {{
                     resRow.style.display = "none";
                 }}
                 
-                // 2. Navigation Link Construction (Fix for "Not working")
-                // Intentamos construir una URL absoluta relativa al padre
-                // Si estamos en localhost:8501, queremos localhost:8501/?system_id=1
-                let finalHref = "?system_id=" + sys.id;
-                try {{
-                    // Intento obtener la URL base del padre
-                    if (window.parent && window.parent.location.href) {{
-                        const url = new URL(window.parent.location.href);
-                        url.searchParams.set("system_id", sys.id);
-                        finalHref = url.toString();
-                    }}
-                }} catch (e) {{
-                    console.log("Cross-origin restricted, using relative path fallback");
-                }}
-                enterBtn.href = finalHref;
-                
-                // 3. Positioning (Near Mouse)
-                // Usamos las coordenadas del click (pageX, pageY)
-                const panelW = 280; 
-                const panelH = 260; 
-                const margin = 10;
-                
-                let posX = evt.pageX + 20;
-                let posY = evt.pageY - 40;
-
-                // Boundary Checks (para que no se salga de la pantalla)
-                const viewportW = document.body.clientWidth;
-                const viewportH = document.body.clientHeight;
-
-                if (posX + panelW > viewportW) {{
-                    posX = evt.pageX - panelW - 20; // Voltear a la izquierda
-                }}
-                if (posY + panelH > viewportH) {{
-                    posY = viewportH - panelH - margin; // Empujar hacia arriba
-                }}
-                if (posY < 0) posY = margin;
-
-                infoPanel.style.left = posX + "px";
-                infoPanel.style.top = posY + "px";
-                infoPanel.style.display = "flex";
+                // Mostrar panel
+                sidePanel.classList.add("open");
             }}
 
             function closePanel() {{
-                infoPanel.style.display = "none";
-                currentSelectedSystemId = null;
+                sidePanel.classList.remove("open");
+                currentSelectedId = null;
             }}
 
-            // Global Click handler to close panel
+            // Cerrar panel al hacer clic en el fondo
             document.querySelector(".map-frame").addEventListener("click", (e) => {{
-                if (!e.target.classList.contains("star") && !infoPanel.contains(e.target)) {{
+                if (!e.target.classList.contains("star") && !sidePanel.contains(e.target)) {{
                     closePanel();
                 }}
             }});
             
-            // Backup click handler for the button if href fails
-            enterBtn.addEventListener("click", (e) => {{
-                // Dejamos que el href funcione primero (middle click, etc)
-                // Pero intentamos forzar la navegación en el top window también
-                setTimeout(() => {{
-                     try {{
-                        window.parent.location.search = "?system_id=" + currentSelectedSystemId;
-                     }} catch(err) {{
-                        console.warn("JS Nav Failed, relying on href target attribute");
-                     }}
-                }}, 50);
+            // -- NAVEGACIÓN ROBUSTA --
+            enterBtn.addEventListener("click", () => {{
+                if (currentSelectedId !== null) {{
+                    console.log("Navegando a sistema:", currentSelectedId);
+                    // Truco para forzar recarga en Streamlit: modificar window.top.location
+                    try {{
+                        const targetWin = window.top || window.parent || window;
+                        const currentUrl = new URL(targetWin.location.href);
+                        currentUrl.searchParams.set("system_id", currentSelectedId);
+                        targetWin.location.href = currentUrl.toString();
+                    }} catch (e) {{
+                        console.error("Error navegando:", e);
+                        // Fallback desesperado
+                        window.location.search = "?system_id=" + currentSelectedId;
+                    }}
+                }}
             }});
 
             drawRoutes();
