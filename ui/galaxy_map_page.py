@@ -18,15 +18,23 @@ def show_galaxy_map_page():
         st.session_state.selected_system_id = None
         st.session_state.selected_planet_id = None
 
-    # Si viene system_id por querystring, navegar directo
-    query_params = st.query_params
-    if st.session_state.map_view == "galaxy" and "system_id" in query_params:
+    # --- LÓGICA DE NAVEGACIÓN (Bridging JS -> Python) ---
+    # Detectamos el parametro system_id inyectado por el JS
+    if "system_id" in st.query_params:
         try:
-            st.session_state.selected_system_id = int(query_params.get("system_id"))
+            target_system_id = int(st.query_params["system_id"])
+            st.session_state.selected_system_id = target_system_id
             st.session_state.map_view = "system"
-        except Exception:
-            pass
+            
+            # Limpiamos INMEDIATAMENTE el parametro para evitar recargas infinitas
+            del st.query_params["system_id"]
+        except (ValueError, TypeError):
+             if "system_id" in st.query_params:
+                del st.query_params["system_id"]
+        # Forzamos rerun para limpiar la URL visualmente y cambiar la vista
+        st.rerun()
 
+    # --- Renderizado de Vistas ---
     if st.session_state.map_view == "galaxy":
         _render_interactive_galaxy_map()
     elif st.session_state.map_view == "system" and st.session_state.selected_system_id is not None:
@@ -218,19 +226,20 @@ def _render_interactive_galaxy_map():
     <style>
         :root {{
             --bg-1: #0b0f18;
-            --bg-2: #0f1b2b;
-            --panel: #121826;
+            --panel-bg: rgba(16, 26, 42, 0.85);
             --stroke: #1f2a3d;
             --text: #e6ecff;
+            --highlight: #5b7bff;
         }}
         * {{ box-sizing: border-box; }}
         body {{
             margin: 0;
             font-family: "Inter", system-ui, -apple-system, sans-serif;
-            background: radial-gradient(circle at 30% 20%, #142034, #0a0f18 55%, #050910 85%);
+            background: #000;
             color: var(--text);
+            overflow: hidden; /* Prevent iframe scrolling */
         }}
-        .wrapper {{ width: 100%; height: 100%; }}
+        .wrapper {{ width: 100%; height: 100%; position: relative; }}
         .map-frame {{
             position: relative;
             width: 100%;
@@ -238,7 +247,6 @@ def _render_interactive_galaxy_map():
             border-radius: 18px;
             overflow: hidden;
             border: 1px solid var(--stroke);
-            box-shadow: 0 25px 60px rgba(0,0,0,0.35);
             background: radial-gradient(circle at 50% 35%, #0f1c2d, #070b12 75%);
         }}
         svg {{ width: 100%; height: 100%; cursor: grab; }}
@@ -247,71 +255,125 @@ def _render_interactive_galaxy_map():
             filter: drop-shadow(0 0 6px rgba(255,255,255,0.35));
             cursor: pointer;
         }}
-        .star.dim {{ opacity: 0.2; filter: drop-shadow(0 0 3px rgba(255,255,255,0.1)); }}
-        .star.resource-dim {{ opacity: 0.12; filter: drop-shadow(0 0 2px rgba(255,255,255,0.05)); }}
-        .star.highlight {{ filter: drop-shadow(0 0 14px rgba(150, 255, 255, 0.9)); r: 11; }}
+        .star.dim {{ opacity: 0.2; pointer-events: none; }}
         .star:hover {{ r: 12; filter: drop-shadow(0 0 16px rgba(255,255,255,0.9)); }}
-        .route {{ stroke: #5b7bff; stroke-opacity: 0.25; stroke-width: 2; stroke-linecap: round; }}
-        .route.highlight {{ stroke-opacity: 0.5; }}
+        .route {{ stroke: #5b7bff; stroke-opacity: 0.25; stroke-width: 2; stroke-linecap: round; pointer-events: none; }}
+        
+        /* UI OVERLAYS */
         .legend {{
-            position: absolute;
-            top: 16px;
-            left: 16px;
-            background: rgba(10, 14, 24, 0.9);
-            padding: 12px 14px;
-            border-radius: 12px;
-            border: 1px solid var(--stroke);
-            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
-            backdrop-filter: blur(6px);
+            position: absolute; top: 16px; left: 16px;
+            background: var(--panel-bg); padding: 12px 14px;
+            border-radius: 12px; border: 1px solid var(--stroke);
+            backdrop-filter: blur(8px);
         }}
-        .legend h4 {{ margin: 0 0 8px 0; font-size: 14px; letter-spacing: 0.4px; color: #9fb2d9; }}
-        .legend-row {{ display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 4px 0; color: #cfd8f5; }}
-        .swatch {{ width: 14px; height: 14px; border-radius: 50%; display: inline-block; box-shadow: 0 0 10px rgba(255,255,255,0.35); }}
-        .swatch.g {{ background: #f8f5ff; }}
-        .swatch.o {{ background: #8ec5ff; }}
-        .swatch.m {{ background: #f2b880; }}
-        .swatch.d {{ background: #d7d7d7; }}
-        .swatch.x {{ background: #d6a4ff; }}
+        .swatch {{ width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }}
+        .swatch.g {{ background: #f8f5ff; }} .swatch.o {{ background: #8ec5ff; }}
+        .swatch.m {{ background: #f2b880; }} .swatch.d {{ background: #d7d7d7; }} .swatch.x {{ background: #d6a4ff; }}
+        .legend-row {{ font-size: 12px; color: #cfd8f5; margin-bottom: 4px; }}
+        
         .toolbar {{ position: absolute; top: 16px; right: 16px; display: flex; gap: 8px; }}
-        .btn {{ background: rgba(16, 26, 42, 0.9); color: #e6ecff; border: 1px solid var(--stroke); padding: 8px 10px; border-radius: 10px; cursor: pointer; font-size: 12px; transition: all 0.2s ease; }}
-        .btn:hover {{ border-color: #5b7bff; color: #9fb2ff; }}
-        #tooltip {{
+        .btn {{ 
+            background: var(--panel-bg); color: #e6ecff; border: 1px solid var(--stroke); 
+            padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: 0.2s;
+        }}
+        .btn:hover {{ border-color: var(--highlight); color: var(--highlight); }}
+
+        /* INFO PANEL (Fixed Right Side) */
+        #info-panel {{
+            position: absolute;
+            top: 60px; right: 16px;
+            width: 300px;
+            background: rgba(12, 18, 30, 0.95);
+            border: 1px solid var(--highlight);
+            box-shadow: 0 0 30px rgba(0,0,0,0.6);
+            border-radius: 12px;
+            padding: 20px;
+            display: none; /* Hidden by default */
+            flex-direction: column;
+            backdrop-filter: blur(12px);
+            animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 100;
+        }}
+        @keyframes slideIn {{
+            from {{ opacity: 0; transform: translateX(20px); }}
+            to {{ opacity: 1; transform: translateX(0); }}
+        }}
+        #info-panel h2 {{ margin: 0 0 10px 0; font-size: 20px; color: #fff; }}
+        .info-row {{ display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; color: #aeb9cc; border-bottom: 1px solid #1f2a3d; padding-bottom: 4px; }}
+        .enter-btn {{
+            margin-top: 15px;
+            background: linear-gradient(135deg, #2b4570, #1a2a44);
+            border: 1px solid #5b7bff;
+            color: white;
+            padding: 12px;
+            width: 100%;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: all 0.2s;
+        }}
+        .enter-btn:hover {{ background: #5b7bff; box-shadow: 0 0 15px rgba(91, 123, 255, 0.4); }}
+        .close-panel {{
+            position: absolute; top: 10px; right: 10px;
+            background: transparent; border: none; color: #555;
+            cursor: pointer; font-size: 16px;
+        }}
+        .close-panel:hover {{ color: #fff; }}
+        
+        /* HOVER TOOLTIP (Mouse follower - Simplified) */
+        #mini-tooltip {{
             position: absolute;
             pointer-events: none;
-            background: rgba(8, 12, 22, 0.95);
-            border: 1px solid var(--stroke);
-            color: #dfe8ff;
-            padding: 10px 12px;
-            border-radius: 10px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.4);
-            font-size: 12px;
+            background: rgba(0,0,0,0.8);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            color: #fff;
             display: none;
-            max-width: 240px;
-            backdrop-filter: blur(6px);
+            border: 1px solid #333;
+            transform: translateY(-25px);
+            white-space: nowrap;
         }}
     </style>
     </head>
     <body>
         <div class="wrapper">
             <div class="map-frame">
-                <div class="legend">
-                    <h4>Clases estelares</h4>
-                    <div class="legend-row"><span class="swatch g"></span> G - Enana Amarilla</div>
-                    <div class="legend-row"><span class="swatch o"></span> O - Gigante Azul</div>
-                    <div class="legend-row"><span class="swatch m"></span> M - Enana Roja</div>
-                    <div class="legend-row"><span class="swatch d"></span> D - Enana Blanca</div>
-                    <div class="legend-row"><span class="swatch x"></span> X - Exotica</div>
+                <div id="mini-tooltip"></div>
+                
+                <div id="info-panel">
+                    <button class="close-panel" onclick="closePanel()">×</button>
+                    <h2 id="panel-title">System Name</h2>
+                    <div class="info-row"><span>Clase:</span> <span id="panel-class">-</span></div>
+                    <div class="info-row"><span>Rareza:</span> <span id="panel-rarity">-</span></div>
+                    <div class="info-row"><span>Energía:</span> <span id="panel-energy">-</span></div>
+                    <div class="info-row"><span>Regla:</span> <span id="panel-rule">-</span></div>
+                    <div id="panel-resource-row" class="info-row" style="display:none">
+                        <span>Recurso:</span> <span id="panel-resource" style="color: #f1d26a">-</span>
+                    </div>
+                    <button id="btn-enter-system" class="enter-btn">ENTRAR AL SISTEMA 🚀</button>
                 </div>
+
+                <div class="legend">
+                    <div class="legend-row"><span class="swatch g"></span> G (Amarilla)</div>
+                    <div class="legend-row"><span class="swatch o"></span> O (Azul)</div>
+                    <div class="legend-row"><span class="swatch m"></span> M (Roja)</div>
+                    <div class="legend-row"><span class="swatch d"></span> D (Blanca)</div>
+                    <div class="legend-row"><span class="swatch x"></span> X (Exótica)</div>
+                </div>
+                
                 <div class="toolbar">
-                    <button id="resetView" class="btn">Reset vista</button>
+                    <button id="resetView" class="btn">Centrar</button>
                     <button id="zoomIn" class="btn">+</button>
                     <button id="zoomOut" class="btn">-</button>
                 </div>
+                
                 <svg id="galaxy-map" viewBox="0 0 {canvas_width} {canvas_height}" preserveAspectRatio="xMidYMid meet">
                     <g id="routes-layer"></g>
                     <g id="stars-layer"></g>
                 </svg>
-                <div id="tooltip"></div>
             </div>
         </div>
 
@@ -322,24 +384,22 @@ def _render_interactive_galaxy_map():
             const highlightIds = new Set({highlight_json});
             const resourceMode = {"true" if resource_filter_active else "false"};
             const resourceName = {resource_name_js};
-            const streamlit = window.parent && window.parent.Streamlit ? window.parent.Streamlit : null;
-
+            
             const starsLayer = document.getElementById("stars-layer");
             const routesLayer = document.getElementById("routes-layer");
-            const tooltip = document.getElementById("tooltip");
+            const miniTooltip = document.getElementById("mini-tooltip");
+            const infoPanel = document.getElementById("info-panel");
+            
+            let currentSelectedSystemId = null;
 
+            // -- Drawing Functions --
             function drawRoutes() {{
                 routesLayer.innerHTML = "";
                 routes.forEach(route => {{
                     const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-                    line.setAttribute("x1", route.ax);
-                    line.setAttribute("y1", route.ay);
-                    line.setAttribute("x2", route.bx);
-                    line.setAttribute("y2", route.by);
+                    line.setAttribute("x1", route.ax); line.setAttribute("y1", route.ay);
+                    line.setAttribute("x2", route.bx); line.setAttribute("y2", route.by);
                     line.setAttribute("class", "route");
-                    if (highlightIds.has(route.a_id) || highlightIds.has(route.b_id)) {{
-                        line.classList.add("highlight");
-                    }}
                     routesLayer.appendChild(line);
                 }});
             }}
@@ -353,84 +413,98 @@ def _render_interactive_galaxy_map():
                     circle.setAttribute("r", sys.radius);
                     circle.setAttribute("fill", sys.color);
                     circle.setAttribute("class", "star");
-                    circle.setAttribute("data-id", sys.id);
-                    circle.setAttribute("data-name", sys.name);
-                    circle.setAttribute("data-class", sys.class);
-                    circle.setAttribute("data-rarity", sys.rarity);
-                    circle.setAttribute("data-energy", sys.energy);
-                    circle.setAttribute("data-rule", sys.rule);
-                    if (resourceMode && sys.resource_prob !== null && sys.resource_prob !== undefined) {{
-                        circle.setAttribute("data-resource-prob", sys.resource_prob);
-                    }}
+                    
+                    // Filter Logic
                     if (!filteredIds.has(sys.id)) {{
                         circle.classList.add("dim");
                     }}
-                    if (resourceMode && (!sys.resource_prob || sys.resource_prob <= 0)) {{
-                        circle.classList.add("resource-dim");
-                    }}
-                    if (highlightIds.has(sys.id)) {{
-                        circle.classList.add("highlight");
-                    }}
-                    circle.style.pointerEvents = "all";
-                    circle.addEventListener("mousemove", (event) => showTooltip(event, sys));
-                    circle.addEventListener("mouseleave", hideTooltip);
-                    circle.addEventListener("mousedown", (evt) => {{ evt.stopPropagation(); evt.preventDefault(); }});
-                    circle.addEventListener("touchstart", (evt) => {{ evt.stopPropagation(); }});
+                    
+                    // Interaction Events
+                    // 1. Hover (Mini Tooltip)
+                    circle.addEventListener("mouseenter", () => {{
+                        miniTooltip.style.display = "block";
+                        miniTooltip.textContent = sys.name;
+                    }});
+                    circle.addEventListener("mousemove", (e) => {{
+                        miniTooltip.style.left = e.pageX + "px";
+                        miniTooltip.style.top = e.pageY + "px";
+                    }});
+                    circle.addEventListener("mouseleave", () => {{
+                        miniTooltip.style.display = "none";
+                    }});
+                    
+                    // 2. Click (Select & Open Panel)
                     circle.addEventListener("click", (evt) => {{
                         evt.stopPropagation();
                         evt.preventDefault();
-                        console.log("planeta apretado", sys.name);
-                        handleClick(sys.id);
+                        selectSystem(sys);
                     }});
+                    
                     starsLayer.appendChild(circle);
                 }});
             }}
 
-            function showTooltip(evt, sys) {{
-                tooltip.style.display = "block";
-                tooltip.style.left = (evt.pageX + 14) + "px";
-                tooltip.style.top = (evt.pageY + 14) + "px";
-                const resourceLine = resourceMode ? `<br/>${{resourceName}}: ${{sys.resource_prob ?? 0}}%` : "";
-                tooltip.innerHTML = `
-                    <strong>(ID ${{sys.id}}) ${{sys.name}}</strong><br/>
-                    Clase: ${{sys.class}} - Rareza: ${{sys.rarity}}<br/>
-                    Energia: ${{sys.energy}}<br/>
-                    Regla: ${{sys.rule}}${{resourceLine}}
-                `;
-            }}
-
-            function hideTooltip() {{
-                tooltip.style.display = "none";
-            }}
-
-            function handleClick(systemId) {{
-                console.log("click sistema -> navegar con query param", systemId);
-                try {{
-                    const targetWin = window.parent || window.top || window;
-                    const url = new URL(targetWin.location.href);
-                    url.searchParams.set("system_id", systemId);
-                    targetWin.location.href = url.toString();
-                }} catch (e) {{
-                    console.warn("No se pudo navegar por query param", e);
+            // -- Selection Logic --
+            function selectSystem(sys) {{
+                currentSelectedSystemId = sys.id;
+                
+                // Populate Panel
+                document.getElementById("panel-title").textContent = `(ID ${{sys.id}}) ${{sys.name}}`;
+                document.getElementById("panel-class").textContent = sys.class;
+                document.getElementById("panel-rarity").textContent = sys.rarity;
+                document.getElementById("panel-energy").textContent = sys.energy;
+                document.getElementById("panel-rule").textContent = sys.rule;
+                
+                const resRow = document.getElementById("panel-resource-row");
+                const resVal = document.getElementById("panel-resource");
+                if (resourceMode && sys.resource_prob) {{
+                    resRow.style.display = "flex";
+                    resVal.textContent = `${{resourceName}} (${{sys.resource_prob}}%)`;
+                }} else {{
+                    resRow.style.display = "none";
                 }}
+                
+                // Show Panel
+                infoPanel.style.display = "flex";
             }}
 
+            function closePanel() {{
+                infoPanel.style.display = "none";
+                currentSelectedSystemId = null;
+            }}
+
+            // Click background to deselect
+            document.querySelector(".map-frame").addEventListener("click", (e) => {{
+                // Si el click no fue en una estrella ni dentro del panel, cerramos
+                if (!e.target.classList.contains("star") && !infoPanel.contains(e.target)) {{
+                    closePanel();
+                }}
+            }});
+
+            // -- Navigation Logic --
+            document.getElementById("btn-enter-system").addEventListener("click", () => {{
+                if (currentSelectedSystemId !== null) {{
+                    console.log("Navegando a sistema:", currentSelectedSystemId);
+                    try {{
+                        const targetWin = window.parent || window.top || window;
+                        const url = new URL(targetWin.location.href);
+                        url.searchParams.set("system_id", currentSelectedSystemId);
+                        targetWin.location.href = url.toString();
+                    }} catch (e) {{
+                        console.error("Navigation error:", e);
+                    }}
+                }}
+            }});
+
+            // -- Init --
             drawRoutes();
             drawStars();
 
             const panZoom = svgPanZoom("#galaxy-map", {{
-                zoomEnabled: true,
-                controlIconsEnabled: false,
-                fit: true,
-                minZoom: 0.6,
-                maxZoom: 12,
-                center: true,
-                zoomScaleSensitivity: 0.25
+                zoomEnabled: true, controlIconsEnabled: false, fit: true, center: true, minZoom: 0.6, maxZoom: 12
             }});
-            document.getElementById("resetView").onclick = () => {{
-                panZoom.resetZoom();
-                panZoom.resetPan();
-            }};
+            
+            document.getElementById("resetView").onclick = () => {{ panZoom.resetZoom(); panZoom.resetPan(); }};
             document.getElementById("zoomIn").onclick = () => panZoom.zoomIn();
             document.getElementById("zoomOut").onclick = () => panZoom.zoomOut();
         </script>
@@ -439,19 +513,7 @@ def _render_interactive_galaxy_map():
     """
 
     with col_map:
-        selection_raw = components.html(html_template, height=860, scrolling=False)
-
-    selected_system_id = None
-    if selection_raw not in (None, "", "null"):
-        try:
-            selected_system_id = int(selection_raw)
-        except (TypeError, ValueError):
-            selected_system_id = None
-
-    if selected_system_id is not None:
-        st.session_state.map_view = "system"
-        st.session_state.selected_system_id = selected_system_id
-        st.rerun()
+        components.html(html_template, height=860, scrolling=False)
 
 
 def _render_system_orbits(system: System):
@@ -578,14 +640,9 @@ def _render_system_orbits(system: System):
                 Recursos: ${{p.resources}}`;
         }});
         planet.addEventListener("mouseleave", () => tooltip.style.display = "none");
+        // Nota: El click en planetas no navega via URL param en esta versión simplificada
         planet.addEventListener("click", () => {{
-            console.log("planeta apretado (mapa orbital)", p.name);
-            if (window.parent && window.parent.Streamlit && window.parent.Streamlit.setComponentValue) {{
-                window.parent.Streamlit.setComponentValue("planet:" + p.id);
-            }} else if (window.parent && window.parent.postMessage) {{
-                window.parent.postMessage({{ type: "streamlit:setComponentValue", value: "planet:" + p.id }}, "*");
-                window.parent.postMessage({{ type: "streamlit:componentValue", value: "planet:" + p.id }}, "*");
-            }}
+            console.log("Planeta seleccionado (Orbital View):", p.name);
         }});
         svg.appendChild(planet);
 
@@ -625,16 +682,8 @@ def _render_system_view():
         st.caption(f"Clase: {system.star.class_type} | Rareza: {system.star.rarity}")
 
     st.subheader("Vista orbital")
-    planet_click = _render_system_orbits(system)
-    if planet_click:
-        if isinstance(planet_click, str) and planet_click.startswith("planet:"):
-            try:
-                planet_id = int(planet_click.split("planet:")[1])
-                st.session_state.map_view = "planet"
-                st.session_state.selected_planet_id = planet_id
-                st.rerun()
-            except ValueError:
-                pass
+    # Renderizamos la vista orbital
+    _render_system_orbits(system)
 
     st.subheader("Cuerpos celestiales")
     for ring in range(1, 10):
