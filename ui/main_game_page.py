@@ -208,7 +208,7 @@ def _render_war_room_styles():
         /* 2. Mensajes del Usuario (Player) - GRIS OSCURO 
            Detectamos el mensaje usando el marcador invisible .user-marker */
         div[data-testid="stChatMessage"]:has(.user-marker) {
-            background: linear-gradient(145deg, #3a3a3a, #2b2b2b) !important;
+            background: linear-gradient(145deg, #161b22, #0d1117) !important;
             border: 1px solid rgba(160, 160, 160, 0.3) !important;
             box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.2) !important;
         }
