@@ -320,8 +320,10 @@ Procede a usar las herramientas necesarias.
                 fname = function_call.name
                 fargs = dict(function_call.args)
 
-                # Log
-                log_event(f"[AI Tool] {fname}({list(fargs.keys())})", player_id)
+                # Log técnico (solo para debugging, no visible al usuario)
+                # Usamos logger directamente en vez de log_event para no llenar la BD
+                import logging
+                logging.getLogger(__name__).debug(f"[AI Tool] {fname}({list(fargs.keys())})")
                 function_calls_made.append({"function": fname, "args": fargs})
 
                 # Ejecutar la función

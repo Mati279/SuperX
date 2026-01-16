@@ -45,8 +45,9 @@ def execute_db_query(sql_query: str) -> str:
         # Remover todos los puntos y coma que el AI pueda haber añadido
         sql_query = sql_query.rstrip(';').strip()
 
-        # Log de auditoría
-        log_event(f"[AI SQL] {sql_query[:150]}{'...' if len(sql_query) > 150 else ''}")
+        # Log de auditoría técnica (solo para debugging, no visible al usuario)
+        import logging
+        logging.getLogger(__name__).info(f"[AI SQL] {sql_query[:150]}{'...' if len(sql_query) > 150 else ''}")
 
         # Determinar tipo de consulta
         query_type = sql_query.split()[0].upper()
@@ -131,7 +132,8 @@ def execute_db_query(sql_query: str) -> str:
     except Exception as e:
         # Capturar errores de red, conexión, etc.
         error_message = str(e)
-        log_event(f"[AI SQL ERROR] {error_message}", is_error=True)
+        import logging
+        logging.getLogger(__name__).error(f"[AI SQL ERROR] {error_message}")
 
         return json.dumps({
             "status": "error",
