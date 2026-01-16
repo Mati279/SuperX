@@ -5,7 +5,7 @@ from data.log_repository import get_recent_logs
 from services.gemini_service import resolve_player_action
 
 # --- Nuevos imports para STRT (Sistema de Tiempo) ---
-from core.time_engine import get_world_status_display, check_and_trigger_tick
+from core.time_engine import get_world_status_display, check_and_trigger_tick, debug_force_tick
 from data.world_repository import get_pending_actions_count
 
 # --- Importar las vistas del juego ---
@@ -59,6 +59,15 @@ def render_main_game_page(cookie_manager):
 def _render_navigation_sidebar(player, commander, cookie_manager):
     """Dibuja el sidebar con el RELOJ GALÁCTICO y la navegación."""
     with st.sidebar:
+        
+        # --- BOTÓN DEBUG ---
+        # Solo visible si lo deseas, o para todos en desarrollo
+        if st.button("🚨 DEBUG: FORZAR TICK", use_container_width=True, type="secondary"):
+            with st.spinner("Forzando salto temporal..."):
+                debug_force_tick()
+            st.rerun()
+        
+        st.write("") # Espaciador
         
         # --- WIDGET DE RELOJ STRT ---
         status = get_world_status_display()
@@ -160,6 +169,7 @@ def _render_war_room_page():
             icon = "📜"
             if "VENTANA DE BLOQUEO" in log['evento_texto']: icon = "⏳"
             if "CONGELADO" in log['evento_texto']: icon = "❄️"
+            if "DEBUG" in log['evento_texto']: icon = "🛠️"
             
             log_container.chat_message("assistant", avatar=icon).write(log['evento_texto'])
             

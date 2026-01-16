@@ -1,5 +1,6 @@
 # data/world_repository.py
 from typing import Dict, Any, Optional
+from datetime import datetime
 from .database import supabase
 from data.log_repository import log_event
 
@@ -38,6 +39,26 @@ def try_trigger_db_tick(target_date_iso: str) -> bool:
         return response.data # True o False
     except Exception as e:
         log_event(f"Error RPC try_process_tick: {e}", is_error=True)
+        return False
+
+def force_db_tick() -> bool:
+    """
+    DEBUG: Fuerza la actualización del tick en DB ignorando la fecha.
+    """
+    try:
+        # 1. Obtener estado actual
+        current = get_world_state()
+        new_tick = current.get('current_tick', 1) + 1
+        
+        # 2. Forzar actualización
+        supabase.table("world_state").update({
+            "current_tick": new_tick,
+            "last_tick_processed_at": datetime.utcnow().isoformat()
+        }).eq("id", 1).execute()
+        
+        return True
+    except Exception as e:
+        log_event(f"Error forzando tick (DEBUG): {e}", is_error=True)
         return False
 
 def get_pending_actions_count(player_id: int) -> int:

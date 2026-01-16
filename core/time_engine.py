@@ -1,7 +1,7 @@
 # core/time_engine.py
 from datetime import datetime, time
 import pytz
-from data.world_repository import get_world_state, try_trigger_db_tick
+from data.world_repository import get_world_state, try_trigger_db_tick, force_db_tick
 from data.log_repository import log_event
 
 # Forzamos la zona horaria a Argentina (GMT-3)
@@ -14,7 +14,10 @@ def get_server_time() -> datetime:
 def is_lock_in_window() -> bool:
     """Retorna True si estamos en la ventana de bloqueo (23:50 - 00:00)."""
     now = get_server_time()
-    return now.time() >= time(23, 50)
+    # Definir ventana: 23:50 a 23:59:59
+    start_lock = time(23, 50)
+    current_time = now.time()
+    return current_time >= start_lock
 
 def check_and_trigger_tick() -> None:
     """
@@ -25,10 +28,20 @@ def check_and_trigger_tick() -> None:
     today_date_iso = now.date().isoformat() # YYYY-MM-DD
     
     # Intentamos ejecutar el tick en la DB de forma atómica.
-    # Le pasamos la fecha de "hoy". Si la DB dice que el último tick fue ayer,
-    # actualizará y devolverá True. Si ya se procesó hoy, devuelve False.
     if try_trigger_db_tick(today_date_iso):
         _execute_game_logic_tick(now)
+
+def debug_force_tick() -> None:
+    """
+    DEBUG: Ejecuta el tick manualmente saltándose las validaciones de fecha.
+    """
+    now = get_server_time()
+    log_event("🛠️ COMANDO DEBUG: Forzando Tick Galáctico...")
+    
+    if force_db_tick():
+        _execute_game_logic_tick(now)
+    else:
+        log_event("❌ Falló el forzado del tick en DB.")
 
 def _execute_game_logic_tick(execution_time: datetime):
     """
