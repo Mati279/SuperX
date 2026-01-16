@@ -141,7 +141,6 @@ def _render_interactive_galaxy_map():
             probs = {k: _resource_probability(selected_resource, k) for k in class_options}
             for cls in class_options:
                 st.write(f"{cls}: {probs.get(cls, 0):.1f}%")
-        st.caption("Click en una estrella abre el detalle del sistema.")
 
     canvas_width, canvas_height = 1400, 900
     scaled_positions = _scale_positions(galaxy.systems, canvas_width, canvas_height)
