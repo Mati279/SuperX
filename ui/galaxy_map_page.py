@@ -392,10 +392,11 @@ def _render_interactive_galaxy_map():
 
     # Fallback: selector por lista si el click no funciona en el navegador
     system_options = {f"{s.name} (ID {s.id})": s.id for s in galaxy.systems}
-    chosen = st.selectbox("Abrir sistema manualmente", list(system_options.keys()))
-    if chosen:
+    placeholder_opt = "(Seleccionar sistema)"
+    chooser = st.selectbox("Abrir sistema manualmente", [placeholder_opt] + list(system_options.keys()), index=0, key="manual_system_selector")
+    if chooser and chooser != placeholder_opt:
         st.session_state.map_view = "system"
-        st.session_state.selected_system_id = system_options[chosen]
+        st.session_state.selected_system_id = system_options[chooser]
         st.rerun()
 
 
