@@ -334,7 +334,7 @@ def _render_interactive_galaxy_map():
                 tooltip.style.top = (evt.pageY + 14) + "px";
                 const resourceLine = resourceMode ? `<br/>${{resourceName}}: ${{sys.resource_prob ?? 0}}%` : "";
                 tooltip.innerHTML = `
-                    <strong>${{sys.name}}</strong><br/>
+                    <strong>(ID ${{sys.id}}) ${{sys.name}}</strong><br/>
                     Clase: ${{sys.class}} - Rareza: ${{sys.rarity}}<br/>
                     Energia: ${{sys.energy}}<br/>
                     Regla: ${{sys.rule}}${{resourceLine}}
@@ -397,7 +397,7 @@ def _render_interactive_galaxy_map():
 
     # Fallback: selector por lista si el click no funciona en el navegador
     systems_sorted = sorted(galaxy.systems, key=lambda s: s.id)
-    system_options = {f"{s.name} (ID {s.id})": s.id for s in systems_sorted}
+    system_options = {f"(ID {s.id}) {s.name}": s.id for s in systems_sorted}
     placeholder_opt = "(Seleccionar sistema)"
     chooser = st.selectbox("Abrir sistema manualmente", [placeholder_opt] + list(system_options.keys()), index=0, key="manual_system_selector")
     if chooser and chooser != placeholder_opt:
