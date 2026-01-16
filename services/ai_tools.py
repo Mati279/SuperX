@@ -1,616 +1,166 @@
 # services/ai_tools.py
 """
-AI Tools - Herramientas para Native Function Calling de Gemini 2.5
-Proporciona acceso controlado a la base de datos para el Game Master IA.
-
-REFACTORIZACIÓN: Sincronizado con setup_ai_rpc_functions.sql y nuevo SDK de Google Gen AI
+AI Tools - Herramientas para que Gemini interactúe con el Universo Persistente (DB).
+Refactorizado para leer directamente de Supabase (Tablas: systems, planets, starlanes).
 """
 
-from typing import Any, Dict, List
 import json
+from google.genai import types
 from data.database import supabase
-from data.log_repository import log_event
+from data.player_repository import get_player_finances
 
+# --- DEFINICIÓN DE HERRAMIENTAS (DECLARATIONS) ---
 
-# =============================================================================
-# HERRAMIENTA PRINCIPAL: EJECUCIÓN DE SQL
-# =============================================================================
-
-def execute_db_query(sql_query: str) -> str:
-    """
-    Ejecuta una consulta SQL en la base de datos PostgreSQL usando RPC de Supabase.
-
-    Esta herramienta le da a la IA acceso controlado a la base de datos para:
-    - Leer datos (SELECT)
-    - Modificar datos (UPDATE, INSERT, DELETE)
-    - Realizar JOINs complejos
-    - Verificar recursos antes de acciones
-
-    Args:
-        sql_query: Consulta SQL válida para PostgreSQL.
-
-    Returns:
-        String JSON con el resultado o error para que la IA se autocorrija.
-
-    Ejemplos:
-        - SELECT: "SELECT * FROM players WHERE id = 1"
-        - UPDATE: "UPDATE characters SET ubicacion = 'Puente' WHERE id = 5"
-        - INSERT: "INSERT INTO planet_buildings (planet_asset_id, building_type) VALUES (1, 'extractor_materiales')"
-    """
-    try:
-        # Sanitización básica
-        sql_query = sql_query.strip()
-
-        # CRÍTICO: Las RPC functions de PostgreSQL NO necesitan punto y coma
-        # Remover todos los puntos y coma que el AI pueda haber añadido
-        sql_query = sql_query.rstrip(';').strip()
-
-        # Log de auditoría técnica (solo para debugging, no visible al usuario)
-        import logging
-        logging.getLogger(__name__).info(f"[AI SQL] {sql_query[:150]}{'...' if len(sql_query) > 150 else ''}")
-
-        # Determinar tipo de consulta
-        query_type = sql_query.split()[0].upper()
-
-        # Bloquear comandos peligrosos
-        dangerous_keywords = ["DROP", "TRUNCATE", "ALTER", "CREATE", "GRANT", "REVOKE"]
-        if query_type in dangerous_keywords:
-            return json.dumps({
-                "status": "error",
-                "type": "FORBIDDEN_OPERATION",
-                "message": f"Operación '{query_type}' no permitida por seguridad.",
-                "hint": "Solo se permiten SELECT, INSERT, UPDATE, DELETE."
-            }, indent=2)
-
-        # Ejecutar según el tipo de consulta
-        if query_type == "SELECT":
-            # Consultas de lectura: usar execute_sql_query (devuelve JSON array)
-            response = supabase.rpc('execute_sql_query', {'query': sql_query}).execute()
-
-            # Verificar si hay error en la respuesta
-            if isinstance(response.data, dict) and response.data.get('error'):
-                return json.dumps({
-                    "status": "error",
-                    "type": "SQL_ERROR",
-                    "sqlstate": response.data.get('sqlstate', 'UNKNOWN'),
-                    "message": response.data.get('message', 'Error desconocido'),
-                    "detail": response.data.get('detail', ''),
-                    "hint": response.data.get('hint', 'Revisa la sintaxis SQL y nombres de columnas.')
-                }, indent=2)
-
-            # Respuesta exitosa
-            # response.data ya es un JSONB que contiene un array
-            data = response.data if response.data else []
-
-            return json.dumps({
-                "status": "success",
-                "type": "SELECT",
-                "rows": len(data) if isinstance(data, list) else 1,
-                "data": data
-            }, indent=2, default=str)
-
-        elif query_type in ["UPDATE", "INSERT", "DELETE"]:
-            # Consultas de escritura: usar execute_sql_mutation
-            response = supabase.rpc('execute_sql_mutation', {'query': sql_query}).execute()
-
-            # Verificar si hay error
-            if isinstance(response.data, dict) and response.data.get('error'):
-                return json.dumps({
-                    "status": "error",
-                    "type": "SQL_ERROR",
-                    "sqlstate": response.data.get('sqlstate', 'UNKNOWN'),
-                    "message": response.data.get('message', 'Error desconocido'),
-                    "detail": response.data.get('detail', ''),
-                    "hint": response.data.get('hint', 'Revisa la sintaxis SQL y restricciones de la BD.')
-                }, indent=2)
-
-            # Respuesta exitosa
-            affected_rows = response.data.get('affected_rows', 0) if isinstance(response.data, dict) else 0
-
-            return json.dumps({
-                "status": "success",
-                "type": query_type,
-                "affected_rows": affected_rows,
-                "message": f"{query_type} ejecutado correctamente. {affected_rows} fila(s) afectada(s)."
-            }, indent=2)
-
-        elif query_type in ["BEGIN", "COMMIT", "ROLLBACK"]:
-            return json.dumps({
-                "status": "error",
-                "type": "TRANSACTION_NOT_ALLOWED",
-                "message": "Las transacciones explícitas no están permitidas. Cada consulta es atómica."
-            }, indent=2)
-
-        else:
-            return json.dumps({
-                "status": "error",
-                "type": "UNSUPPORTED_QUERY",
-                "message": f"Tipo de consulta '{query_type}' no soportado.",
-                "hint": "Solo se permiten SELECT, INSERT, UPDATE, DELETE."
-            }, indent=2)
-
-    except Exception as e:
-        # Capturar errores de red, conexión, etc.
-        error_message = str(e)
-        import logging
-        logging.getLogger(__name__).error(f"[AI SQL ERROR] {error_message}")
-
-        return json.dumps({
-            "status": "error",
-            "type": "EXECUTION_ERROR",
-            "message": error_message,
-            "hint": "Error al ejecutar la consulta. Verifica la conexión con Supabase y la sintaxis SQL."
-        }, indent=2)
-
-
-# =============================================================================
-# HERRAMIENTAS AUXILIARES
-# =============================================================================
-
-def get_table_schema(table_name: str) -> str:
-    """
-    Retorna el esquema de una tabla específica.
-    Útil si la IA necesita conocer las columnas disponibles.
-
-    Args:
-        table_name: Nombre de la tabla (ej: 'players', 'characters')
-
-    Returns:
-        String JSON con la información del esquema o error.
-    """
-    try:
-        response = supabase.rpc('get_table_schema_info', {'table_name_param': table_name}).execute()
-
-        # Verificar si hay error
-        if isinstance(response.data, dict) and response.data.get('error'):
-            return json.dumps({
-                "status": "error",
-                "message": response.data.get('message', f"Tabla '{table_name}' no encontrada")
-            }, indent=2)
-
-        # Respuesta exitosa
-        return json.dumps({
-            "status": "success",
-            "table": table_name,
-            "schema": response.data
-        }, indent=2)
-
-    except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "message": str(e)
-        }, indent=2)
-
-
-def scan_galaxy_data(system_name: str = None, scan_mode: str = "SUMMARY") -> str:
-    """
-    Escanea el mapa galáctico procedural para consultar datos geográficos inmutables.
-
-    Esta herramienta permite a la IA consultar información sobre la galaxia que NO está
-    en la base de datos SQL (sistemas estelares, planetas, biomas, recursos naturales).
-
-    Args:
-        system_name: Nombre del sistema a buscar (opcional). Ej: "Alpha-Centauri-42"
-        scan_mode: Modo de escaneo:
-            - "SUMMARY": Vista general de todos los sistemas (solo nombres y coordenadas)
-            - "DETAILED": Información completa de un sistema específico o búsqueda filtrada
-
-    Returns:
-        String JSON con los datos de la galaxia
-
-    Ejemplos de uso:
-        - scan_galaxy_data(scan_mode="SUMMARY") → Lista todos los sistemas
-        - scan_galaxy_data(system_name="Dantooine", scan_mode="DETAILED") → Info completa del sistema
-    """
-    try:
-        from core.galaxy_generator import get_galaxy
-        from core.world_models import Planet, AsteroidBelt
-
-        galaxy = get_galaxy()
-
-        # Helper: Convertir dataclass a dict recursivamente
-        def to_dict(obj):
-            if hasattr(obj, '__dataclass_fields__'):
-                result = {}
-                for field_name in obj.__dataclass_fields__:
-                    value = getattr(obj, field_name)
-                    if isinstance(value, list):
-                        result[field_name] = [to_dict(item) for item in value]
-                    elif isinstance(value, dict):
-                        result[field_name] = {k: to_dict(v) if v else None for k, v in value.items()}
-                    elif hasattr(value, '__dataclass_fields__'):
-                        result[field_name] = to_dict(value)
-                    else:
-                        result[field_name] = value
-                return result
-            return obj
-
-        # MODO SUMMARY: Vista ligera de toda la galaxia
-        if scan_mode.upper() == "SUMMARY":
-            systems_summary = []
-            for system in galaxy.systems:
-                planet_count = sum(1 for body in system.orbital_rings.values()
-                                 if body and isinstance(body, Planet))
-                asteroid_count = sum(1 for body in system.orbital_rings.values()
-                                   if body and isinstance(body, AsteroidBelt))
-
-                systems_summary.append({
-                    "id": system.id,
-                    "name": system.name,
-                    "star_type": system.star.type,
-                    "star_class": system.star.class_type,
-                    "position": system.position,
-                    "planet_count": planet_count,
-                    "asteroid_belt_count": asteroid_count
-                })
-
-            return json.dumps({
-                "status": "success",
-                "scan_mode": "SUMMARY",
-                "total_systems": len(galaxy.systems),
-                "systems": systems_summary
-            }, indent=2)
-
-        # MODO DETAILED: Búsqueda específica
-        if scan_mode.upper() == "DETAILED":
-            # Si se especifica un sistema, buscarlo
-            if system_name:
-                # Buscar por nombre exacto o parcial
-                matching_systems = [
-                    s for s in galaxy.systems
-                    if system_name.lower() in s.name.lower()
-                ]
-
-                if not matching_systems:
-                    return json.dumps({
-                        "status": "error",
-                        "message": f"No se encontró ningún sistema con el nombre '{system_name}'",
-                        "hint": "Usa scan_mode='SUMMARY' para ver todos los sistemas disponibles"
-                    }, indent=2)
-
-                # Serializar sistemas encontrados
-                detailed_systems = []
-                for system in matching_systems:
-                    system_data = {
-                        "id": system.id,
-                        "name": system.name,
-                        "position": system.position,
-                        "star": to_dict(system.star),
-                        "orbital_rings": {}
-                    }
-
-                    # Procesar cada anillo orbital
-                    for ring_num, body in system.orbital_rings.items():
-                        if body is None:
-                            system_data["orbital_rings"][ring_num] = {"type": "EMPTY"}
-                        elif isinstance(body, Planet):
-                            system_data["orbital_rings"][ring_num] = {
-                                "type": "PLANET",
-                                **to_dict(body)
-                            }
-                        elif isinstance(body, AsteroidBelt):
-                            system_data["orbital_rings"][ring_num] = {
-                                "type": "ASTEROID_BELT",
-                                **to_dict(body)
-                            }
-
-                    detailed_systems.append(system_data)
-
-                return json.dumps({
-                    "status": "success",
-                    "scan_mode": "DETAILED",
-                    "query": system_name,
-                    "matches_found": len(detailed_systems),
-                    "systems": detailed_systems
-                }, indent=2, default=str)
-
-            else:
-                # Sin filtro: devolver todos los sistemas en detalle (¡CUIDADO con el contexto!)
-                return json.dumps({
-                    "status": "warning",
-                    "message": "DETAILED sin system_name devolvería datos masivos",
-                    "hint": "Especifica un system_name o usa SUMMARY para explorar primero"
-                }, indent=2)
-
-        # Modo desconocido
-        return json.dumps({
-            "status": "error",
-            "message": f"scan_mode '{scan_mode}' no reconocido",
-            "hint": "Usa 'SUMMARY' o 'DETAILED'"
-        }, indent=2)
-
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"[Galaxy Scan Error] {e}")
-        return json.dumps({
-            "status": "error",
-            "type": "SCAN_ERROR",
-            "message": str(e)
-        }, indent=2)
-
-
-def log_ai_action(action_description: str, player_id: int = None) -> str:
-    """
-    Registra una acción de la IA en los logs del sistema.
-
-    Args:
-        action_description: Descripción de la acción o evento
-        player_id: ID del jugador asociado (opcional)
-
-    Returns:
-        String JSON confirmando el registro.
-    """
-    try:
-        log_event(f"[GM IA] {action_description}", player_id)
-        return json.dumps({
-            "status": "success",
-            "message": "Acción registrada en los logs del sistema"
-        }, indent=2)
-    except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "message": str(e)
-        }, indent=2)
-
-
-# =============================================================================
-# CONFIGURACIÓN PARA GEMINI 2.5
-# =============================================================================
-
-# Declaración de herramientas en formato Google Gen AI SDK
 TOOL_DECLARATIONS = [
-    {
-        "function_declarations": [
-            {
-                "name": "execute_db_query",
-                "description": """Ejecuta consultas SQL directamente en la base de datos PostgreSQL del juego.
-
-USA ESTA HERRAMIENTA PARA:
-- Leer el estado actual del juego (SELECT)
-- Modificar datos del mundo (UPDATE, INSERT, DELETE)
-- Verificar recursos del jugador antes de permitir acciones
-- Actualizar estadísticas de personajes
-- Crear o modificar edificios planetarios
-- Registrar eventos
-
-FLUJO CORRECTO:
-1. Primero SIEMPRE verificar el estado actual con SELECT
-2. Luego modificar con UPDATE/INSERT/DELETE
-3. Narrar el resultado
-
-ESQUEMA DE LA BASE DE DATOS:
-
-players:
-  - id (int) - Identificador único del jugador
-  - nombre (text) - Nombre del jugador/facción
-  - faccion_nombre (text) - Nombre de la facción
-  - creditos (int) - Créditos Imperiales (CI), moneda universal
-  - materiales (int) - Recursos base para construcción
-  - componentes (int) - Componentes industriales avanzados
-  - celulas_energia (int) - Energía para operar edificios
-  - influencia (int) - Poder político/diplomático
-  - recursos_lujo (jsonb) - Recursos Tier 2 organizados por categoría
-    Estructura: {"materiales_avanzados": {"superconductores": 0, ...}, ...}
-
-characters:
-  - id (int) - Identificador único del personaje
-  - player_id (int) - FK a players
-  - nombre (text) - Nombre del personaje
-  - stats_json (jsonb) - Estadísticas completas
-    Estructura: {"atributos": {"fuerza": 10, "astucia": 15, ...}, "salud": {...}, ...}
-  - ubicacion (text) - Ubicación actual del personaje
-  - estado (text) - Estado actual: 'Disponible', 'En Misión', 'Herido', 'Descansando'
-  - rango (text) - Rango militar/posición
-
-planet_assets:
-  - id (int) - Identificador único del asentamiento
-  - player_id (int) - FK a players
-  - system_id (int) - ID del sistema estelar
-  - nombre_asentamiento (text) - Nombre de la colonia
-  - poblacion (int) - Población total (POPS)
-  - pops_activos (int) - POPS trabajando en edificios
-  - pops_desempleados (int) - POPS sin asignar
-  - infraestructura_defensiva (int) - Nivel de defensa
-  - seguridad (float) - Nivel de seguridad (0.0-1.0)
-  - felicidad (float) - Nivel de felicidad (0.0-1.0)
-
-planet_buildings:
-  - id (int) - Identificador único del edificio
-  - planet_asset_id (int) - FK a planet_assets
-  - player_id (int) - FK a players
-  - building_type (text) - Tipo: 'extractor_materiales', 'generador_energia', etc.
-  - building_tier (int) - Nivel del edificio (1, 2, 3...)
-  - is_active (bool) - Si está operativo
-  - pops_required (int) - POPS necesarios para operar
-  - energy_consumption (int) - Energía consumida por turno
-
-luxury_extraction_sites:
-  - id (int) - Identificador único del sitio
-  - planet_asset_id (int) - FK a planet_assets
-  - player_id (int) - FK a players
-  - resource_key (text) - Clave del recurso: 'superconductores', 'antimateria', etc.
-  - resource_category (text) - Categoría: 'materiales_avanzados', 'energia_avanzada', etc.
-  - extraction_rate (int) - Unidades extraídas por turno
-  - is_active (bool) - Si está operativo
-
-logs:
-  - id (serial) - ID autoincrementable
-  - player_id (int, nullable) - FK a players
-  - evento_texto (text) - Descripción del evento
-  - turno (int) - Turno en que ocurrió
-  - created_at (timestamp) - Timestamp automático
-
-EJEMPLOS DE CONSULTAS (SIN PUNTO Y COMA AL FINAL):
-
-1. Verificar recursos del jugador:
-   SELECT creditos, materiales, componentes, celulas_energia FROM players WHERE id = 1
-
-2. Ver comandante del jugador:
-   SELECT nombre, ubicacion, estado, stats_json FROM characters WHERE player_id = 1 AND rango = 'Comandante'
-
-3. Listar edificios en un planeta:
-   SELECT building_type, is_active, pops_required FROM planet_buildings WHERE planet_asset_id = 1
-
-4. Construir edificio (PRIMERO verificar recursos, LUEGO construir):
-   -- Paso 1: Verificar
-   SELECT creditos, materiales FROM players WHERE id = 1
-   -- Paso 2: Descontar recursos (en una segunda llamada)
-   UPDATE players SET creditos = creditos - 500, materiales = materiales - 50 WHERE id = 1
-   -- Paso 3: Crear edificio (en una tercera llamada)
-   INSERT INTO planet_buildings (planet_asset_id, player_id, building_type, pops_required, energy_consumption) VALUES (1, 1, 'extractor_materiales', 100, 5)
-
-5. Actualizar ubicación de personaje:
-   UPDATE characters SET ubicacion = 'Sala de Máquinas', estado = 'Descansando' WHERE id = 5
-
-6. Consultas con JOIN:
-   SELECT p.nombre, c.nombre as comandante, c.ubicacion FROM players p JOIN characters c ON c.player_id = p.id WHERE p.id = 1 AND c.rango = 'Comandante'
-
-COSTOS DE EDIFICIOS (REFERENCIA):
-- Extractor de Materiales: 500 CI, 10 Componentes
-- Fábrica de Componentes: 800 CI, 50 Materiales
-- Planta de Energía: 1000 CI, 30 Materiales, 20 Componentes
-- Búnker de Defensa: 1500 CI, 80 Materiales, 30 Componentes
-
-IMPORTANTE:
-- Si es una PREGUNTA (¿cuántos créditos tengo?), usa SELECT y responde con el NÚMERO EXACTO
-- Si es una ACCIÓN (construir edificio), verifica recursos primero, luego ejecuta
-- Si la query falla, recibirás un error detallado para que te corrijas
-- NO incluyas punto y coma (;) al final de las consultas SQL
-- Usa comillas simples (') para strings, NO comillas dobles escapadas
-""",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "sql_query": {
-                            "type": "string",
-                            "description": "Consulta SQL válida en PostgreSQL. Debe ser sintácticamente correcta y usar los nombres exactos de tablas y columnas del esquema."
-                        }
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="get_player_status",
+                description="Obtiene el estado financiero y recursos actuales del jugador.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "player_id": types.Schema(type=types.Type.INTEGER, description="ID del jugador.")
                     },
-                    "required": ["sql_query"]
-                }
-            },
-            {
-                "name": "get_table_schema",
-                "description": "Obtiene el esquema completo de una tabla específica, incluyendo nombres de columnas, tipos de datos y restricciones. Útil cuando la IA necesita recordar la estructura exacta de una tabla.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "table_name": {
-                            "type": "string",
-                            "description": "Nombre de la tabla (ej: 'players', 'characters', 'planet_assets', 'planet_buildings')"
-                        }
+                    required=["player_id"]
+                )
+            ),
+            types.FunctionDeclaration(
+                name="scan_system_data",
+                description="Busca información astronómica de un sistema estelar por su nombre o ID.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "system_identifier": types.Schema(type=types.Type.STRING, description="Nombre o ID del sistema a escanear.")
                     },
-                    "required": ["table_name"]
-                }
-            },
-            {
-                "name": "scan_galaxy_data",
-                "description": """Escanea el mapa galáctico procedural para consultar datos geográficos y recursos naturales.
-
-USA ESTA HERRAMIENTA PARA:
-- Explorar sistemas estelares y sus ubicaciones en el mapa
-- Consultar qué planetas existen en un sistema específico
-- Verificar biomas planetarios (Oceánico, Desértico, Helado, etc.)
-- Encontrar recursos naturales inmutables (Hierro, Aetherion, Superconductores, etc.)
-- Revisar características de estrellas (Clase, Rareza, Reglas especiales)
-- Planear expansión territorial basada en geografía
-
-IMPORTANTE: Esta herramienta consulta DATOS PROCEDURALES EN MEMORIA (no SQL).
-- Los sistemas, planetas y recursos naturales son INMUTABLES (generados al inicio)
-- Para datos de JUGADORES, EDIFICIOS o COLONIAS usa execute_db_query (SQL)
-
-MODOS DE ESCANEO:
-
-1. SUMMARY (Vista General):
-   - Muestra lista ligera de todos los sistemas de la galaxia
-   - Incluye: nombre, tipo de estrella, coordenadas, cantidad de planetas
-   - Úsalo para exploración inicial o cuando el jugador pregunte "¿qué sistemas hay?"
-
-2. DETAILED (Búsqueda Específica):
-   - Requiere especificar un system_name
-   - Devuelve información completa: estrella, planetas por anillo orbital, biomas, recursos
-   - Búsqueda parcial permitida (ej: "Centauri" encontrará "Alpha-Centauri-42")
-
-EJEMPLOS DE USO:
-
-Ejemplo 1 - Exploración general:
-  scan_galaxy_data(scan_mode="SUMMARY")
-  → Lista todos los 30 sistemas con sus coordenadas
-
-Ejemplo 2 - Buscar un sistema específico:
-  scan_galaxy_data(system_name="Dantooine", scan_mode="DETAILED")
-  → Info completa del sistema Dantooine (si existe)
-
-Ejemplo 3 - Buscar por patrón:
-  scan_galaxy_data(system_name="Alpha", scan_mode="DETAILED")
-  → Encuentra todos los sistemas que contengan "Alpha" en su nombre
-
-FLUJO RECOMENDADO:
-1. Usuario pregunta: "¿Hay planetas con agua cerca?"
-2. Primero usa SUMMARY para obtener lista de sistemas
-3. Luego usa DETAILED en sistemas cercanos para verificar biomas
-4. Finalmente responde al usuario con los resultados filtrados
-
-DATOS QUE ESTA HERRAMIENTA PROPORCIONA:
-- Star: name, type, rarity, class_type, energy_modifier, special_rule
-- Planet: id, name, ring, biome, size, bonuses, construction_slots, resources, moons
-- AsteroidBelt: id, name, ring, hazard_level
-
-RECURSOS NATURALES DISPONIBLES (ejemplos):
-- Materiales base: Hierro, Titanio, Cobre
-- Materiales avanzados: Superconductores, Aleaciones Exóticas, Materiales Biológicos
-- Energía avanzada: Antimateria, Plasma Estelar, Cristales de Energía
-- Recursos únicos: Aetherion, Materia Oscura, Reliquias Alienígenas
-
-NO USAR ESTA HERRAMIENTA PARA:
-- Consultar qué edificios tiene un jugador en un planeta (usa execute_db_query)
-- Ver población o recursos acumulados de una colonia (usa execute_db_query)
-- Modificar nada (esta herramienta es SOLO LECTURA)
-""",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "system_name": {
-                            "type": "string",
-                            "description": "Nombre o parte del nombre del sistema a buscar. Opcional para modo SUMMARY, requerido para búsquedas DETAILED específicas."
-                        },
-                        "scan_mode": {
-                            "type": "string",
-                            "enum": ["SUMMARY", "DETAILED"],
-                            "description": "Modo de escaneo: 'SUMMARY' para vista general de toda la galaxia, 'DETAILED' para información completa de un sistema específico.",
-                            "default": "SUMMARY"
-                        }
+                    required=["system_identifier"]
+                )
+            ),
+            types.FunctionDeclaration(
+                name="list_available_missions",
+                description="Lista las misiones disponibles en el sistema actual del jugador.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                         "player_id": types.Schema(type=types.Type.INTEGER, description="ID del jugador.")
                     },
-                    "required": []
-                }
-            },
-            {
-                "name": "log_ai_action",
-                "description": "Registra una acción narrativa o evento importante en los logs del sistema para auditoría y seguimiento.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "action_description": {
-                            "type": "string",
-                            "description": "Descripción clara de la acción o evento a registrar"
-                        },
-                        "player_id": {
-                            "type": "integer",
-                            "description": "ID del jugador asociado (opcional, omitir para eventos globales)"
-                        }
+                    required=["player_id"]
+                )
+            ),
+            types.FunctionDeclaration(
+                name="check_route_safety",
+                description="Calcula la seguridad de una ruta entre dos sistemas basándose en starlanes.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "origin_sys_id": types.Schema(type=types.Type.INTEGER, description="ID del sistema origen"),
+                        "target_sys_id": types.Schema(type=types.Type.INTEGER, description="ID del sistema destino")
                     },
-                    "required": ["action_description"]
-                }
-            }
+                    required=["origin_sys_id", "target_sys_id"]
+                )
+            )
         ]
-    }
+    )
 ]
 
+# --- IMPLEMENTACIÓN DE FUNCIONES (LOGIC) ---
 
-# Mapeo de nombres de función a implementaciones Python
+def get_player_status(player_id: int) -> str:
+    """Consulta la DB para obtener finanzas."""
+    finances = get_player_finances(player_id)
+    return json.dumps(finances)
+
+def scan_system_data(system_identifier: str) -> str:
+    """
+    Consulta la DB (tablas 'systems' y 'planets') para obtener datos reales.
+    """
+    try:
+        # 1. Buscar el Sistema
+        query = supabase.table("systems").select("*")
+        
+        # Detectar si es ID numérico o Nombre
+        if str(system_identifier).isdigit():
+            query = query.eq("id", int(system_identifier))
+        else:
+            # Búsqueda insensible a mayúsculas si es posible, o exacta
+            query = query.ilike("name", f"%{system_identifier}%")
+            
+        sys_res = query.execute()
+        
+        if not sys_res.data:
+            return json.dumps({"error": f"Sistema '{system_identifier}' no encontrado en los cartas de navegación."})
+        
+        system = sys_res.data[0]
+        sys_id = system['id']
+        
+        # 2. Buscar Planetas asociados
+        planets_res = supabase.table("planets").select("*").eq("system_id", sys_id).execute()
+        planets = planets_res.data if planets_res.data else []
+        
+        # 3. Formatear respuesta táctica
+        scan_report = {
+            "sistema": {
+                "id": system['id'],
+                "nombre": system['name'],
+                "clase_estelar": system.get('star_class', 'Desconocida'),
+                "posicion_galactica": f"{system['x']:.1f}, {system['y']:.1f}",
+                "estado_politico": "Ocupado" if system.get('ocupado_por_faction_id') else "Neutral"
+            },
+            "cuerpos_celestes": [
+                {
+                    "nombre": p['name'],
+                    "tipo": p.get('biome', 'Desconocido'),
+                    "tamaño": p.get('planet_size', 'Estándar'),
+                    "orbita": p.get('orbital_ring', 0),
+                    "recursos_detectados": p.get('resources', [])
+                }
+                for p in planets
+            ]
+        }
+        return json.dumps(scan_report, ensure_ascii=False)
+
+    except Exception as e:
+        return json.dumps({"error": f"Fallo en sensores de largo alcance: {str(e)}"})
+
+def list_available_missions(player_id: int) -> str:
+    """
+    (Placeholder) En el futuro consultará la tabla 'missions'.
+    Por ahora genera misiones procedurales básicas basadas en la ubicación.
+    """
+    # Aquí podríamos consultar la ubicación del jugador en la DB y generar misiones locales.
+    return json.dumps([
+        {"id": 101, "tipo": "Patrulla", "objetivo": "Sector Local", "recompensa": 150},
+        {"id": 102, "tipo": "Transporte", "objetivo": "Entrega de Suministros", "recompensa": 300}
+    ])
+
+def check_route_safety(origin_sys_id: int, target_sys_id: int) -> str:
+    """
+    Verifica si existe una ruta directa en 'starlanes' y su estado.
+    """
+    try:
+        # Buscar conexión A->B o B->A
+        res = supabase.table("starlanes").select("*")\
+            .or_(f"and(system_a_id.eq.{origin_sys_id},system_b_id.eq.{target_sys_id}),and(system_a_id.eq.{target_sys_id},system_b_id.eq.{origin_sys_id})")\
+            .execute()
+            
+        if res.data:
+            lane = res.data[0]
+            return json.dumps({
+                "ruta_existente": True,
+                "distancia": lane['distance'],
+                "estado_hiperespacio": lane.get('estado', 'Estable'),
+                "peligro": "Bajo" if lane.get('estado') == 'Estable' else "Alto"
+            })
+        else:
+            return json.dumps({"ruta_existente": False, "mensaje": "No hay conexión directa por Starlane."})
+            
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+# --- MAPEO DE FUNCIONES ---
 TOOL_FUNCTIONS = {
-    "execute_db_query": execute_db_query,
-    "get_table_schema": get_table_schema,
-    "scan_galaxy_data": scan_galaxy_data,
-    "log_ai_action": log_ai_action
+    "get_player_status": get_player_status,
+    "scan_system_data": scan_system_data,
+    "list_available_missions": list_available_missions,
+    "check_route_safety": check_route_safety
 }
