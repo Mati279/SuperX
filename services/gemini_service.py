@@ -2,7 +2,11 @@
 import json
 from typing import Dict, Any, Optional
 
-from data.database import ai_client
+try:
+    from data.database import ai_client
+except Exception:
+    # Fallback para evitar KeyError de import y manejar ausencia del cliente
+    ai_client = None
 from data.log_repository import log_event
 from data.game_config_repository import get_game_config
 from data.character_repository import get_commander_by_player_id, update_character

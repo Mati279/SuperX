@@ -254,6 +254,7 @@ def _render_interactive_galaxy_map():
             const highlightIds = new Set({highlight_json});
             const resourceMode = {"true" if resource_filter_active else "false"};
             const resourceName = {resource_name_js};
+            const streamlit = window.parent && window.parent.Streamlit ? window.parent.Streamlit : null;
 
             const starsLayer = document.getElementById("stars-layer");
             const routesLayer = document.getElementById("routes-layer");
@@ -327,8 +328,10 @@ def _render_interactive_galaxy_map():
             }}
 
             function handleClick(systemId) {{
-                if (window.parent && window.parent.Streamlit) {{
-                    window.parent.Streamlit.setComponentValue(systemId);
+                if (streamlit && streamlit.setComponentValue) {{
+                    streamlit.setComponentValue(systemId);
+                }} else if (window.parent && window.parent.postMessage) {{
+                    window.parent.postMessage({{ type: "streamlit:setComponentValue", value: systemId }}, "*");
                 }}
             }}
 
