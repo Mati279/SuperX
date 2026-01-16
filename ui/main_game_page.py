@@ -152,9 +152,125 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 
 # --- Vistas Internas ---
 
+def _render_war_room_styles():
+    """Estilos visuales para el Puente de Mando."""
+    st.markdown(
+        """
+        <style>
+        @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&display=swap");
+
+        .war-room-header {
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(90, 190, 255, 0.25);
+            position: relative;
+        }
+        .war-room-header::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            bottom: 0;
+            width: 150px;
+            height: 2px;
+            background: linear-gradient(90deg, rgba(95, 216, 255, 0.95), rgba(95, 216, 255, 0));
+            box-shadow: 0 0 10px rgba(95, 216, 255, 0.5);
+        }
+        .war-room-title {
+            font-family: "Orbitron", sans-serif;
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: #dff6ff;
+            text-shadow: 0 0 14px rgba(88, 210, 255, 0.4);
+        }
+        .war-room-section {
+            font-family: "Orbitron", sans-serif;
+            font-size: 15px;
+            letter-spacing: 1.6px;
+            text-transform: uppercase;
+            color: #b8e7ff;
+            margin: 6px 0 10px 0;
+        }
+
+        div[data-testid="stChatMessage"] {
+            border-radius: 12px;
+            border: 1px solid rgba(80, 170, 220, 0.3);
+            background: linear-gradient(145deg, rgba(10, 20, 32, 0.88), rgba(6, 12, 20, 0.88));
+            box-shadow: inset 0 0 14px rgba(60, 180, 235, 0.08);
+        }
+        div[data-testid="stChatMessage"] div[data-testid="stChatMessageContent"] {
+            font-family: "Share Tech Mono", monospace;
+            color: #d5f3ff;
+            font-size: 13px;
+        }
+        div[data-testid="stChatMessage"] span[title] {
+            font-family: "Orbitron", sans-serif;
+            letter-spacing: 1px;
+        }
+
+        div[data-testid="stChatInput"] {
+            border-radius: 16px;
+            border: 1px solid rgba(90, 200, 255, 0.5);
+            background: linear-gradient(135deg, rgba(9, 18, 30, 0.95), rgba(6, 12, 20, 0.95));
+            box-shadow: 0 12px 26px rgba(8, 14, 24, 0.5), inset 0 0 18px rgba(75, 200, 255, 0.12);
+            position: relative;
+            overflow: hidden;
+        }
+        div[data-testid="stChatInput"]::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 4px);
+            opacity: 0.35;
+            pointer-events: none;
+        }
+        div[data-testid="stChatInput"]::after {
+            content: "";
+            position: absolute;
+            inset: 6px;
+            border-radius: 12px;
+            border: 1px dashed rgba(120, 210, 255, 0.25);
+            pointer-events: none;
+        }
+        div[data-testid="stChatInput"] textarea {
+            font-family: "Share Tech Mono", monospace;
+            font-size: 14px;
+            color: #dcf6ff;
+            letter-spacing: 0.6px;
+        }
+        div[data-testid="stChatInput"] textarea::placeholder {
+            color: rgba(160, 210, 255, 0.6);
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+        }
+        div[data-testid="stChatInput"] button {
+            border-radius: 10px;
+            border: 1px solid rgba(120, 215, 255, 0.5);
+            background: linear-gradient(135deg, rgba(36, 86, 122, 0.9), rgba(20, 40, 64, 0.9));
+            box-shadow: 0 0 12px rgba(90, 210, 255, 0.35);
+        }
+        div[data-testid="stChatInput"] button:hover {
+            border-color: rgba(150, 235, 255, 0.8);
+            box-shadow: 0 0 18px rgba(90, 210, 255, 0.5);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_war_room_page():
     """Página del Puente de Mando con integración STRT."""
-    st.title("Puente de Mando")
+    _render_war_room_styles()
+    st.markdown(
+        """
+        <div class="war-room-header">
+            <div class="war-room-title">Puente de Mando</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     
     status = get_world_status_display()
     
@@ -163,7 +279,10 @@ def _render_war_room_page():
     if status['is_frozen']:
         st.error("❄️ ALERTA: El flujo temporal está detenido (FREEZE). Sistemas tácticos en espera.")
 
-    st.subheader("Bitácora de Misión")
+    st.markdown(
+        "<div class=\"war-room-section\">Bitacora de Mision</div>",
+        unsafe_allow_html=True,
+    )
     
     player_id = get_player()['id']
     commander_name = get_commander()['nombre']
