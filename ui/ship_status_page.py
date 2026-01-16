@@ -1,5 +1,6 @@
 # ui/ship_status_page.py
 import json
+import textwrap
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -388,24 +389,26 @@ def _render_ship_styles():
 
 
 def _render_ship_header(ship):
-    return f"""
-    <div class="ship-hero">
-        <div>
-            <div class="ship-hero-tag">{ship['status']}</div>
-            <div class="ship-hero-title">{ship['name']}</div>
-            <div class="ship-hero-meta">
-                Clase: {ship['class']} | Registro: {ship['registry']}<br />
-                Mision: {ship['mission']}
+    return textwrap.dedent(
+        f"""
+        <div class="ship-hero">
+            <div>
+                <div class="ship-hero-tag">{ship['status']}</div>
+                <div class="ship-hero-title">{ship['name']}</div>
+                <div class="ship-hero-meta">
+                    Clase: {ship['class']} | Registro: {ship['registry']}<br />
+                    Mision: {ship['mission']}
+                </div>
+            </div>
+            <div class="ship-hero-right">
+                Ubicacion actual
+                <span>{ship['location']}</span>
+                Tripulacion
+                <span>{ship['crew']}/{ship['crew_max']}</span>
             </div>
         </div>
-        <div class="ship-hero-right">
-            Ubicacion actual
-            <span>{ship['location']}</span>
-            Tripulacion
-            <span>{ship['crew']}/{ship['crew_max']}</span>
-        </div>
-    </div>
-    """
+        """
+    ).strip()
 
 
 def _render_summary_cards(ship, subsystems):
@@ -418,17 +421,19 @@ def _render_summary_cards(ship, subsystems):
         ("Temperatura", f"{ship['heat']}C", "Nucleo estable"),
         ("Estado general", f"{readiness}%", "Promedio de subsistemas"),
     ]
-    html_cards = "\n".join(
-        f"""
-        <div class="ship-card">
-            <div class="ship-card-label">{label}</div>
-            <div class="ship-card-value">{value}</div>
-            <div class="ship-card-note">{note}</div>
-        </div>
-        """
+    html_cards = [
+        textwrap.dedent(
+            f"""
+            <div class="ship-card">
+                <div class="ship-card-label">{label}</div>
+                <div class="ship-card-value">{value}</div>
+                <div class="ship-card-note">{note}</div>
+            </div>
+            """
+        ).strip()
         for label, value, note in cards
-    )
-    return f'<div class="ship-card-grid">{html_cards}</div>'
+    ]
+    return "<div class=\"ship-card-grid\">\n" + "\n".join(html_cards) + "\n</div>"
 
 
 def _render_subsystem_selector(subsystems):
@@ -453,36 +458,38 @@ def _render_subsystem_detail(subsystem):
     power_color = _health_color(100 - max(0, subsystem["power"]))
     temp_color = _health_color(100 - max(0, subsystem["temp"]))
 
-    return f"""
-    <div class="ship-detail">
-        <div class="ship-detail-header">
-            <div class="ship-detail-title">{subsystem['name']}</div>
-            <div class="ship-badge {status_class}">{status_label}</div>
+    return textwrap.dedent(
+        f"""
+        <div class="ship-detail">
+            <div class="ship-detail-header">
+                <div class="ship-detail-title">{subsystem['name']}</div>
+                <div class="ship-badge {status_class}">{status_label}</div>
+            </div>
+            <div class="ship-detail-grid">
+                <div class="ship-detail-item">
+                    <span>Integridad</span>
+                    {subsystem['health']}%
+                    <div class="ship-bar"><div class="ship-bar-fill" style="width:{subsystem['health']}%; background:{health_color};"></div></div>
+                </div>
+                <div class="ship-detail-item">
+                    <span>Consumo energia</span>
+                    {subsystem['power']}%
+                    <div class="ship-bar"><div class="ship-bar-fill" style="width:{subsystem['power']}%; background:{power_color};"></div></div>
+                </div>
+                <div class="ship-detail-item">
+                    <span>Temperatura</span>
+                    {subsystem['temp']}C
+                    <div class="ship-bar"><div class="ship-bar-fill" style="width:{min(subsystem['temp'], 100)}%; background:{temp_color};"></div></div>
+                </div>
+                <div class="ship-detail-item">
+                    <span>Rol operativo</span>
+                    {subsystem['role']}
+                </div>
+            </div>
+            <div class="ship-notes">{subsystem['notes']}</div>
         </div>
-        <div class="ship-detail-grid">
-            <div class="ship-detail-item">
-                <span>Integridad</span>
-                {subsystem['health']}%
-                <div class="ship-bar"><div class="ship-bar-fill" style="width:{subsystem['health']}%; background:{health_color};"></div></div>
-            </div>
-            <div class="ship-detail-item">
-                <span>Consumo energia</span>
-                {subsystem['power']}%
-                <div class="ship-bar"><div class="ship-bar-fill" style="width:{subsystem['power']}%; background:{power_color};"></div></div>
-            </div>
-            <div class="ship-detail-item">
-                <span>Temperatura</span>
-                {subsystem['temp']}C
-                <div class="ship-bar"><div class="ship-bar-fill" style="width:{min(subsystem['temp'], 100)}%; background:{temp_color};"></div></div>
-            </div>
-            <div class="ship-detail-item">
-                <span>Rol operativo</span>
-                {subsystem['role']}
-            </div>
-        </div>
-        <div class="ship-notes">{subsystem['notes']}</div>
-    </div>
-    """
+        """
+    ).strip()
 
 
 def _render_subsystem_list(subsystems, active_id):
@@ -490,23 +497,28 @@ def _render_subsystem_list(subsystems, active_id):
     for system in subsystems:
         status_label, status_class = _status_from_health(system["health"])
         active_class = " active" if system["id"] == active_id else ""
-        row = f"""
-        <div class="ship-list-row{active_class}">
-            <div>
-                <div class="ship-list-name">{system['name']}</div>
-                <div class="ship-bar"><div class="ship-bar-fill" style="width:{system['health']}%; background:{_health_color(system['health'])};"></div></div>
-            </div>
-            <div class="ship-list-pill {status_class}">{status_label}</div>
+        rows.append(
+            textwrap.dedent(
+                f"""
+                <div class="ship-list-row{active_class}">
+                    <div>
+                        <div class="ship-list-name">{system['name']}</div>
+                        <div class="ship-bar"><div class="ship-bar-fill" style="width:{system['health']}%; background:{_health_color(system['health'])};"></div></div>
+                    </div>
+                    <div class="ship-list-pill {status_class}">{status_label}</div>
+                </div>
+                """
+            ).strip()
+        )
+
+    return textwrap.dedent(
+        f"""
+        <div class="ship-list">
+            <div class="ship-list-title">Estado de subsistemas</div>
+            {''.join(rows)}
         </div>
         """
-        rows.append(row)
-
-    return f"""
-    <div class="ship-list">
-        <div class="ship-list-title">Estado de subsistemas</div>
-        {''.join(rows)}
-    </div>
-    """
+    ).strip()
 
 
 def _render_quick_actions(focused):
