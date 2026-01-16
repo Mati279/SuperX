@@ -90,6 +90,23 @@ def _resource_probability(resource_name: str, star_class: str) -> float:
     return round((weights.get(resource_name, 0) / total) * 100, 2)
 
 
+def _planet_color_for_biome(biome: str) -> str:
+    biome_key = (biome or "").lower()
+    if "terrestre" in biome_key:
+        return "#7be0a5"
+    if "des" in biome_key:
+        return "#e3c07b"
+    if "oce" in biome_key:
+        return "#6fb6ff"
+    if "volc" in biome_key:
+        return "#ff7058"
+    if "lido" in biome_key:
+        return "#a8d8ff"
+    if "gaseoso" in biome_key:
+        return "#c6a3ff"
+    return "#7ec7ff"
+
+
 def _render_interactive_galaxy_map():
     st.header("Sistemas Conocidos")
     galaxy = get_galaxy()
@@ -422,30 +439,31 @@ def _render_system_orbits(system: System):
     center_y = 360
     orbit_step = 38
     planets = []
-    for ring, body in sorted(system.orbital_rings.items()):
-        if isinstance(body, Planet):
-            angle_deg = (ring * 33) % 360
-            angle_rad = math.radians(angle_deg)
-            radius = 70 + ring * orbit_step
-            px = center_x + radius * math.cos(angle_rad)
-            py = center_y + radius * math.sin(angle_rad)
-            size_map = {"Pequeno": 7, "Mediano": 10, "Grande": 13}
-            pr = size_map.get(body.size, 9)
-            color = planet_colors.get(body.biome, "#7ec7ff")
-            resources = ", ".join(body.resources[:3]) if body.resources else "Sin recursos"
-            planets.append({
-                "id": body.id,
-                "name": body.name,
-                "biome": body.biome,
-                "size": body.size,
-                "resources": resources,
-                "explored": body.explored_pct,
-                "x": round(px, 2),
-                "y": round(py, 2),
-                "r": pr,
-                "ring": ring,
-                "color": color,
-            })
+    planet_items = [(ring, body) for ring, body in sorted(system.orbital_rings.items()) if isinstance(body, Planet)]
+    for idx, (ring, body) in enumerate(planet_items):
+        # Golden angle for even angular spacing with few planets.
+        angle_deg = ((system.id * 23) + (idx * 137.5)) % 360
+        angle_rad = math.radians(angle_deg)
+        radius = 70 + ring * orbit_step
+        px = center_x + radius * math.cos(angle_rad)
+        py = center_y + radius * math.sin(angle_rad)
+        size_map = {"Pequeno": 7, "Mediano": 10, "Grande": 13}
+        pr = size_map.get(body.size, 9)
+        color = _planet_color_for_biome(body.biome)
+        resources = ", ".join(body.resources[:3]) if body.resources else "Sin recursos"
+        planets.append({
+            "id": body.id,
+            "name": body.name,
+            "biome": body.biome,
+            "size": body.size,
+            "resources": resources,
+            "explored": body.explored_pct,
+            "x": round(px, 2),
+            "y": round(py, 2),
+            "r": pr,
+            "ring": ring,
+            "color": color,
+        })
 
     planets_json = json.dumps(planets)
     star_color = star_colors.get(system.star.class_type, "#f8f5ff")
@@ -522,7 +540,7 @@ def _render_system_orbits(system: System):
             tooltip.style.display = "block";
             tooltip.style.left = (evt.pageX + 10) + "px";
             tooltip.style.top = (evt.pageY + 10) + "px";
-            tooltip.innerHTML = `<strong>(ID ${{p.id}}) ${{p.name}}</strong><br/>
+            tooltip.innerHTML = `<strong>${{p.name}}</strong><br/>
                 Bioma: ${{p.biome}}<br/>
                 Tamano: ${{p.size}}<br/>
                 Explorado: ${{p.explored}}%<br/>
@@ -546,7 +564,7 @@ def _render_system_orbits(system: System):
         label.setAttribute("fill", "#dfe8ff");
         label.setAttribute("font-size", p.r >= 12 ? "13" : "11");
         label.setAttribute("font-weight", "600");
-        label.textContent = `(ID ${{p.id}}) ${{p.name}} (R${{p.ring}})`;
+        label.textContent = `${{p.name}} (R${{p.ring}})`;
         svg.appendChild(label);
       }});
     </script>
@@ -598,7 +616,11 @@ def _render_system_view():
                 if body is None:
                     st.write("_(Vacio)_")
                 elif isinstance(body, Planet):
-                    st.write(f"**(ID {body.id}) {body.name}**")
+                    color = _planet_color_for_biome(body.biome)
+                    st.markdown(
+                        f"<span style='color: {color}; font-weight: 700'>{body.name}</span>",
+                        unsafe_allow_html=True,
+                    )
                     st.write(f"Bioma: {body.biome} | Tamano: {body.size}")
                 elif isinstance(body, AsteroidBelt):
                     st.write(f"**Cinturon de Asteroides:** {body.name}")
@@ -634,7 +656,7 @@ def _render_planet_view():
         _reset_to_system_view()
         return
 
-    st.header(f"Informe del Planeta: (ID {planet.id}) {planet.name}")
+    st.header(f"Informe del Planeta: {planet.name}")
     if st.button(f"<- Volver al Sistema {system.name}"):
         _reset_to_system_view()
 
