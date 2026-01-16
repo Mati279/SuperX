@@ -6,14 +6,9 @@ from data.log_repository import log_event
 from utils.security import hash_password, verify_password
 from utils.helpers import encode_image
 
-# --- IMPORTACIONES DEL MOTOR GÉNESIS ---
-from core.genesis_engine import (
-    find_safe_starting_node, 
-    generate_genesis_commander_stats, 
-    apply_genesis_inventory,
-    initialize_fog_of_war,
-    grant_genesis_ship
-)
+# NOTA: Eliminamos las importaciones de genesis_engine de aquí arriba
+# para evitar el Circular Import (KeyError: data.database).
+# Se moverán dentro de la función register_player_account.
 
 def get_player_by_name(name: str) -> Optional[Dict[str, Any]]:
     try:
@@ -57,33 +52,53 @@ def register_player_account(
     faction_name: str, 
     banner_file: Optional[IO[bytes]]
 ) -> Optional[Dict[str, Any]]:
+    """
+    Crea una nueva cuenta y ejecuta el PROTOCOLO DE GÉNESIS v1.5.
+    Incluye lógica de ROLLBACK si falla el proceso.
+    """
+    
+    # --- IMPORTACIÓN LOCAL (Soluciona Circular Import) ---
+    from core.genesis_engine import (
+        find_safe_starting_node, 
+        generate_genesis_commander_stats, 
+        apply_genesis_inventory,
+        initialize_fog_of_war,
+        grant_genesis_ship
+    )
+
     if get_player_by_name(user_name):
         log_event(f"Intento de registro duplicado: {user_name}", is_error=True)
         raise ValueError("El nombre de Comandante ya está en uso.")
 
     banner_url = f"data:image/png;base64,{encode_image(banner_file)}" if banner_file else None
     
-    new_player_data = {
-        "nombre": user_name,
-        "pin": hash_password(pin),
-        "faccion_nombre": faction_name,
-        "banner_url": banner_url,
-    }
-    
+    player_created_id = None # Para rollback
+
     try:
-        # 1. Crear Jugador
+        # 1. Crear el registro base del jugador
+        new_player_data = {
+            "nombre": user_name,
+            "pin": hash_password(pin),
+            "faccion_nombre": faction_name,
+            "banner_url": banner_url,
+        }
+        
         response = supabase.table("players").insert(new_player_data).execute()
         if not response.data:
-            raise Exception("No se pudo crear el registro de jugador.")
+            raise Exception("No se pudo crear el registro de jugador en la DB.")
             
         player = response.data[0]
-        player_id = player['id']
+        player_created_id = player['id'] # Guardamos ID por si hay que borrarlo
         
-        log_event(f"Iniciando Protocolo Génesis v1.5 para {user_name}...", player_id)
+        log_event(f"Iniciando Protocolo Génesis v1.5 para {user_name}...", player_created_id)
+
+        # -----------------------------------------------------
+        # PROTOCOLO GÉNESIS v1.5
+        # -----------------------------------------------------
 
         # 2. Localización Inicial
         start_system_id = find_safe_starting_node()
-        log_event(f"Nodo de inserción seguro: Sistema ID {start_system_id}", player_id)
+        log_event(f"Nodo de inserción seguro: Sistema ID {start_system_id}", player_created_id)
         
         planet_res = supabase.table("planets").select("id").eq("system_id", start_system_id).limit(1).execute()
         planet_id = planet_res.data[0]['id'] if planet_res.data else 1 
@@ -93,18 +108,18 @@ def register_player_account(
         create_planet_asset(
             planet_id=planet_id, 
             system_id=start_system_id, 
-            player_id=player_id, 
+            player_id=player_created_id, 
             settlement_name=f"Puesto {faction_name}",
             initial_population=1000 
         )
 
-        # 4. Generar Comandante (Fix: Añadido es_comandante=True)
+        # 4. Generar Comandante
         stats = generate_genesis_commander_stats(user_name)
         char_data = {
-            "player_id": player_id,
+            "player_id": player_created_id,
             "nombre": user_name,
             "rango": "Comandante",
-            "es_comandante": True,  # <--- CRÍTICO para que la UI lo reconozca
+            "es_comandante": True,  # CRÍTICO
             "clase": "Operaciones",
             "nivel": stats['nivel'],
             "xp": stats['xp'],
@@ -116,21 +131,31 @@ def register_player_account(
         char_id = char_res.data[0]['id'] if char_res.data else None
 
         # 5. Inventario
-        apply_genesis_inventory(player_id)
+        apply_genesis_inventory(player_created_id)
 
         # 6. Nave
         if char_id:
-            grant_genesis_ship(player_id, start_system_id, char_id)
+            grant_genesis_ship(player_created_id, start_system_id, char_id)
 
         # 7. Niebla de Guerra
-        initialize_fog_of_war(player_id, start_system_id)
+        initialize_fog_of_war(player_created_id, start_system_id)
         
-        log_event("✅ Protocolo Génesis completado.", player_id)
+        log_event("✅ Protocolo Génesis completado.", player_created_id)
         return player
 
     except Exception as e:
-        log_event(f"Fallo Crítico en Génesis: {e}", is_error=True)
-        raise Exception(f"Error en el sistema de registro: {e}")
+        # --- ROLLBACK DE EMERGENCIA ---
+        log_event(f"🔥 FALLO CRÍTICO EN GÉNESIS: {e}", is_error=True)
+        
+        if player_created_id:
+            log_event(f"🧹 Ejecutando limpieza de usuario corrupto ID {player_created_id}...", is_error=True)
+            try:
+                # Borramos el jugador creado para no dejar "zombies" y permitir reintento
+                supabase.table("players").delete().eq("id", player_created_id).execute()
+            except Exception as cleanup_error:
+                log_event(f"❌ Falló la limpieza: {cleanup_error}", is_error=True)
+
+        raise Exception(f"Error en el sistema de registro (Rollback ejecutado): {e}")
 
 def get_player_finances(player_id: int) -> Dict[str, int]:
     try:
