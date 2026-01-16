@@ -6,9 +6,9 @@ from data.database import supabase
 def log_event(message: str, player_id: Optional[int] = None, is_error: bool = False) -> None:
     """
     Registra un evento en la base de datos.
-    BLINDADO: Si falla por FK (jugador no existe), lo guarda como log de sistema o lo imprime.
+    BLINDADO: Si falla por FK (jugador borrado), lo guarda como log de sistema anónimo.
     """
-    print(f"[LOG] {message}")  # Siempre imprimir en consola servidor
+    print(f"[LOG] {message}")  # Debug en consola
     
     try:
         data = {
@@ -23,7 +23,7 @@ def log_event(message: str, player_id: Optional[int] = None, is_error: bool = Fa
         # Si falla (ej: el jugador fue borrado en un rollback), intentamos loguear sin player_id
         error_msg = str(e)
         if "foreign key constraint" in error_msg or "23503" in error_msg:
-            print(f"⚠️ Aviso: No se pudo asociar log al player_id {player_id} (posiblemente borrado). Guardando como anónimo.")
+            print(f"⚠️ Aviso: No se pudo asociar log al player_id {player_id}. Guardando como anónimo.")
             try:
                 data["player_id"] = None # Guardar como log de sistema
                 supabase.table("logs").insert(data).execute()
@@ -32,7 +32,11 @@ def log_event(message: str, player_id: Optional[int] = None, is_error: bool = Fa
         else:
             print(f"❌ Error crítico logging: {e}")
 
-def get_player_logs(player_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+def get_recent_logs(player_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Obtiene los logs más recientes de un jugador.
+    Renombrado: Antes get_player_logs, ahora get_recent_logs para compatibilidad con UI.
+    """
     try:
         response = supabase.table("logs")\
             .select("*")\
