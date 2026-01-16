@@ -40,9 +40,7 @@ EXCEPTION
             'error', true,
             'sqlstate', SQLSTATE,
             'message', SQLERRM,
-            'detail', COALESCE(PG_EXCEPTION_DETAIL, 'No hay detalles disponibles'),
-            'hint', COALESCE(PG_EXCEPTION_HINT, 'Verifica la sintaxis SQL y nombres de tablas/columnas'),
-            'context', COALESCE(PG_EXCEPTION_CONTEXT, 'Sin contexto')
+            'hint', 'Verifica la sintaxis SQL y nombres de tablas/columnas'
         );
 END;
 $$;
@@ -87,9 +85,7 @@ EXCEPTION
             'success', false,
             'sqlstate', SQLSTATE,
             'message', SQLERRM,
-            'detail', COALESCE(PG_EXCEPTION_DETAIL, 'No hay detalles disponibles'),
-            'hint', COALESCE(PG_EXCEPTION_HINT, 'Verifica la sintaxis SQL y restricciones de la base de datos'),
-            'context', COALESCE(PG_EXCEPTION_CONTEXT, 'Sin contexto')
+            'hint', 'Verifica la sintaxis SQL y restricciones de la base de datos'
         );
 END;
 $$;
