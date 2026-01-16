@@ -1,13 +1,10 @@
 # data/player_repository.py
 from typing import Dict, Any, Optional, IO
 import uuid
-import time
 from data.database import supabase
 from data.log_repository import log_event
 from utils.security import hash_password, verify_password
 from utils.helpers import encode_image
-
-# NOTA: No importamos genesis_engine aquí arriba para evitar Circular Import.
 
 def get_player_by_name(name: str) -> Optional[Dict[str, Any]]:
     try:
@@ -29,15 +26,14 @@ def create_session_token(player_id: int) -> str:
     try:
         supabase.table("players").update({"session_token": new_token}).eq("id", player_id).execute()
         return new_token
-    except Exception as e:
-        log_event(f"Error al crear sesión: {e}", is_error=True)
+    except Exception:
         return ""
 
 def clear_session_token(player_id: int) -> None:
     try:
         supabase.table("players").update({"session_token": None}).eq("id", player_id).execute()
-    except Exception as e:
-        log_event(f"Error al cerrar sesión: {e}", is_error=True)
+    except Exception:
+        pass
 
 def authenticate_player(name: str, pin: str) -> Optional[Dict[str, Any]]:
     player = get_player_by_name(name)
@@ -53,10 +49,8 @@ def register_player_account(
 ) -> Optional[Dict[str, Any]]:
     """
     Crea una nueva cuenta y ejecuta el PROTOCOLO DE GÉNESIS v1.5.
-    Versión Blindada v2: Soporta condiciones de carrera y rollback.
+    Versión: TITAN (Blindaje contra duplicados y FKs)
     """
-    
-    # --- IMPORTACIÓN LOCAL (Vital para evitar errores de carga) ---
     from core.genesis_engine import (
         find_safe_starting_node, 
         generate_genesis_commander_stats, 
@@ -65,15 +59,14 @@ def register_player_account(
         grant_genesis_ship
     )
 
-    # 1. Verificación previa
     if get_player_by_name(user_name):
         raise ValueError("El nombre de Comandante ya está en uso.")
 
     banner_url = f"data:image/png;base64,{encode_image(banner_file)}" if banner_file else None
-    player_created_id = None 
+    player_id = None 
 
     try:
-        # 2. Crear el registro base del jugador
+        # 1. Crear el registro base del jugador
         new_player_data = {
             "nombre": user_name,
             "pin": hash_password(pin),
@@ -81,41 +74,28 @@ def register_player_account(
             "banner_url": banner_url,
         }
         
-        # Insertar Player
         response = supabase.table("players").insert(new_player_data).execute()
         if not response.data:
-            raise Exception("No se pudo crear el registro de jugador en la DB.")
+            raise Exception("DB Error: No se pudo crear jugador.")
             
         player = response.data[0]
-        player_created_id = player['id']
+        player_id = player['id']
         
-        log_event(f"Iniciando Protocolo Génesis para {user_name} (ID: {player_created_id})...", player_created_id)
+        # Usamos print para debug crítico inicial, log_event después
+        print(f"🚀 Iniciando Génesis para {user_name} ID: {player_id}")
 
-        # -----------------------------------------------------
-        # PROTOCOLO GÉNESIS v1.5
-        # -----------------------------------------------------
-
-        # 3. Localización Inicial
+        # 2. Localización y Base
         start_system_id = find_safe_starting_node()
-        
-        # Buscar planeta válido
         planet_res = supabase.table("planets").select("id").eq("system_id", start_system_id).limit(1).execute()
         planet_id = planet_res.data[0]['id'] if planet_res.data else 1 
 
-        # 4. Crear Asentamiento
         from data.planet_repository import create_planet_asset
-        create_planet_asset(
-            planet_id=planet_id, 
-            system_id=start_system_id, 
-            player_id=player_created_id, 
-            settlement_name=f"Base {faction_name}",
-            initial_population=1000 
-        )
+        create_planet_asset(planet_id, start_system_id, player_id, f"Base {faction_name}", 1000)
 
-        # 5. Generar Comandante (CON PROTECCIÓN DE DUPLICADOS)
+        # 3. Comandante (Punto Crítico de Duplicados)
         stats = generate_genesis_commander_stats(user_name)
         char_data = {
-            "player_id": player_created_id,
+            "player_id": player_id,
             "nombre": user_name,
             "rango": "Comandante",
             "es_comandante": True,
@@ -130,48 +110,50 @@ def register_player_account(
         try:
             char_res = supabase.table("characters").insert(char_data).execute()
             char_id = char_res.data[0]['id'] if char_res.data else None
-        except Exception as char_error:
-            # Si falla por duplicado, verificamos si ya existe para este ID (Race Condition Check)
-            if "duplicate key" in str(char_error) or "23505" in str(char_error):
-                log_event("⚠️ Aviso: El comandante ya existía (posible doble clic). Continuando...", player_created_id)
-                existing = supabase.table("characters").select("id").eq("player_id", player_created_id).eq("es_comandante", True).single().execute()
+        except Exception as e:
+            err = str(e)
+            # Si el error es duplicado, significa que YA se creó (condición de carrera o reintento)
+            if "duplicate key" in err or "23505" in err:
+                print(f"⚠️ Comandante ya existente para ID {player_id}. Recuperando...")
+                existing = supabase.table("characters").select("id")\
+                    .eq("player_id", player_id).eq("es_comandante", True).single().execute()
                 char_id = existing.data['id'] if existing.data else None
             else:
-                raise char_error # Si es otro error, lo lanzamos para que actúe el rollback
+                raise e # Si es otro error (como FK), que falle y haga rollback
 
-        # 6. Inventario y Nave
-        apply_genesis_inventory(player_created_id)
+        # 4. Inventario y Nave (Idempotente)
+        apply_genesis_inventory(player_id)
         
         if char_id:
-            # Verificamos si ya tiene nave antes de darla (para evitar duplicados en retry)
-            ships = supabase.table("ships").select("id").eq("player_id", player_created_id).execute()
+            # Solo insertar nave si no tiene una
+            ships = supabase.table("ships").select("id").eq("player_id", player_id).execute()
             if not ships.data:
-                grant_genesis_ship(player_created_id, start_system_id, char_id)
+                grant_genesis_ship(player_id, start_system_id, char_id)
 
-        # 7. Niebla de Guerra
-        initialize_fog_of_war(player_created_id, start_system_id)
+        # 5. Niebla de Guerra
+        initialize_fog_of_war(player_id, start_system_id)
         
-        log_event("✅ Protocolo Génesis completado exitosamente.", player_created_id)
+        log_event("✅ Protocolo Génesis completado exitosamente.", player_id)
         return player
 
     except Exception as e:
-        # --- ROLLBACK DE EMERGENCIA ---
-        error_msg = str(e)
-        # Ignorar errores menores de logs
-        if "log_event" not in error_msg: 
-            print(f"🔥 FALLO CRÍTICO EN REGISTRO: {error_msg}")
+        # --- ROLLBACK ATÓMICO ---
+        print(f"🔥 FALLO CRÍTICO GENESIS: {e}")
+        
+        if player_id:
+            print(f"🧹 Ejecutando limpieza para ID {player_id}...")
+            # 1. Intentar borrar jugador (Cascade borrará chars, naves, etc)
+            try:
+                supabase.table("players").delete().eq("id", player_id).execute()
+            except Exception as del_err:
+                print(f"❌ Falló la limpieza DB: {del_err}")
             
-            if player_created_id:
-                # Borramos el jugador corrupto para permitir reintento limpio
-                try:
-                    supabase.table("players").delete().eq("id", player_created_id).execute()
-                    print(f"🧹 Limpieza automática realizada para ID {player_created_id}")
-                except:
-                    pass
+            # 2. IMPORTANTE: No llamar a log_event con el ID borrado aquí
+            # para evitar el error "FK violation in logs"
+        
+        raise Exception(f"Registro fallido: {e}")
 
-            raise Exception(f"Error en el registro (Se ha limpiado el intento fallido). Intenta de nuevo. Detalle: {e}")
-        return player # Si fue error de log, retornamos player igual
-
+# ... (Resto de funciones: get_player_finances, update_player_resources igual que antes) ...
 def get_player_finances(player_id: int) -> Dict[str, int]:
     try:
         response = supabase.table("players")\

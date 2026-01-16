@@ -1,64 +1,46 @@
 # data/log_repository.py
-from .database import supabase
-from typing import Optional
-import logging
+from typing import List, Dict, Any, Optional
+from datetime import datetime
+from data.database import supabase
 
-# Configurar logging
-logger = logging.getLogger(__name__)
-
-def log_event(text: str, player_id: Optional[int] = None, is_error: bool = False) -> None:
+def log_event(message: str, player_id: Optional[int] = None, is_error: bool = False) -> None:
     """
-    Registra un evento en la consola y en la tabla 'logs' de la base de datos.
-
-    Args:
-        text: El texto del evento a registrar.
-        player_id: (Opcional) El ID del jugador asociado al evento.
-        is_error: (Opcional) Si es True, prefija el evento con "ERROR:".
+    Registra un evento en la base de datos.
+    BLINDADO: Si falla por FK (jugador no existe), lo guarda como log de sistema o lo imprime.
     """
-    prefix = "ERROR: " if is_error else ""
-    full_text = f"{prefix}{text}"
-
-    # Logging estructurado según severidad
-    if is_error:
-        logger.error(full_text)
-    else:
-        logger.info(full_text)
-
-    try:
-        # Obtener el tick actual del mundo para tener logs contextualizados
-        from data.world_repository import get_world_state
-        world_state = get_world_state()
-        current_tick = world_state.get('current_tick', 1)
-
-        log_data = {"evento_texto": full_text, "turno": current_tick}
-        if player_id:
-            log_data["player_id"] = player_id
-
-        supabase.table("logs").insert(log_data).execute()
-
-    except Exception as e:
-        # Logging crítico si falla el registro en BD
-        logger.critical(f"Fallo al registrar evento en la base de datos: {e}")
-
-def get_recent_logs(player_id: Optional[int] = None, limit: int = 10) -> list:
-    """
-    Obtiene los logs más recientes de la base de datos, opcionalmente por jugador.
+    print(f"[LOG] {message}")  # Siempre imprimir en consola servidor
     
-    Args:
-        player_id: (Opcional) El ID del jugador para filtrar los logs.
-        limit: El número máximo de logs a obtener.
-        
-    Returns:
-        Una lista de diccionarios con los datos de los logs.
-    """
     try:
-        query = supabase.table("logs").select("*")
-        if player_id:
-            query = query.eq("player_id", player_id)
-            
-        response = query.order("id", desc=True).limit(limit).execute()
+        data = {
+            "player_id": player_id,
+            "message": message,
+            "is_error": is_error,
+            "created_at": datetime.utcnow().isoformat()
+        }
+        supabase.table("logs").insert(data).execute()
+        
+    except Exception as e:
+        # Si falla (ej: el jugador fue borrado en un rollback), intentamos loguear sin player_id
+        error_msg = str(e)
+        if "foreign key constraint" in error_msg or "23503" in error_msg:
+            print(f"⚠️ Aviso: No se pudo asociar log al player_id {player_id} (posiblemente borrado). Guardando como anónimo.")
+            try:
+                data["player_id"] = None # Guardar como log de sistema
+                supabase.table("logs").insert(data).execute()
+            except:
+                print(f"❌ Fallo total de logging: {message}")
+        else:
+            print(f"❌ Error crítico logging: {e}")
+
+def get_player_logs(player_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+    try:
+        response = supabase.table("logs")\
+            .select("*")\
+            .eq("player_id", player_id)\
+            .order("created_at", desc=True)\
+            .limit(limit)\
+            .execute()
         return response.data if response.data else []
     except Exception as e:
-        log_event(f"Error al obtener logs para el jugador {player_id}: {e}", player_id=player_id, is_error=True)
+        print(f"Error recuperando logs: {e}")
         return []
-
