@@ -179,85 +179,34 @@ def _render_interactive_galaxy_map():
     ys = [pos[1] for pos in scaled_positions.values()]
     center_x = sum(xs) / max(len(xs), 1)
     center_y = sum(ys) / max(len(ys), 1)
-    known_positions = list(scaled_positions.values())
-    rim_systems = sorted(
-        galaxy.systems,
-        key=lambda s: math.hypot(
-            scaled_positions[s.id][0] - center_x,
-            scaled_positions[s.id][1] - center_y,
-        ),
-        reverse=True,
-    )[: max(8, min(12, len(galaxy.systems)))]
+    max_radius = max(
+        (math.hypot(x - center_x, y - center_y) for x, y in scaled_positions.values()),
+        default=0,
+    )
+    max_allowed = min(center_x, canvas_width - center_x, center_y, canvas_height - center_y)
+    outer_radius = min(max_radius + 160, max_allowed - 20)
     rng = random.Random(17)
-    unknown_payload = []
-    unknown_edges = []
     if show_unknown:
-        unknown_positions = []
-        attempts = 0
-        min_spacing = 26
-        min_offset = 140
-        max_offset_cap = 280
-        max_attempts = 700
-        margin = 36
-        while len(unknown_payload) < 30 and attempts < max_attempts:
-            attempts += 1
-            if attempts == 400:
-                min_spacing = 20
-                min_offset = 110
-            seed = rng.choice(rim_systems)
-            sx, sy = scaled_positions[seed.id]
-            vx, vy = sx - center_x, sy - center_y
-            vlen = math.hypot(vx, vy) or 1.0
-            ux, uy = vx / vlen, vy / vlen
-            angle_jitter = math.radians(rng.uniform(-20, 20))
-            cos_a, sin_a = math.cos(angle_jitter), math.sin(angle_jitter)
-            dx = (ux * cos_a) - (uy * sin_a)
-            dy = (ux * sin_a) + (uy * cos_a)
-            max_offset = float("inf")
-            if abs(dx) > 1e-6:
-                bound_x = (canvas_width - margin - sx) / dx if dx > 0 else (margin - sx) / dx
-                max_offset = min(max_offset, bound_x)
-            if abs(dy) > 1e-6:
-                bound_y = (canvas_height - margin - sy) / dy if dy > 0 else (margin - sy) / dy
-                max_offset = min(max_offset, bound_y)
-            max_offset = min(max_offset, max_offset_cap)
-            if max_offset < min_offset:
-                continue
-            offset = rng.uniform(min_offset, max_offset)
-            px = sx + dx * offset
-            py = sy + dy * offset
-            if not (margin <= px <= canvas_width - margin and margin <= py <= canvas_height - margin):
-                continue
-            if any(math.hypot(px - kx, py - ky) < min_spacing for kx, ky in known_positions):
-                continue
-            if any(math.hypot(px - ux0, py - uy0) < min_spacing for ux0, uy0 in unknown_positions):
-                continue
-            unknown_id = -(len(unknown_payload) + 1)
-            unknown_positions.append((px, py))
+        unknown_payload = []
+        for idx in range(30):
+            angle_deg = (idx * (360 / 30)) + rng.uniform(-8, 8)
+            angle_rad = math.radians(angle_deg)
+            radius_jitter = rng.uniform(-18, 24)
+            ux = center_x + (outer_radius + radius_jitter) * math.cos(angle_rad)
+            uy = center_y + (outer_radius + radius_jitter) * math.sin(angle_rad)
             unknown_payload.append(
                 {
-                    "id": unknown_id,
+                    "id": -(idx + 1),
                     "name": "Desconocido",
                     "class": "?",
                     "rarity": "Desconocido",
                     "energy": "N/A",
                     "rule": "Sin datos",
-                    "x": round(px, 2),
-                    "y": round(py, 2),
+                    "x": round(ux, 2),
+                    "y": round(uy, 2),
                     "color": "#6b7380",
                     "radius": 5.5,
                     "resource_prob": None,
-                    "unknown": True,
-                }
-            )
-            unknown_edges.append(
-                {
-                    "a_id": seed.id,
-                    "b_id": unknown_id,
-                    "ax": sx,
-                    "ay": sy,
-                    "bx": round(px, 2),
-                    "by": round(py, 2),
                     "unknown": True,
                 }
             )
@@ -265,8 +214,6 @@ def _render_interactive_galaxy_map():
         systems_payload.extend(unknown_payload)
 
     connections = _build_connections(galaxy.systems, scaled_positions) if show_routes else []
-    if show_routes and unknown_edges:
-        connections.extend(unknown_edges)
 
     systems_json = json.dumps(systems_payload)
     connections_json = json.dumps(connections)
@@ -320,7 +267,6 @@ def _render_interactive_galaxy_map():
         .star.unknown:hover {{ r: 7.5; filter: drop-shadow(0 0 6px rgba(180,180,180,0.35)); }}
         .route {{ stroke: #5b7bff; stroke-opacity: 0.25; stroke-width: 2; stroke-linecap: round; }}
         .route.highlight {{ stroke-opacity: 0.5; }}
-        .route.unknown {{ stroke: #3d4b64; stroke-opacity: 0.16; stroke-width: 1; }}
         .legend {{
             position: absolute;
             top: 16px;
@@ -405,11 +351,8 @@ def _render_interactive_galaxy_map():
                     line.setAttribute("x2", route.bx);
                     line.setAttribute("y2", route.by);
                     line.setAttribute("class", "route");
-                    if (!route.unknown && (highlightIds.has(route.a_id) || highlightIds.has(route.b_id))) {{
+                    if (highlightIds.has(route.a_id) || highlightIds.has(route.b_id)) {{
                         line.classList.add("highlight");
-                    }}
-                    if (route.unknown) {{
-                        line.classList.add("unknown");
                     }}
                     routesLayer.appendChild(line);
                 }});
