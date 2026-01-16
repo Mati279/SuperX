@@ -184,3 +184,216 @@ RESOURCE_STAR_WEIGHTS: Dict[str, Dict[str, int]] = {
         "Aetherion": 18,
     },
 }
+
+# --- MMFR: Recursos Tier 2 (Lujo) ---
+# No se compran en el mercado. Se extraen de planetas especiales.
+LUXURY_RESOURCES: Dict[str, Dict[str, Any]] = {
+    # Categoría: Materiales Avanzados
+    "superconductores": {
+        "category": "materiales_avanzados",
+        "name": "Superconductores",
+        "description": "Materiales de resistencia cero. Esenciales para motores de salto.",
+        "extraction_difficulty": "Media"
+    },
+    "aleaciones_exoticas": {
+        "category": "materiales_avanzados",
+        "name": "Aleaciones Exóticas",
+        "description": "Metales imposibles de sintetizar. Base de cascos de naves pesadas.",
+        "extraction_difficulty": "Alta"
+    },
+    "nanotubos_carbono": {
+        "category": "materiales_avanzados",
+        "name": "Nanotubos de Carbono",
+        "description": "Estructuras microscópicas ultra-resistentes.",
+        "extraction_difficulty": "Media"
+    },
+
+    # Categoría: Componentes Avanzados
+    "reactores_fusion": {
+        "category": "componentes_avanzados",
+        "name": "Reactores de Fusión",
+        "description": "Núcleos energéticos compactos. Permiten naves capitales.",
+        "extraction_difficulty": "Muy Alta"
+    },
+    "chips_cuanticos": {
+        "category": "componentes_avanzados",
+        "name": "Chips Cuánticos",
+        "description": "Procesadores de última generación. Necesarios para IA avanzada.",
+        "extraction_difficulty": "Alta"
+    },
+    "sistemas_armamento": {
+        "category": "componentes_avanzados",
+        "name": "Sistemas de Armamento",
+        "description": "Plataformas de armas listas para integrar.",
+        "extraction_difficulty": "Alta"
+    },
+
+    # Categoría: Energía Avanzada
+    "antimateria": {
+        "category": "energia_avanzada",
+        "name": "Antimateria",
+        "description": "Combustible definitivo. Extremadamente peligrosa.",
+        "extraction_difficulty": "Extrema"
+    },
+    "cristales_energeticos": {
+        "category": "energia_avanzada",
+        "name": "Cristales Energéticos",
+        "description": "Almacenan energía masiva en forma sólida.",
+        "extraction_difficulty": "Alta"
+    },
+    "helio3": {
+        "category": "energia_avanzada",
+        "name": "Helio-3",
+        "description": "Isótopo limpio extraído de gigantes gaseosos.",
+        "extraction_difficulty": "Media"
+    },
+
+    # Categoría: Influencia Avanzada
+    "data_encriptada": {
+        "category": "influencia_avanzada",
+        "name": "Data Encriptada",
+        "description": "Información clasificada de valor incalculable.",
+        "extraction_difficulty": "Alta"
+    },
+    "artefactos_antiguos": {
+        "category": "influencia_avanzada",
+        "name": "Artefactos de Precursores",
+        "description": "Tecnología alienígena perdida.",
+        "extraction_difficulty": "Extrema"
+    },
+    "cultura_galactica": {
+        "category": "influencia_avanzada",
+        "name": "Puntos de Cultura Galáctica",
+        "description": "Representación abstracta del soft power.",
+        "extraction_difficulty": "Media"
+    }
+}
+
+# --- MMFR: Economía de Recursos Base ---
+# Precios del Broker Galáctico (Mercado NPC)
+BROKER_PRICES: Dict[str, int] = {
+    "materiales": 2,      # 2 CI por unidad
+    "componentes": 5,     # 5 CI por unidad
+    "celulas_energia": 3, # 3 CI por unidad
+    "influencia": 10      # 10 CI por unidad (más cara)
+}
+
+# Tasas económicas
+ECONOMY_RATES = {
+    "income_per_pop": 0.5,        # CI generados por POP por turno (base)
+    "security_min": 0.3,          # Multiplicador mínimo si seguridad es 0
+    "security_max": 1.2,          # Multiplicador máximo si seguridad es 100+
+    "happiness_bonus_max": 0.5,   # +50% de ingresos con felicidad al máximo
+    "infrastructure_security_rate": 0.01  # Cada punto de infraestructura = +1% seguridad
+}
+
+# --- MMFR: Edificios Planetarios ---
+BUILDING_TYPES: Dict[str, Dict[str, Any]] = {
+    # === EXTRACCIÓN BASE ===
+    "extractor_materiales": {
+        "name": "Extractor de Materiales",
+        "tier": 1,
+        "category": "extraccion",
+        "pops_required": 100,
+        "energy_cost": 5,
+        "construction_cost": {"creditos": 500, "componentes": 10},
+        "production": {"materiales": 20},
+        "description": "Mina básica de recursos minerales."
+    },
+    "extractor_componentes": {
+        "name": "Fábrica de Componentes",
+        "tier": 1,
+        "category": "extraccion",
+        "pops_required": 150,
+        "energy_cost": 10,
+        "construction_cost": {"creditos": 800, "materiales": 50},
+        "production": {"componentes": 10},
+        "description": "Ensambla componentes mecánicos básicos."
+    },
+    "generador_energia": {
+        "name": "Planta de Energía",
+        "tier": 1,
+        "category": "extraccion",
+        "pops_required": 80,
+        "energy_cost": 0,  # Produce energía, no consume
+        "construction_cost": {"creditos": 1000, "materiales": 30, "componentes": 20},
+        "production": {"celulas_energia": 50},
+        "description": "Reactor de fusión básico."
+    },
+    "centro_influencia": {
+        "name": "Centro de Relaciones",
+        "tier": 1,
+        "category": "extraccion",
+        "pops_required": 50,
+        "energy_cost": 3,
+        "construction_cost": {"creditos": 600, "componentes": 5},
+        "production": {"influencia": 2},
+        "description": "Genera influencia política mediante diplomacia."
+    },
+
+    # === INDUSTRIA PESADA ===
+    "fundicion_avanzada": {
+        "name": "Fundición Avanzada",
+        "tier": 2,
+        "category": "industria_pesada",
+        "pops_required": 250,
+        "energy_cost": 20,
+        "construction_cost": {"creditos": 2000, "materiales": 100, "componentes": 50},
+        "production": {"materiales": 50},
+        "description": "Procesamiento industrial a gran escala."
+    },
+    "astillero_ligero": {
+        "name": "Astillero Ligero",
+        "tier": 2,
+        "category": "industria_pesada",
+        "pops_required": 300,
+        "energy_cost": 30,
+        "construction_cost": {"creditos": 5000, "materiales": 200, "componentes": 100},
+        "production": {},  # No produce recursos base, se usa para construir naves
+        "description": "Construye naves pequeñas y medianas."
+    },
+
+    # === ALTA TECNOLOGÍA ===
+    "laboratorio_investigacion": {
+        "name": "Laboratorio de Investigación",
+        "tier": 3,
+        "category": "alta_tecnologia",
+        "pops_required": 200,
+        "energy_cost": 25,
+        "construction_cost": {"creditos": 8000, "materiales": 150, "componentes": 200},
+        "production": {},  # Genera puntos de investigación (sistema futuro)
+        "description": "Acelera el desarrollo tecnológico."
+    },
+
+    # === INFRAESTRUCTURA DEFENSIVA ===
+    "bunker_defensa": {
+        "name": "Búnker de Defensa",
+        "tier": 1,
+        "category": "defensa",
+        "pops_required": 50,
+        "energy_cost": 5,
+        "construction_cost": {"creditos": 1500, "materiales": 80, "componentes": 30},
+        "production": {},
+        "defense_value": 10,  # Añade 10 puntos de infraestructura defensiva
+        "description": "Fortificación básica. Mejora la seguridad del planeta."
+    },
+    "escudo_planetario": {
+        "name": "Escudo Planetario",
+        "tier": 3,
+        "category": "defensa",
+        "pops_required": 100,
+        "energy_cost": 50,
+        "construction_cost": {"creditos": 10000, "materiales": 300, "componentes": 500},
+        "production": {},
+        "defense_value": 30,
+        "description": "Campo de fuerza avanzado. Protección contra bombardeos."
+    }
+}
+
+# Prioridades de desactivación (orden inverso: se desactivan primero los de mayor prioridad)
+BUILDING_SHUTDOWN_PRIORITY = {
+    "alta_tecnologia": 1,    # Se desactivan primero
+    "industria_pesada": 2,
+    "defensa": 3,
+    "extraccion": 4          # Se desactivan al final (críticos)
+}

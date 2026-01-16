@@ -151,18 +151,34 @@ def _phase_macroeconomics():
     Fase 4: Economía Macro (MMFR).
     - Generación de recursos base.
     - Flujo de Caja (CI).
-    - Penalizadores por estados negativos de personajes en sectores.
+    - Procesamiento de edificios y producción planetaria.
     """
-    # log_event("running phase 4: Macroeconomía...")
-    pass
+    log_event("running phase 4: Macroeconomía (MMFR)...")
+
+    # Importación local para evitar circular imports
+    from core.economy_engine import run_global_economy_tick
+
+    try:
+        run_global_economy_tick()
+    except Exception as e:
+        log_event(f"Error crítico en fase macroeconómica: {e}", is_error=True)
 
 def _phase_social_logistics():
     """
     Fase 5: Logística Social y POPs.
-    - Verificación de ocupación de infraestructuras.
+    - Verificación de ocupación de infraestructuras (ya manejado en economy_engine).
     - Cálculo de salud/felicidad de la población.
+    - Ajustes demográficos.
     """
-    # log_event("running phase 5: Logística Social...")
+    log_event("running phase 5: Logística Social y POPs...")
+
+    # NOTA: La desactivación en cascada ya se maneja en economy_engine
+    # Esta fase puede usarse para:
+    # - Crecimiento/declive de población
+    # - Eventos de felicidad
+    # - Migraciones entre planetas
+
+    # TODO: Implementar mecánicas de demografía avanzada
     pass
 
 def _phase_mission_resolution():
