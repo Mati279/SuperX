@@ -8,3 +8,4 @@ extra-streamlit-components
 uuid
 Pillow
 ipython
+plotly
