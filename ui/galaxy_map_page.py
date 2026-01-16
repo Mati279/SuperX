@@ -396,7 +396,8 @@ def _render_interactive_galaxy_map():
         st.rerun()
 
     # Fallback: selector por lista si el click no funciona en el navegador
-    system_options = {f"{s.name} (ID {s.id})": s.id for s in galaxy.systems}
+    systems_sorted = sorted(galaxy.systems, key=lambda s: s.id)
+    system_options = {f"{s.name} (ID {s.id})": s.id for s in systems_sorted}
     placeholder_opt = "(Seleccionar sistema)"
     chooser = st.selectbox("Abrir sistema manualmente", [placeholder_opt] + list(system_options.keys()), index=0, key="manual_system_selector")
     if chooser and chooser != placeholder_opt:
@@ -521,7 +522,7 @@ def _render_system_orbits(system: System):
             tooltip.style.display = "block";
             tooltip.style.left = (evt.pageX + 10) + "px";
             tooltip.style.top = (evt.pageY + 10) + "px";
-            tooltip.innerHTML = `<strong>${{p.name}}</strong><br/>
+            tooltip.innerHTML = `<strong>(ID ${{p.id}}) ${{p.name}}</strong><br/>
                 Bioma: ${{p.biome}}<br/>
                 Tamano: ${{p.size}}<br/>
                 Explorado: ${{p.explored}}%<br/>
@@ -545,7 +546,7 @@ def _render_system_orbits(system: System):
         label.setAttribute("fill", "#dfe8ff");
         label.setAttribute("font-size", p.r >= 12 ? "13" : "11");
         label.setAttribute("font-weight", "600");
-        label.textContent = `${{p.name}} (R${{p.ring}})`;
+        label.textContent = `(ID ${{p.id}}) ${{p.name}} (R${{p.ring}})`;
         svg.appendChild(label);
       }});
     </script>
@@ -597,7 +598,7 @@ def _render_system_view():
                 if body is None:
                     st.write("_(Vacio)_")
                 elif isinstance(body, Planet):
-                    st.write(f"**{body.name}**")
+                    st.write(f"**(ID {body.id}) {body.name}**")
                     st.write(f"Bioma: {body.biome} | Tamano: {body.size}")
                 elif isinstance(body, AsteroidBelt):
                     st.write(f"**Cinturon de Asteroides:** {body.name}")
@@ -633,7 +634,7 @@ def _render_planet_view():
         _reset_to_system_view()
         return
 
-    st.header(f"Informe del Planeta: {planet.name}")
+    st.header(f"Informe del Planeta: (ID {planet.id}) {planet.name}")
     if st.button(f"<- Volver al Sistema {system.name}"):
         _reset_to_system_view()
 
