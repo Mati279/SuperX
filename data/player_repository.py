@@ -1,7 +1,7 @@
 # data/player_repository.py
 from typing import Dict, Any, Optional, IO
 import uuid # IMPORTANTE: Para generar tokens únicos
-from .database import supabase
+from data.database import supabase
 from data.log_repository import log_event
 from utils.security import hash_password, verify_password
 from utils.helpers import encode_image

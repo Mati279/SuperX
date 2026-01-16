@@ -15,6 +15,12 @@ from config.app_constants import (
     LOCK_IN_WINDOW_START_MINUTE
 )
 
+# MRG Imports
+import random
+from data.database import supabase
+from data.character_repository import update_character
+from data.player_repository import get_player_credits, update_player_credits
+
 # Forzamos la zona horaria a Argentina (GMT-3)
 SAFE_TIMEZONE = pytz.timezone(TIMEZONE_NAME)
 
@@ -264,16 +270,71 @@ def _phase_social_logistics():
 def _phase_mission_resolution():
     """
     Fase 6: Resolución de Misiones (MRG).
-    - Para misiones que llegaron a 0 en la Fase 1.
-    - Tiradas: 2d50 + Bonos.
-    - Eventos aleatorios.
+    Busca personajes 'En Misión', tira dados (d100 + Atributo vs Dificultad) y asigna recompensas o heridas.
     """
-    # log_event("running phase 6: Resolución de Misiones...")
-    # TODO: Buscar misiones con estado 'Resolving'.
-    # Ejemplo de lógica futura:
-    # roll = random.randint(1, 50) + random.randint(1, 50)
-    # outcome = calculate_outcome(roll, bonuses)
-    pass
+    log_event("running phase 6: Resolución de Misiones (MRG)...")
+    
+    try:
+        # 1. Obtener todos los personajes que están actualmente en misión
+        response = supabase.table("characters").select("*").eq("estado", "En Misión").execute()
+        active_operatives = response.data if response.data else []
+        
+        if not active_operatives:
+            return
+
+        for char in active_operatives:
+            player_id = char['player_id']
+            
+            # Recuperar datos de la misión del JSON o usar defaults
+            stats = char.get('stats_json', {})
+            mission_data = stats.get('active_mission', {})
+            
+            difficulty = mission_data.get('difficulty', 50)
+            reward = mission_data.get('reward', 200)
+            risk_attr = mission_data.get('attribute', 'fuerza').lower()
+            
+            # Obtener valor del atributo del personaje
+            attr_value = stats.get('atributos', {}).get(risk_attr, 10)
+            
+            # --- Mecánica de Resolución ---
+            roll = random.randint(1, 100)
+            total_score = roll + attr_value
+            
+            narrative = ""
+            new_status = "Disponible"
+            
+            if total_score >= difficulty:
+                # ÉXITO: Dar créditos y liberar agente
+                current_credits = get_player_credits(player_id)
+                update_player_credits(player_id, current_credits + reward)
+                
+                narrative = f"✅ Misión EXITOSA: {char['nombre']} cumplió el objetivo. (Roll: {roll}+{attr_value} vs DC{difficulty}). +{reward} Créditos."
+                if 'active_mission' in stats: del stats['active_mission']
+                
+                update_character(char['id'], {
+                    "estado": "Disponible", 
+                    "ubicacion": "Barracones", 
+                    "stats_json": stats
+                })
+            else:
+                # FALLO: Herida o Fatiga según margen de error
+                margin = difficulty - total_score
+                new_status = "Herido" if margin > 20 else "Descansando"
+                ubicacion = "Enfermería" if new_status == "Herido" else "Barracones"
+                
+                narrative = f"❌ Misión FALLIDA: {char['nombre']} fracasó. Estado: {new_status}. (Roll: {roll}+{attr_value} vs DC{difficulty})."
+                if 'active_mission' in stats: del stats['active_mission']
+
+                update_character(char['id'], {
+                    "estado": new_status, 
+                    "ubicacion": ubicacion, 
+                    "stats_json": stats
+                })
+
+            log_event(narrative, player_id)
+
+    except Exception as e:
+        log_event(f"Error crítico en MRG phase: {e}", is_error=True)
 
 def _phase_cleanup_and_audit():
     """
