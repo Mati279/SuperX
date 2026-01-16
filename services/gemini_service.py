@@ -247,11 +247,12 @@ Procede a usar las herramientas necesarias.
 """
 
     try:
-        # 6. Configurar el modelo con herramientas
-        model = ai_client.models.get(TEXT_MODEL_NAME)
-
-        # 7. Iniciar chat con system instruction, herramientas y CONFIGURACIÓN AUTO
-        chat = model.start_chat(
+        # 6. (PASO ELIMINADO: No necesitamos 'models.get' en el nuevo SDK)
+        
+        # 7. Iniciar chat DIRECTAMENTE desde el cliente
+        # CORRECCIÓN AQUÍ: Usamos ai_client.chats.create
+        chat = ai_client.chats.create(
+            model=TEXT_MODEL_NAME,
             config=types.GenerateContentConfig(
                 system_instruction=GAME_MASTER_SYSTEM_PROMPT,
                 tools=TOOL_DECLARATIONS,
@@ -277,21 +278,21 @@ Procede a usar las herramientas necesarias.
         while iteration < max_iterations:
             iteration += 1
 
-            # Verificar si hay function calls
+            # Verificar si hay function calls (estructura del SDK nuevo)
             if response.candidates and response.candidates[0].content.parts:
                 parts = response.candidates[0].content.parts
                 has_function_call = False
 
                 for part in parts:
-                    if hasattr(part, 'function_call') and part.function_call:
+                    if part.function_call: # Verificación directa en el objeto Part
                         has_function_call = True
                         function_call = part.function_call
 
                         function_name = function_call.name
-                        function_args = dict(function_call.args)
+                        function_args = function_call.args # Ya es un dict o similar en el nuevo SDK
 
                         # Log de la llamada
-                        log_event(f"[AI] Function call: {function_name}({json.dumps(function_args, default=str)[:100]}...)", player_id)
+                        log_event(f"[AI] Function call: {function_name}(...)", player_id)
                         function_calls_made.append({
                             "function": function_name,
                             "args": function_args
@@ -300,7 +301,9 @@ Procede a usar las herramientas necesarias.
                         # Ejecutar la función
                         if function_name in TOOL_FUNCTIONS:
                             try:
-                                function_result = TOOL_FUNCTIONS[function_name](**function_args)
+                                # Convertir args a dict si es necesario
+                                args_dict = dict(function_args) if function_args else {}
+                                function_result = TOOL_FUNCTIONS[function_name](**args_dict)
                             except Exception as exec_err:
                                 function_result = json.dumps({"error": str(exec_err)})
                         else:
@@ -315,7 +318,7 @@ Procede a usar las herramientas necesarias.
                                 )
                             ])
                         )
-                        break  # Procesar una function call a la vez
+                        break  # Procesar una function call a la vez y reevaluar
 
                 if not has_function_call:
                     break
@@ -326,7 +329,7 @@ Procede a usar las herramientas necesarias.
         if response.candidates and response.candidates[0].content.parts:
             final_text = ""
             for part in response.candidates[0].content.parts:
-                if hasattr(part, 'text') and part.text:
+                if part.text:
                     final_text += part.text
 
             narrative = final_text.strip() if final_text else "El Game Master medita en silencio..."
@@ -348,7 +351,12 @@ Procede a usar las herramientas necesarias.
 
     except Exception as e:
         log_event(f"Error crítico en IA con Function Calling: {e}", player_id, is_error=True)
-        raise ConnectionError(f"Error de comunicación con la IA: {e}")
+        # Importante: No relanzar para que no rompa la UI, pero devolver error visible
+        return {
+             "narrative": f"⚠️ **Error de Comunicación Neural**: {str(e)}",
+             "mrg_result": mrg_result,
+             "error": str(e)
+        }
 
 
 # --- FUNCIÓN AUXILIAR: GENERACIÓN DE IMÁGENES (SIN CAMBIOS) ---
