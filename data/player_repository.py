@@ -1,12 +1,12 @@
 # data/player_repository.py
 from typing import Dict, Any, Optional, IO
 import uuid # IMPORTANTE: Para generar tokens únicos
+# CORRECCIÓN: Importación absoluta para evitar KeyError en Streamlit
 from data.database import supabase
 from data.log_repository import log_event
 from utils.security import hash_password, verify_password
 from utils.helpers import encode_image
 
-# ... (Mantén get_player_by_name tal cual estaba) ...
 def get_player_by_name(name: str) -> Optional[Dict[str, Any]]:
     try:
         response = supabase.table("players").select("*").eq("nombre", name).single().execute()
@@ -14,7 +14,6 @@ def get_player_by_name(name: str) -> Optional[Dict[str, Any]]:
     except Exception:
         return None
 
-# NUEVA FUNCIÓN: Busca un jugador por su token de sesión
 def get_player_by_session_token(token: str) -> Optional[Dict[str, Any]]:
     """Valida un token de sesión y devuelve el jugador asociado."""
     if not token: return None
@@ -24,7 +23,6 @@ def get_player_by_session_token(token: str) -> Optional[Dict[str, Any]]:
     except Exception:
         return None
 
-# NUEVA FUNCIÓN: Actualiza el token de sesión al loguearse
 def create_session_token(player_id: int) -> str:
     """Genera un nuevo token, lo guarda en DB y lo devuelve."""
     new_token = str(uuid.uuid4())
@@ -35,7 +33,6 @@ def create_session_token(player_id: int) -> str:
         log_event(f"Error al crear sesión: {e}", is_error=True)
         return ""
 
-# NUEVA FUNCIÓN: Borra el token al salir
 def clear_session_token(player_id: int) -> None:
     """Elimina el token de sesión de la base de datos."""
     try:
@@ -43,10 +40,9 @@ def clear_session_token(player_id: int) -> None:
     except Exception as e:
         log_event(f"Error al cerrar sesión: {e}", is_error=True)
 
-# ... (Mantén authenticate_player y register_player_account) ...
 def authenticate_player(name: str, pin: str) -> Optional[Dict[str, Any]]:
     player = get_player_by_name(name)
-    if player and verify_password(pin, player['pin']):
+    if player and verify_password(player['pin'], pin):
         return player
     return None
 
@@ -56,7 +52,6 @@ def register_player_account(
     faction_name: str, 
     banner_file: Optional[IO[bytes]]
 ) -> Optional[Dict[str, Any]]:
-    # ... (El código de registro sigue igual) ...
     if get_player_by_name(user_name):
         log_event(f"Intento de registro con nombre de usuario duplicado: {user_name}", is_error=True)
         raise ValueError("El nombre de Comandante ya está en uso.")
@@ -86,10 +81,8 @@ def register_player_account(
 def get_player_credits(player_id: int) -> int:
     """
     Obtiene la cantidad de créditos de un jugador.
-
     Args:
         player_id: El ID del jugador.
-
     Returns:
         La cantidad de créditos. Devuelve 0 si hay un error.
     """
@@ -105,11 +98,9 @@ def get_player_credits(player_id: int) -> int:
 def update_player_credits(player_id: int, new_credits: int) -> bool:
     """
     Actualiza la cantidad de créditos de un jugador.
-
     Args:
         player_id: El ID del jugador.
         new_credits: La nueva cantidad de créditos.
-
     Returns:
         True si la actualización fue exitosa, False en caso contrario.
     """

@@ -1,28 +1,23 @@
 # core/time_engine.py
 from datetime import datetime, time
 import pytz
+import random
+# Imports del repositorio de mundo
 from data.world_repository import (
-    get_world_state,
-    try_trigger_db_tick,
+    get_world_state, 
+    try_trigger_db_tick, 
     force_db_tick,
-    get_all_pending_actions,
+    get_all_pending_actions, 
     mark_action_processed
 )
-from data.log_repository import log_event
-from config.app_constants import (
-    TIMEZONE_NAME,
-    LOCK_IN_WINDOW_START_HOUR,
-    LOCK_IN_WINDOW_START_MINUTE
-)
-
-# MRG Imports
-import random
+# Imports para la lógica del MRG (Misiones)
 from data.database import supabase
 from data.character_repository import update_character
 from data.player_repository import get_player_credits, update_player_credits
+from data.log_repository import log_event
 
 # Forzamos la zona horaria a Argentina (GMT-3)
-SAFE_TIMEZONE = pytz.timezone(TIMEZONE_NAME)
+SAFE_TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
 
 def get_server_time() -> datetime:
     """Retorna la hora actual en GMT-3."""
@@ -32,7 +27,7 @@ def is_lock_in_window() -> bool:
     """Retorna True si estamos en la ventana de bloqueo (23:50 - 00:00)."""
     now = get_server_time()
     # Definir ventana: 23:50 a 23:59:59
-    start_lock = time(LOCK_IN_WINDOW_START_HOUR, LOCK_IN_WINDOW_START_MINUTE)
+    start_lock = time(23, 50)
     current_time = now.time()
     return current_time >= start_lock
 
@@ -106,7 +101,6 @@ def _phase_decrement_and_persistence():
     """
     log_event("running phase 1: Decremento y Persistencia...")
     # TODO: Implementar lógica de decremento de días de misión.
-    # TODO: Implementar recuperación de salud/fatiga de personajes.
     pass
 
 def _phase_concurrency_resolution():
@@ -126,10 +120,7 @@ def _phase_concurrency_resolution():
         
         # Importación local para evitar Circular Import Error
         from services.gemini_service import resolve_player_action
-
-        # Ordenar acciones por timestamp para respetar la prioridad atómica (FIFO)
-        pending_actions.sort(key=lambda x: x.get('created_at', ''))
-
+        
         for item in pending_actions:
             player_id = item['player_id']
             action_text = item['action_text']
@@ -137,114 +128,23 @@ def _phase_concurrency_resolution():
             
             try:
                 log_event(f"▶ Ejecutando orden diferida ID {action_id}...", player_id)
-                
-                # Ejecutamos la acción. 
-                # NOTA: Si implementamos lógica de intercepción de mapa, deberíamos
-                # analizar primero todas las acciones de movimiento antes de ejecutarlas individualmente.
                 resolve_player_action(action_text, player_id)
-                
                 mark_action_processed(action_id, "PROCESSED")
                 
             except Exception as e:
                 log_event(f"❌ Error procesando orden diferida {action_id}: {e}", player_id, is_error=True)
                 mark_action_processed(action_id, "ERROR")
     else:
-        # log_event("📂 No hay acciones pendientes en la cola.") # Comentado para reducir ruido
         pass
 
 def _phase_prestige_calculation():
     """
     Fase 3: Cálculo y transferencia de Prestigio (Suma Cero).
-    - Procesa transferencias pendientes de conflictos
-    - Aplica Fricción Galáctica (redistribución automática)
-    - Verifica condiciones de Hegemonía
-    - Decrementa contadores de victoria
+    - Transferencias por conflictos resueltos.
+    - Aplicación de 'Fricción': Redistribución pasiva hacia el centro.
     """
-    from core.prestige_engine import (
-        calculate_friction,
-        apply_prestige_changes,
-        check_hegemony_ascension,
-        check_hegemony_fall,
-        validate_zero_sum,
-        FactionState,
-        HEGEMONY_VICTORY_TICKS
-    )
-    from data.faction_repository import (
-        get_prestige_map,
-        get_all_factions,
-        batch_update_prestige,
-        set_hegemony_status,
-        decrement_hegemony_counters
-    )
-
-    log_event("🏛️ Ejecutando Fase 3: Prestigio y Hegemonía...")
-
-    # 1. Obtener estado actual de todas las facciones
-    factions = get_all_factions()
-    if not factions:
-        log_event("⚠️ No hay facciones en el sistema", is_error=True)
-        return
-
-    prestige_map = {f["id"]: float(f["prestigio"]) for f in factions}
-
-    # 2. Decrementar contadores de victoria de hegemones
-    winners = decrement_hegemony_counters()
-    if winners:
-        for winner in winners:
-            log_event(f"🏆🏆🏆 ¡¡¡{winner['nombre']} HA GANADO POR HEGEMONÍA TEMPORAL!!!")
-            # TODO: Implementar lógica de fin de partida
-        return  # Si hay un ganador, no procesar más
-
-    # 3. Calcular y aplicar Fricción Galáctica
-    friction_adjustments = calculate_friction(prestige_map)
-
-    # Log de fricción detallado
-    for fid, adj in friction_adjustments.items():
-        if adj != 0:
-            faction_name = next((f["nombre"] for f in factions if f["id"] == fid), f"ID{fid}")
-            if adj < 0:
-                log_event(f"📉 Fricción Imperial: {faction_name} pierde {abs(adj):.2f}% de prestigio")
-            else:
-                log_event(f"📈 Subsidio de Supervivencia: {faction_name} recibe {adj:.2f}% de prestigio")
-
-    # 4. Aplicar cambios manteniendo suma = 100
-    new_prestige_map = apply_prestige_changes(prestige_map, friction_adjustments)
-
-    # 5. Verificar transiciones de hegemonía
-    for faction in factions:
-        fid = faction["id"]
-        old_prestige = prestige_map[fid]
-        new_prestige = new_prestige_map[fid]
-        was_hegemon = faction.get("es_hegemon", False)
-
-        # ¿Ascenso a Hegemón?
-        if not was_hegemon and new_prestige >= 25.0:
-            set_hegemony_status(fid, True, HEGEMONY_VICTORY_TICKS)
-            log_event(f"👑 ¡¡¡{faction['nombre']} ASCIENDE A HEGEMÓN!!! Contador de victoria: {HEGEMONY_VICTORY_TICKS} ticks")
-
-        # ¿Caída de Hegemonía? (debe caer por debajo del 20%, no del 25%)
-        elif was_hegemon and new_prestige < 20.0:
-            set_hegemony_status(fid, False, 0)
-            log_event(f"💔 {faction['nombre']} PIERDE EL ESTATUS DE HEGEMÓN (cayó a {new_prestige:.2f}%)")
-
-    # 6. Guardar cambios en DB
-    if batch_update_prestige(new_prestige_map):
-        log_event("✅ Prestigio actualizado correctamente")
-
-        # Mostrar estado actual
-        sorted_factions = sorted(new_prestige_map.items(), key=lambda x: x[1], reverse=True)
-        top_3 = sorted_factions[:3]
-        faction_names = {f["id"]: f["nombre"] for f in factions}
-
-        ranking = " | ".join([f"{faction_names.get(fid, '?')}: {pres:.1f}%" for fid, pres in top_3])
-        log_event(f"📊 Top 3 Facciones: {ranking}")
-    else:
-        log_event("❌ Error actualizando prestigio en base de datos", is_error=True)
-
-    # 7. Validar suma cero
-    if not validate_zero_sum(new_prestige_map):
-        total = sum(new_prestige_map.values())
-        log_event(f"⚠️ ADVERTENCIA: Prestigio total = {total:.2f}% (debería ser 100%)", is_error=True)
+    # log_event("running phase 3: Prestigio...")
+    pass
 
 def _phase_macroeconomics():
     """
@@ -254,7 +154,6 @@ def _phase_macroeconomics():
     - Penalizadores por estados negativos de personajes en sectores.
     """
     # log_event("running phase 4: Macroeconomía...")
-    # TODO: Iterar sobre jugadores/facciones y generar créditos/recursos diarios.
     pass
 
 def _phase_social_logistics():
@@ -264,39 +163,43 @@ def _phase_social_logistics():
     - Cálculo de salud/felicidad de la población.
     """
     # log_event("running phase 5: Logística Social...")
-    # TODO: Verificar capacidad de soporte vital vs tripulación/población.
     pass
 
 def _phase_mission_resolution():
     """
     Fase 6: Resolución de Misiones (MRG).
-    Busca personajes 'En Misión', tira dados (d100 + Atributo vs Dificultad) y asigna recompensas o heridas.
+    Busca personajes en estado 'En Misión', resuelve el resultado (d100 + Atributo) 
+    y actualiza estados/recompensas.
     """
     log_event("running phase 6: Resolución de Misiones (MRG)...")
     
     try:
         # 1. Obtener todos los personajes que están actualmente en misión
+        # Usamos supabase directo para iterar sobre todas las facciones
         response = supabase.table("characters").select("*").eq("estado", "En Misión").execute()
         active_operatives = response.data if response.data else []
         
         if not active_operatives:
+            # log_event("No hay operativos en misión activa.")
             return
 
         for char in active_operatives:
             player_id = char['player_id']
             
-            # Recuperar datos de la misión del JSON o usar defaults
+            # Recuperar datos de la misión del JSON o usar valores por defecto
+            # Se asume que al asignar la misión guardamos un objeto 'active_mission' en stats_json
             stats = char.get('stats_json', {})
             mission_data = stats.get('active_mission', {})
             
-            difficulty = mission_data.get('difficulty', 50)
-            reward = mission_data.get('reward', 200)
-            risk_attr = mission_data.get('attribute', 'fuerza').lower()
+            difficulty = mission_data.get('difficulty', 50)  # Dificultad estándar
+            reward = mission_data.get('reward', 200)         # Recompensa estándar
+            risk_attr = mission_data.get('attribute', 'fuerza').lower() # Atributo puesto a prueba
             
             # Obtener valor del atributo del personaje
             attr_value = stats.get('atributos', {}).get(risk_attr, 10)
             
-            # --- Mecánica de Resolución ---
+            # --- Mecánica de Resolución (RNG) ---
+            # Tirada d100. Éxito si (Tirada + Atributo) > Dificultad
             roll = random.randint(1, 100)
             total_score = roll + attr_value
             
@@ -304,33 +207,46 @@ def _phase_mission_resolution():
             new_status = "Disponible"
             
             if total_score >= difficulty:
-                # ÉXITO: Dar créditos y liberar agente
+                # ÉXITO
+                # 1. Dar Créditos al jugador
                 current_credits = get_player_credits(player_id)
                 update_player_credits(player_id, current_credits + reward)
                 
-                narrative = f"✅ Misión EXITOSA: {char['nombre']} cumplió el objetivo. (Roll: {roll}+{attr_value} vs DC{difficulty}). +{reward} Créditos."
-                if 'active_mission' in stats: del stats['active_mission']
+                narrative = f"✅ Misión EXITOSA: {char['nombre']} completó su objetivo. (Roll: {roll}+{attr_value} vs DC{difficulty}). Recompensa: {reward} C."
                 
+                # Limpiar datos de misión activa
+                if 'active_mission' in stats:
+                    del stats['active_mission']
+                
+                # 2. Actualizar personaje
                 update_character(char['id'], {
                     "estado": "Disponible", 
-                    "ubicacion": "Barracones", 
+                    "ubicacion": "Barracones",
                     "stats_json": stats
                 })
-            else:
-                # FALLO: Herida o Fatiga según margen de error
-                margin = difficulty - total_score
-                new_status = "Herido" if margin > 20 else "Descansando"
-                ubicacion = "Enfermería" if new_status == "Herido" else "Barracones"
                 
-                narrative = f"❌ Misión FALLIDA: {char['nombre']} fracasó. Estado: {new_status}. (Roll: {roll}+{attr_value} vs DC{difficulty})."
-                if 'active_mission' in stats: del stats['active_mission']
+            else:
+                # FALLO
+                margin = difficulty - total_score
+                
+                # Si falla por mucho (>20), sale Herido. Si no, solo Descansando (Fatiga).
+                if margin > 20:
+                    new_status = "Herido"
+                    narrative = f"❌ Misión CRÍTICA: {char['nombre']} falló y resultó herido. (Roll: {roll}+{attr_value} vs DC{difficulty})."
+                else:
+                    new_status = "Descansando"
+                    narrative = f"⚠️ Misión FALLIDA: {char['nombre']} abortó la misión. (Roll: {roll}+{attr_value} vs DC{difficulty})."
+                
+                if 'active_mission' in stats:
+                    del stats['active_mission']
 
                 update_character(char['id'], {
                     "estado": new_status, 
-                    "ubicacion": ubicacion, 
+                    "ubicacion": "Enfermería" if new_status == "Herido" else "Barracones",
                     "stats_json": stats
                 })
 
+            # Registrar el resultado en los logs
             log_event(narrative, player_id)
 
     except Exception as e:
