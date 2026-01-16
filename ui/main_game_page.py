@@ -214,6 +214,7 @@ def _render_war_room_styles():
             border: 1px solid rgba(90, 200, 255, 0.5);
             background: linear-gradient(135deg, rgba(9, 18, 30, 0.95), rgba(6, 12, 20, 0.95));
             box-shadow: 0 12px 26px rgba(8, 14, 24, 0.5), inset 0 0 18px rgba(75, 200, 255, 0.12);
+            min-height: 180px;
             position: relative;
             overflow: hidden;
         }
@@ -238,6 +239,9 @@ def _render_war_room_styles():
             font-size: 14px;
             color: #dcf6ff;
             letter-spacing: 0.6px;
+            min-height: 140px;
+            height: 140px;
+            resize: vertical;
         }
         div[data-testid="stChatInput"] textarea::placeholder {
             color: rgba(160, 210, 255, 0.6);
