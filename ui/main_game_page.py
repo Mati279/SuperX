@@ -22,6 +22,8 @@ from .faction_roster import show_faction_roster
 from .recruitment_center import show_recruitment_center
 from .galaxy_map_page import show_galaxy_map_page
 from .ship_status_page import show_ship_status_page
+from .diplomacy_page import render_diplomacy_page
+from .prestige_widget import render_prestige_mini_widget
 
 
 def render_main_game_page(cookie_manager):
@@ -56,6 +58,7 @@ def render_main_game_page(cookie_manager):
         "Ficha del Comandante": _render_commander_sheet_page,
         "Comando de Facción": show_faction_roster,
         "Centro de Reclutamiento": show_recruitment_center,
+        "Diplomacia Galáctica": render_diplomacy_page,
         "Mapa de la Galaxia": show_galaxy_map_page,
         "Estado de la Nave": show_ship_status_page,
     }
@@ -108,6 +111,10 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 
         # --- Fin Widget Reloj ---
 
+        # --- Widget de Prestigio ---
+        st.divider()
+        render_prestige_mini_widget()
+
         st.header(f"Facción: {player['faccion_nombre']}")
         if player.get('banner_url'):
             st.image(player['banner_url'], use_container_width=True)
@@ -143,6 +150,10 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 
         if st.button("Centro de Reclutamiento", width='stretch', type="primary" if st.session_state.current_page == "Centro de Reclutamiento" else "secondary"):
             st.session_state.current_page = "Centro de Reclutamiento"
+            st.rerun()
+
+        if st.button("Diplomacia Galáctica", width='stretch', type="primary" if st.session_state.current_page == "Diplomacia Galáctica" else "secondary"):
+            st.session_state.current_page = "Diplomacia Galáctica"
             st.rerun()
 
         st.divider()

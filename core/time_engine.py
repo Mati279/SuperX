@@ -149,12 +149,96 @@ def _phase_concurrency_resolution():
 def _phase_prestige_calculation():
     """
     Fase 3: Cálculo y transferencia de Prestigio (Suma Cero).
-    - Transferencias por conflictos resueltos.
-    - Aplicación de 'Fricción': Redistribución pasiva hacia el centro.
+    - Procesa transferencias pendientes de conflictos
+    - Aplica Fricción Galáctica (redistribución automática)
+    - Verifica condiciones de Hegemonía
+    - Decrementa contadores de victoria
     """
-    # log_event("running phase 3: Prestigio...")
-    # TODO: Implementar lógica de transferencia de puntos de victoria/prestigio.
-    pass
+    from core.prestige_engine import (
+        calculate_friction,
+        apply_prestige_changes,
+        check_hegemony_ascension,
+        check_hegemony_fall,
+        validate_zero_sum,
+        FactionState,
+        HEGEMONY_VICTORY_TICKS
+    )
+    from data.faction_repository import (
+        get_prestige_map,
+        get_all_factions,
+        batch_update_prestige,
+        set_hegemony_status,
+        decrement_hegemony_counters
+    )
+
+    log_event("🏛️ Ejecutando Fase 3: Prestigio y Hegemonía...")
+
+    # 1. Obtener estado actual de todas las facciones
+    factions = get_all_factions()
+    if not factions:
+        log_event("⚠️ No hay facciones en el sistema", is_error=True)
+        return
+
+    prestige_map = {f["id"]: float(f["prestigio"]) for f in factions}
+
+    # 2. Decrementar contadores de victoria de hegemones
+    winners = decrement_hegemony_counters()
+    if winners:
+        for winner in winners:
+            log_event(f"🏆🏆🏆 ¡¡¡{winner['nombre']} HA GANADO POR HEGEMONÍA TEMPORAL!!!")
+            # TODO: Implementar lógica de fin de partida
+        return  # Si hay un ganador, no procesar más
+
+    # 3. Calcular y aplicar Fricción Galáctica
+    friction_adjustments = calculate_friction(prestige_map)
+
+    # Log de fricción detallado
+    for fid, adj in friction_adjustments.items():
+        if adj != 0:
+            faction_name = next((f["nombre"] for f in factions if f["id"] == fid), f"ID{fid}")
+            if adj < 0:
+                log_event(f"📉 Fricción Imperial: {faction_name} pierde {abs(adj):.2f}% de prestigio")
+            else:
+                log_event(f"📈 Subsidio de Supervivencia: {faction_name} recibe {adj:.2f}% de prestigio")
+
+    # 4. Aplicar cambios manteniendo suma = 100
+    new_prestige_map = apply_prestige_changes(prestige_map, friction_adjustments)
+
+    # 5. Verificar transiciones de hegemonía
+    for faction in factions:
+        fid = faction["id"]
+        old_prestige = prestige_map[fid]
+        new_prestige = new_prestige_map[fid]
+        was_hegemon = faction.get("es_hegemon", False)
+
+        # ¿Ascenso a Hegemón?
+        if not was_hegemon and new_prestige >= 25.0:
+            set_hegemony_status(fid, True, HEGEMONY_VICTORY_TICKS)
+            log_event(f"👑 ¡¡¡{faction['nombre']} ASCIENDE A HEGEMÓN!!! Contador de victoria: {HEGEMONY_VICTORY_TICKS} ticks")
+
+        # ¿Caída de Hegemonía? (debe caer por debajo del 20%, no del 25%)
+        elif was_hegemon and new_prestige < 20.0:
+            set_hegemony_status(fid, False, 0)
+            log_event(f"💔 {faction['nombre']} PIERDE EL ESTATUS DE HEGEMÓN (cayó a {new_prestige:.2f}%)")
+
+    # 6. Guardar cambios en DB
+    if batch_update_prestige(new_prestige_map):
+        log_event("✅ Prestigio actualizado correctamente")
+
+        # Mostrar estado actual
+        sorted_factions = sorted(new_prestige_map.items(), key=lambda x: x[1], reverse=True)
+        top_3 = sorted_factions[:3]
+        faction_names = {f["id"]: f["nombre"] for f in factions}
+
+        ranking = " | ".join([f"{faction_names.get(fid, '?')}: {pres:.1f}%" for fid, pres in top_3])
+        log_event(f"📊 Top 3 Facciones: {ranking}")
+    else:
+        log_event("❌ Error actualizando prestigio en base de datos", is_error=True)
+
+    # 7. Validar suma cero
+    if not validate_zero_sum(new_prestige_map):
+        total = sum(new_prestige_map.values())
+        log_event(f"⚠️ ADVERTENCIA: Prestigio total = {total:.2f}% (debería ser 100%)", is_error=True)
 
 def _phase_macroeconomics():
     """
