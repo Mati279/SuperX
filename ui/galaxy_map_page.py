@@ -18,6 +18,15 @@ def show_galaxy_map_page():
         st.session_state.selected_system_id = None
         st.session_state.selected_planet_id = None
 
+    # Si viene system_id por querystring, navegar directo
+    query_params = st.query_params
+    if st.session_state.map_view == "galaxy" and "system_id" in query_params:
+        try:
+            st.session_state.selected_system_id = int(query_params.get("system_id"))
+            st.session_state.map_view = "system"
+        except Exception:
+            pass
+
     if st.session_state.map_view == "galaxy":
         _render_interactive_galaxy_map()
     elif st.session_state.map_view == "system" and st.session_state.selected_system_id is not None:
@@ -148,7 +157,6 @@ def _render_interactive_galaxy_map():
     <head>
     <meta charset="UTF-8" />
     <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
-    <script src="https://unpkg.com/streamlit-component-lib@1.1.0/dist/index.js"></script>
     <style>
         :root {{
             --bg-1: #0b0f18;
@@ -338,23 +346,14 @@ def _render_interactive_galaxy_map():
             }}
 
             function handleClick(systemId) {{
-                console.log("click sistema -> enviar a streamlit", systemId);
-                if (window.Streamlit && window.Streamlit.setComponentValue) {{
-                    window.Streamlit.setComponentValue(systemId);
-                    return;
-                }}
-                if (streamlit && streamlit.setComponentValue) {{
-                    streamlit.setComponentValue(systemId);
-                    return;
-                }}
-                if (window.parent && window.parent.postMessage) {{
-                    const payload = (type) => ({{
-                        isStreamlitMessage: true,
-                        type,
-                        value: systemId
-                    }});
-                    window.parent.postMessage(payload("streamlit:setComponentValue"), "*");
-                    window.parent.postMessage(payload("streamlit:componentValue"), "*");
+                console.log("click sistema -> navegar con query param", systemId);
+                try {{
+                    const targetWin = window.parent || window.top || window;
+                    const url = new URL(targetWin.location.href);
+                    url.searchParams.set("system_id", systemId);
+                    targetWin.location.href = url.toString();
+                }} catch (e) {{
+                    console.warn("No se pudo navegar por query param", e);
                 }}
             }}
 
@@ -382,7 +381,7 @@ def _render_interactive_galaxy_map():
     """
 
     with col_map:
-        selection_raw = components.html(html_template, height=860, scrolling=False)
+        selection_raw = components.html(html_template, height=860, scrolling=False, key="galaxy_map_html")
 
     selected_system_id = None
     if selection_raw not in (None, "", "null"):
