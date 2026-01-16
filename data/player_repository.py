@@ -1,7 +1,7 @@
 # data/player_repository.py
 from typing import Dict, Any, Optional, IO
 import uuid # IMPORTANTE: Para generar tokens únicos
-# CORRECCIÓN: Importación absoluta para evitar KeyError en Streamlit
+# CORRECCIÓN: Importación absoluta confirmada
 from data.database import supabase
 from data.log_repository import log_event
 from utils.security import hash_password, verify_password
@@ -62,7 +62,8 @@ def register_player_account(
         "nombre": user_name,
         "pin": hash_password(pin),
         "faccion_nombre": faction_name,
-        "banner_url": banner_url
+        "banner_url": banner_url,
+        # Valores iniciales por defecto definidos en DB, pero se pueden forzar aquí si se desea
     }
     
     try:
@@ -76,38 +77,55 @@ def register_player_account(
     
     return None
 
-# --- Funciones de Gestión Económica ---
+# --- Funciones de Gestión Económica (MMFR) ---
+
+def get_player_finances(player_id: int) -> Dict[str, int]:
+    """
+    Obtiene todos los recursos económicos del jugador.
+    
+    Returns:
+        Diccionario con creditos, materiales, componentes, celulas_energia, influencia.
+    """
+    try:
+        response = supabase.table("players")\
+            .select("creditos, materiales, componentes, celulas_energia, influencia")\
+            .eq("id", player_id).single().execute()
+        
+        if response.data:
+            return response.data
+        return {
+            "creditos": 0, "materiales": 0, "componentes": 0, 
+            "celulas_energia": 0, "influencia": 0
+        }
+    except Exception as e:
+        log_event(f"Error al obtener finanzas para ID {player_id}: {e}", player_id, is_error=True)
+        return {
+            "creditos": 0, "materiales": 0, "componentes": 0, 
+            "celulas_energia": 0, "influencia": 0
+        }
 
 def get_player_credits(player_id: int) -> int:
-    """
-    Obtiene la cantidad de créditos de un jugador.
-    Args:
-        player_id: El ID del jugador.
-    Returns:
-        La cantidad de créditos. Devuelve 0 si hay un error.
-    """
-    try:
-        response = supabase.table("players").select("creditos").eq("id", player_id).single().execute()
-        if response.data:
-            return response.data.get("creditos", 0)
-        return 0
-    except Exception as e:
-        log_event(f"Error al obtener créditos para el jugador ID {player_id}: {e}", player_id, is_error=True)
-        return 0
+    """Wrapper legacy para obtener solo créditos."""
+    finances = get_player_finances(player_id)
+    return finances.get("creditos", 0)
 
-def update_player_credits(player_id: int, new_credits: int) -> bool:
+def update_player_resources(player_id: int, updates: Dict[str, int]) -> bool:
     """
-    Actualiza la cantidad de créditos de un jugador.
+    Actualiza uno o varios recursos del jugador.
+    
     Args:
-        player_id: El ID del jugador.
-        new_credits: La nueva cantidad de créditos.
-    Returns:
-        True si la actualización fue exitosa, False en caso contrario.
+        player_id: ID del jugador.
+        updates: Diccionario con los campos a actualizar (ej: {"creditos": 500, "materiales": 10})
     """
     try:
-        supabase.table("players").update({"creditos": new_credits}).eq("id", player_id).execute()
-        log_event(f"Créditos del jugador ID {player_id} actualizados a {new_credits}.", player_id)
+        supabase.table("players").update(updates).eq("id", player_id).execute()
+        # Log simplificado para no saturar
+        log_event(f"Recursos actualizados: {list(updates.keys())}", player_id)
         return True
     except Exception as e:
-        log_event(f"Error al actualizar créditos para el jugador ID {player_id}: {e}", player_id, is_error=True)
+        log_event(f"Error actualizando recursos ID {player_id}: {e}", player_id, is_error=True)
         return False
+
+def update_player_credits(player_id: int, new_credits: int) -> bool:
+    """Wrapper legacy para actualizar solo créditos."""
+    return update_player_resources(player_id, {"creditos": new_credits})
