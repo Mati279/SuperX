@@ -41,6 +41,10 @@ def execute_db_query(sql_query: str) -> str:
         # Sanitización básica
         sql_query = sql_query.strip()
 
+        # CRÍTICO: Las RPC functions de PostgreSQL NO necesitan punto y coma
+        # Remover todos los puntos y coma que el AI pueda haber añadido
+        sql_query = sql_query.rstrip(';').strip()
+
         # Log de auditoría
         log_event(f"[AI SQL] {sql_query[:150]}{'...' if len(sql_query) > 150 else ''}")
 
@@ -287,34 +291,30 @@ logs:
   - turno (int) - Turno en que ocurrió
   - created_at (timestamp) - Timestamp automático
 
-EJEMPLOS DE CONSULTAS:
+EJEMPLOS DE CONSULTAS (SIN PUNTO Y COMA AL FINAL):
 
 1. Verificar recursos del jugador:
-   SELECT creditos, materiales, componentes, celulas_energia FROM players WHERE id = 1;
+   SELECT creditos, materiales, componentes, celulas_energia FROM players WHERE id = 1
 
 2. Ver comandante del jugador:
-   SELECT nombre, ubicacion, estado, stats_json FROM characters WHERE player_id = 1 AND rango = 'Comandante';
+   SELECT nombre, ubicacion, estado, stats_json FROM characters WHERE player_id = 1 AND rango = 'Comandante'
 
 3. Listar edificios en un planeta:
-   SELECT building_type, is_active, pops_required FROM planet_buildings WHERE planet_asset_id = 1;
+   SELECT building_type, is_active, pops_required FROM planet_buildings WHERE planet_asset_id = 1
 
 4. Construir edificio (PRIMERO verificar recursos, LUEGO construir):
    -- Paso 1: Verificar
-   SELECT creditos, materiales FROM players WHERE id = 1;
-   -- Paso 2: Descontar recursos
-   UPDATE players SET creditos = creditos - 500, materiales = materiales - 50 WHERE id = 1;
-   -- Paso 3: Crear edificio
-   INSERT INTO planet_buildings (planet_asset_id, player_id, building_type, pops_required, energy_consumption)
-   VALUES (1, 1, 'extractor_materiales', 100, 5);
+   SELECT creditos, materiales FROM players WHERE id = 1
+   -- Paso 2: Descontar recursos (en una segunda llamada)
+   UPDATE players SET creditos = creditos - 500, materiales = materiales - 50 WHERE id = 1
+   -- Paso 3: Crear edificio (en una tercera llamada)
+   INSERT INTO planet_buildings (planet_asset_id, player_id, building_type, pops_required, energy_consumption) VALUES (1, 1, 'extractor_materiales', 100, 5)
 
 5. Actualizar ubicación de personaje:
-   UPDATE characters SET ubicacion = 'Sala de Máquinas', estado = 'Descansando' WHERE id = 5;
+   UPDATE characters SET ubicacion = 'Sala de Máquinas', estado = 'Descansando' WHERE id = 5
 
 6. Consultas con JOIN:
-   SELECT p.nombre, c.nombre as comandante, c.ubicacion
-   FROM players p
-   JOIN characters c ON c.player_id = p.id
-   WHERE p.id = 1 AND c.rango = 'Comandante';
+   SELECT p.nombre, c.nombre as comandante, c.ubicacion FROM players p JOIN characters c ON c.player_id = p.id WHERE p.id = 1 AND c.rango = 'Comandante'
 
 COSTOS DE EDIFICIOS (REFERENCIA):
 - Extractor de Materiales: 500 CI, 10 Componentes
@@ -326,6 +326,8 @@ IMPORTANTE:
 - Si es una PREGUNTA (¿cuántos créditos tengo?), usa SELECT y responde con el NÚMERO EXACTO
 - Si es una ACCIÓN (construir edificio), verifica recursos primero, luego ejecuta
 - Si la query falla, recibirás un error detallado para que te corrijas
+- NO incluyas punto y coma (;) al final de las consultas SQL
+- Usa comillas simples (') para strings, NO comillas dobles escapadas
 """,
                 "parameters": {
                     "type": "object",
