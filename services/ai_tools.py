@@ -182,6 +182,153 @@ def get_table_schema(table_name: str) -> str:
         }, indent=2)
 
 
+def scan_galaxy_data(system_name: str = None, scan_mode: str = "SUMMARY") -> str:
+    """
+    Escanea el mapa galáctico procedural para consultar datos geográficos inmutables.
+
+    Esta herramienta permite a la IA consultar información sobre la galaxia que NO está
+    en la base de datos SQL (sistemas estelares, planetas, biomas, recursos naturales).
+
+    Args:
+        system_name: Nombre del sistema a buscar (opcional). Ej: "Alpha-Centauri-42"
+        scan_mode: Modo de escaneo:
+            - "SUMMARY": Vista general de todos los sistemas (solo nombres y coordenadas)
+            - "DETAILED": Información completa de un sistema específico o búsqueda filtrada
+
+    Returns:
+        String JSON con los datos de la galaxia
+
+    Ejemplos de uso:
+        - scan_galaxy_data(scan_mode="SUMMARY") → Lista todos los sistemas
+        - scan_galaxy_data(system_name="Dantooine", scan_mode="DETAILED") → Info completa del sistema
+    """
+    try:
+        from core.galaxy_generator import get_galaxy
+        from core.world_models import Planet, AsteroidBelt
+
+        galaxy = get_galaxy()
+
+        # Helper: Convertir dataclass a dict recursivamente
+        def to_dict(obj):
+            if hasattr(obj, '__dataclass_fields__'):
+                result = {}
+                for field_name in obj.__dataclass_fields__:
+                    value = getattr(obj, field_name)
+                    if isinstance(value, list):
+                        result[field_name] = [to_dict(item) for item in value]
+                    elif isinstance(value, dict):
+                        result[field_name] = {k: to_dict(v) if v else None for k, v in value.items()}
+                    elif hasattr(value, '__dataclass_fields__'):
+                        result[field_name] = to_dict(value)
+                    else:
+                        result[field_name] = value
+                return result
+            return obj
+
+        # MODO SUMMARY: Vista ligera de toda la galaxia
+        if scan_mode.upper() == "SUMMARY":
+            systems_summary = []
+            for system in galaxy.systems:
+                planet_count = sum(1 for body in system.orbital_rings.values()
+                                 if body and isinstance(body, Planet))
+                asteroid_count = sum(1 for body in system.orbital_rings.values()
+                                   if body and isinstance(body, AsteroidBelt))
+
+                systems_summary.append({
+                    "id": system.id,
+                    "name": system.name,
+                    "star_type": system.star.type,
+                    "star_class": system.star.class_type,
+                    "position": system.position,
+                    "planet_count": planet_count,
+                    "asteroid_belt_count": asteroid_count
+                })
+
+            return json.dumps({
+                "status": "success",
+                "scan_mode": "SUMMARY",
+                "total_systems": len(galaxy.systems),
+                "systems": systems_summary
+            }, indent=2)
+
+        # MODO DETAILED: Búsqueda específica
+        if scan_mode.upper() == "DETAILED":
+            # Si se especifica un sistema, buscarlo
+            if system_name:
+                # Buscar por nombre exacto o parcial
+                matching_systems = [
+                    s for s in galaxy.systems
+                    if system_name.lower() in s.name.lower()
+                ]
+
+                if not matching_systems:
+                    return json.dumps({
+                        "status": "error",
+                        "message": f"No se encontró ningún sistema con el nombre '{system_name}'",
+                        "hint": "Usa scan_mode='SUMMARY' para ver todos los sistemas disponibles"
+                    }, indent=2)
+
+                # Serializar sistemas encontrados
+                detailed_systems = []
+                for system in matching_systems:
+                    system_data = {
+                        "id": system.id,
+                        "name": system.name,
+                        "position": system.position,
+                        "star": to_dict(system.star),
+                        "orbital_rings": {}
+                    }
+
+                    # Procesar cada anillo orbital
+                    for ring_num, body in system.orbital_rings.items():
+                        if body is None:
+                            system_data["orbital_rings"][ring_num] = {"type": "EMPTY"}
+                        elif isinstance(body, Planet):
+                            system_data["orbital_rings"][ring_num] = {
+                                "type": "PLANET",
+                                **to_dict(body)
+                            }
+                        elif isinstance(body, AsteroidBelt):
+                            system_data["orbital_rings"][ring_num] = {
+                                "type": "ASTEROID_BELT",
+                                **to_dict(body)
+                            }
+
+                    detailed_systems.append(system_data)
+
+                return json.dumps({
+                    "status": "success",
+                    "scan_mode": "DETAILED",
+                    "query": system_name,
+                    "matches_found": len(detailed_systems),
+                    "systems": detailed_systems
+                }, indent=2, default=str)
+
+            else:
+                # Sin filtro: devolver todos los sistemas en detalle (¡CUIDADO con el contexto!)
+                return json.dumps({
+                    "status": "warning",
+                    "message": "DETAILED sin system_name devolvería datos masivos",
+                    "hint": "Especifica un system_name o usa SUMMARY para explorar primero"
+                }, indent=2)
+
+        # Modo desconocido
+        return json.dumps({
+            "status": "error",
+            "message": f"scan_mode '{scan_mode}' no reconocido",
+            "hint": "Usa 'SUMMARY' o 'DETAILED'"
+        }, indent=2)
+
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"[Galaxy Scan Error] {e}")
+        return json.dumps({
+            "status": "error",
+            "type": "SCAN_ERROR",
+            "message": str(e)
+        }, indent=2)
+
+
 def log_ai_action(action_description: str, player_id: int = None) -> str:
     """
     Registra una acción de la IA en los logs del sistema.
@@ -357,6 +504,87 @@ IMPORTANTE:
                 }
             },
             {
+                "name": "scan_galaxy_data",
+                "description": """Escanea el mapa galáctico procedural para consultar datos geográficos y recursos naturales.
+
+USA ESTA HERRAMIENTA PARA:
+- Explorar sistemas estelares y sus ubicaciones en el mapa
+- Consultar qué planetas existen en un sistema específico
+- Verificar biomas planetarios (Oceánico, Desértico, Helado, etc.)
+- Encontrar recursos naturales inmutables (Hierro, Aetherion, Superconductores, etc.)
+- Revisar características de estrellas (Clase, Rareza, Reglas especiales)
+- Planear expansión territorial basada en geografía
+
+IMPORTANTE: Esta herramienta consulta DATOS PROCEDURALES EN MEMORIA (no SQL).
+- Los sistemas, planetas y recursos naturales son INMUTABLES (generados al inicio)
+- Para datos de JUGADORES, EDIFICIOS o COLONIAS usa execute_db_query (SQL)
+
+MODOS DE ESCANEO:
+
+1. SUMMARY (Vista General):
+   - Muestra lista ligera de todos los sistemas de la galaxia
+   - Incluye: nombre, tipo de estrella, coordenadas, cantidad de planetas
+   - Úsalo para exploración inicial o cuando el jugador pregunte "¿qué sistemas hay?"
+
+2. DETAILED (Búsqueda Específica):
+   - Requiere especificar un system_name
+   - Devuelve información completa: estrella, planetas por anillo orbital, biomas, recursos
+   - Búsqueda parcial permitida (ej: "Centauri" encontrará "Alpha-Centauri-42")
+
+EJEMPLOS DE USO:
+
+Ejemplo 1 - Exploración general:
+  scan_galaxy_data(scan_mode="SUMMARY")
+  → Lista todos los 30 sistemas con sus coordenadas
+
+Ejemplo 2 - Buscar un sistema específico:
+  scan_galaxy_data(system_name="Dantooine", scan_mode="DETAILED")
+  → Info completa del sistema Dantooine (si existe)
+
+Ejemplo 3 - Buscar por patrón:
+  scan_galaxy_data(system_name="Alpha", scan_mode="DETAILED")
+  → Encuentra todos los sistemas que contengan "Alpha" en su nombre
+
+FLUJO RECOMENDADO:
+1. Usuario pregunta: "¿Hay planetas con agua cerca?"
+2. Primero usa SUMMARY para obtener lista de sistemas
+3. Luego usa DETAILED en sistemas cercanos para verificar biomas
+4. Finalmente responde al usuario con los resultados filtrados
+
+DATOS QUE ESTA HERRAMIENTA PROPORCIONA:
+- Star: name, type, rarity, class_type, energy_modifier, special_rule
+- Planet: id, name, ring, biome, size, bonuses, construction_slots, resources, moons
+- AsteroidBelt: id, name, ring, hazard_level
+
+RECURSOS NATURALES DISPONIBLES (ejemplos):
+- Materiales base: Hierro, Titanio, Cobre
+- Materiales avanzados: Superconductores, Aleaciones Exóticas, Materiales Biológicos
+- Energía avanzada: Antimateria, Plasma Estelar, Cristales de Energía
+- Recursos únicos: Aetherion, Materia Oscura, Reliquias Alienígenas
+
+NO USAR ESTA HERRAMIENTA PARA:
+- Consultar qué edificios tiene un jugador en un planeta (usa execute_db_query)
+- Ver población o recursos acumulados de una colonia (usa execute_db_query)
+- Modificar nada (esta herramienta es SOLO LECTURA)
+""",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "system_name": {
+                            "type": "string",
+                            "description": "Nombre o parte del nombre del sistema a buscar. Opcional para modo SUMMARY, requerido para búsquedas DETAILED específicas."
+                        },
+                        "scan_mode": {
+                            "type": "string",
+                            "enum": ["SUMMARY", "DETAILED"],
+                            "description": "Modo de escaneo: 'SUMMARY' para vista general de toda la galaxia, 'DETAILED' para información completa de un sistema específico.",
+                            "default": "SUMMARY"
+                        }
+                    },
+                    "required": []
+                }
+            },
+            {
                 "name": "log_ai_action",
                 "description": "Registra una acción narrativa o evento importante en los logs del sistema para auditoría y seguimiento.",
                 "parameters": {
@@ -383,5 +611,6 @@ IMPORTANTE:
 TOOL_FUNCTIONS = {
     "execute_db_query": execute_db_query,
     "get_table_schema": get_table_schema,
+    "scan_galaxy_data": scan_galaxy_data,
     "log_ai_action": log_ai_action
 }
