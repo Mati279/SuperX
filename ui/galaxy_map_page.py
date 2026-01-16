@@ -178,6 +178,7 @@ def _render_interactive_galaxy_map():
         .star {{
             transition: r 0.25s ease, filter 0.25s ease, opacity 0.25s ease;
             filter: drop-shadow(0 0 6px rgba(255,255,255,0.35));
+            cursor: pointer;
         }}
         .star.dim {{ opacity: 0.2; filter: drop-shadow(0 0 3px rgba(255,255,255,0.1)); }}
         .star.resource-dim {{ opacity: 0.12; filter: drop-shadow(0 0 2px rgba(255,255,255,0.05)); }}
@@ -305,7 +306,9 @@ def _render_interactive_galaxy_map():
                     }}
                     circle.addEventListener("mousemove", (event) => showTooltip(event, sys));
                     circle.addEventListener("mouseleave", hideTooltip);
-                    circle.addEventListener("click", () => handleClick(sys.id));
+                    circle.addEventListener("mousedown", (evt) => {{ evt.stopPropagation(); evt.preventDefault(); }});
+                    circle.addEventListener("touchstart", (evt) => {{ evt.stopPropagation(); }});
+                    circle.addEventListener("click", (evt) => {{ evt.stopPropagation(); evt.preventDefault(); handleClick(sys.id); }});
                     starsLayer.appendChild(circle);
                 }});
             }}
