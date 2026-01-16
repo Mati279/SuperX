@@ -390,6 +390,14 @@ def _render_interactive_galaxy_map():
         st.session_state.selected_system_id = selected_system_id
         st.rerun()
 
+    # Fallback: selector por lista si el click no funciona en el navegador
+    system_options = {f"{s.name} (ID {s.id})": s.id for s in galaxy.systems}
+    chosen = st.selectbox("Abrir sistema manualmente", list(system_options.keys()))
+    if chosen:
+        st.session_state.map_view = "system"
+        st.session_state.selected_system_id = system_options[chosen]
+        st.rerun()
+
 
 def _render_system_orbits(system: System):
     """Visual simple del sol y planetas orbitando."""
