@@ -3,6 +3,7 @@ import streamlit as st
 from typing import Dict, Any
 # Importamos funciones del repositorio para limpiar DB
 from data.player_repository import clear_session_token
+from config.app_constants import SESSION_COOKIE_NAME
 
 def initialize_session_state() -> None:
     # ... (Igual que antes) ...
@@ -38,9 +39,9 @@ def logout_user(cookie_manager=None) -> None:
     # 2. Limpiar Cookie (Si se pasó el manager)
     if cookie_manager:
         try:
-            cookie_manager.delete('superx_session_token')
+            cookie_manager.delete(SESSION_COOKIE_NAME)
         except:
-            pass # A veces falla si ya no existe, no importa
+            pass  # A veces falla si ya no existe, no importa
 
     # 3. Limpiar Estado
     st.session_state.logged_in = False

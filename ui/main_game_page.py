@@ -8,6 +8,15 @@ from services.gemini_service import resolve_player_action
 from core.time_engine import get_world_status_display, check_and_trigger_tick, debug_force_tick
 from data.world_repository import get_pending_actions_count
 
+# --- Importar constantes ---
+from config.app_constants import (
+    UI_COLOR_NOMINAL,
+    UI_COLOR_LOCK_IN,
+    UI_COLOR_FROZEN,
+    LOG_CONTAINER_HEIGHT,
+    LOGIN_SUCCESS_DELAY_SECONDS
+)
+
 # --- Importar las vistas del juego ---
 from .faction_roster import show_faction_roster
 from .recruitment_center import show_recruitment_center
@@ -71,15 +80,15 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         
         # --- WIDGET DE RELOJ STRT ---
         status = get_world_status_display()
-        
+
         # Determinar color según estado
-        color = "#56d59f"  # Verde (Nominal)
+        color = UI_COLOR_NOMINAL  # Verde (Nominal)
         status_text = status['status']
-        
-        if status["is_lock_in"]: 
-            color = "#f6c45b" # Naranja (Bloqueo)
-        if status["is_frozen"]: 
-            color = "#f06464" # Rojo (Congelado)
+
+        if status["is_lock_in"]:
+            color = UI_COLOR_LOCK_IN  # Naranja (Bloqueo)
+        if status["is_frozen"]:
+            color = UI_COLOR_FROZEN  # Rojo (Congelado)
 
         st.markdown(f"""
             <div style="background-color: #0e1117; padding: 15px; border: 1px solid #333; border-radius: 10px; text-align: center; margin-bottom: 20px;">
@@ -101,15 +110,14 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 
         st.header(f"Facción: {player['faccion_nombre']}")
         if player.get('banner_url'):
-            # CORRECCIÓN: Se reemplaza use_container_width=True por width='stretch'
-            st.image(player['banner_url'], width='stretch')
+            st.image(player['banner_url'], use_container_width=True)
 
         st.subheader(f"Cmdt. {commander['nombre']}")
-        
+
         st.divider()
         st.header("Navegación")
 
-        # Botones de Navegación con width='stretch'
+        # Botones de Navegación con use_container_width
         if st.button("Puente de Mando", width='stretch', type="primary" if st.session_state.current_page == "Puente de Mando" else "secondary"):
             st.session_state.current_page = "Puente de Mando"
             st.rerun()
@@ -158,11 +166,18 @@ def _render_war_room_page():
         st.error("❄️ ALERTA: El flujo temporal está detenido (FREEZE). Sistemas tácticos en espera.")
 
     st.subheader("Bitácora de Misión")
-    
-    player_id = get_player()['id']
-    commander_name = get_commander()['nombre']
-    
-    log_container = st.container(height=300)
+
+    player = get_player()
+    commander = get_commander()
+
+    if not player or not commander:
+        st.error("Error: No se pudieron cargar los datos de sesión.")
+        return
+
+    player_id = player['id']
+    commander_name = commander['nombre']
+
+    log_container = st.container(height=LOG_CONTAINER_HEIGHT)
     logs = get_recent_logs(player_id)
     for log in reversed(logs):
         if "ERROR" not in log['evento_texto']:

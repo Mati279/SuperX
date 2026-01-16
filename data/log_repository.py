@@ -1,6 +1,10 @@
 # data/log_repository.py
 from .database import supabase
 from typing import Optional
+import logging
+
+# Configurar logging
+logger = logging.getLogger(__name__)
 
 def log_event(text: str, player_id: Optional[int] = None, is_error: bool = False) -> None:
     """
@@ -13,19 +17,28 @@ def log_event(text: str, player_id: Optional[int] = None, is_error: bool = False
     """
     prefix = "ERROR: " if is_error else ""
     full_text = f"{prefix}{text}"
-    
-    print(f"LOG: {full_text}")
-    
+
+    # Logging estructurado según severidad
+    if is_error:
+        logger.error(full_text)
+    else:
+        logger.info(full_text)
+
     try:
-        log_data = {"evento_texto": full_text, "turno": 1} # 'turno' es un valor placeholder
+        # Obtener el tick actual del mundo para tener logs contextualizados
+        from data.world_repository import get_world_state
+        world_state = get_world_state()
+        current_tick = world_state.get('current_tick', 1)
+
+        log_data = {"evento_texto": full_text, "turno": current_tick}
         if player_id:
             log_data["player_id"] = player_id
-            
+
         supabase.table("logs").insert(log_data).execute()
-        
+
     except Exception as e:
-        # Imprimir error en la consola del servidor si falla el logging a DB
-        print(f"CRITICAL: Fallo al registrar evento en la base de datos: {e}")
+        # Logging crítico si falla el registro en BD
+        logger.critical(f"Fallo al registrar evento en la base de datos: {e}")
 
 def get_recent_logs(player_id: Optional[int] = None, limit: int = 10) -> list:
     """

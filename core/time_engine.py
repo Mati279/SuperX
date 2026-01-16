@@ -1,18 +1,22 @@
 # core/time_engine.py
 from datetime import datetime, time
 import pytz
-import random
 from data.world_repository import (
-    get_world_state, 
-    try_trigger_db_tick, 
+    get_world_state,
+    try_trigger_db_tick,
     force_db_tick,
-    get_all_pending_actions, 
+    get_all_pending_actions,
     mark_action_processed
 )
 from data.log_repository import log_event
+from config.app_constants import (
+    TIMEZONE_NAME,
+    LOCK_IN_WINDOW_START_HOUR,
+    LOCK_IN_WINDOW_START_MINUTE
+)
 
 # Forzamos la zona horaria a Argentina (GMT-3)
-SAFE_TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
+SAFE_TIMEZONE = pytz.timezone(TIMEZONE_NAME)
 
 def get_server_time() -> datetime:
     """Retorna la hora actual en GMT-3."""
@@ -22,7 +26,7 @@ def is_lock_in_window() -> bool:
     """Retorna True si estamos en la ventana de bloqueo (23:50 - 00:00)."""
     now = get_server_time()
     # Definir ventana: 23:50 a 23:59:59
-    start_lock = time(23, 50)
+    start_lock = time(LOCK_IN_WINDOW_START_HOUR, LOCK_IN_WINDOW_START_MINUTE)
     current_time = now.time()
     return current_time >= start_lock
 
@@ -116,9 +120,9 @@ def _phase_concurrency_resolution():
         
         # Importación local para evitar Circular Import Error
         from services.gemini_service import resolve_player_action
-        
-        # TODO: Aquí deberíamos ordenar `pending_actions` por timestamp para respetar la prioridad atómica.
-        # pending_actions.sort(key=lambda x: x['created_at'])
+
+        # Ordenar acciones por timestamp para respetar la prioridad atómica (FIFO)
+        pending_actions.sort(key=lambda x: x.get('created_at', ''))
 
         for item in pending_actions:
             player_id = item['player_id']

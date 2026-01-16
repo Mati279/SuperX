@@ -1,6 +1,5 @@
 # utils/security.py
 import bcrypt
-from typing import Type
 
 def hash_password(password: str) -> str:
     """

@@ -3,6 +3,11 @@ from typing import Dict, Any, Optional
 from .database import supabase
 from data.log_repository import log_event
 from core.rules import calculate_skills
+from config.app_constants import (
+    COMMANDER_RANK,
+    COMMANDER_STATUS,
+    COMMANDER_LOCATION
+)
 
 def get_commander_by_player_id(player_id: int) -> Optional[Dict[str, Any]]:
     """
@@ -52,11 +57,11 @@ def create_commander(
         new_char_data = {
             "player_id": player_id,
             "nombre": name,
-            "rango": "Comandante",
+            "rango": COMMANDER_RANK,
             "es_comandante": True,
             "stats_json": stats_json,
-            "estado": "Activo",
-            "ubicacion": "Puente de Mando"
+            "estado": COMMANDER_STATUS,
+            "ubicacion": COMMANDER_LOCATION
         }
         
         response = supabase.table("characters").insert(new_char_data).execute()

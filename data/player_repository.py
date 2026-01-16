@@ -46,7 +46,7 @@ def clear_session_token(player_id: int) -> None:
 # ... (Mantén authenticate_player y register_player_account) ...
 def authenticate_player(name: str, pin: str) -> Optional[Dict[str, Any]]:
     player = get_player_by_name(name)
-    if player and verify_password(player['pin'], pin):
+    if player and verify_password(pin, player['pin']):
         return player
     return None
 

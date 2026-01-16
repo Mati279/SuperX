@@ -10,8 +10,8 @@ from data.world_repository import queue_player_action, get_world_state
 # Importar el motor de tiempo
 from core.time_engine import check_and_trigger_tick, is_lock_in_window
 
-TEXT_MODEL_NAME = "gemini-2.5-flash"
-IMAGE_MODEL_NAME = "imagen-3.0-generate-001"
+# Importar constantes
+from config.app_constants import TEXT_MODEL_NAME, IMAGE_MODEL_NAME
 
 # ... (Mantén la función generate_image igual) ...
 def generate_image(prompt: str, player_id: int) -> Optional[Any]:

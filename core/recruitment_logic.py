@@ -1,5 +1,10 @@
 # core/recruitment_logic.py
 from typing import Dict, Any, Tuple
+from config.app_constants import (
+    DEFAULT_RECRUIT_RANK,
+    DEFAULT_RECRUIT_STATUS,
+    DEFAULT_RECRUIT_LOCATION
+)
 
 def can_recruit(player_credits: int, candidate_cost: int) -> Tuple[bool, str]:
     """
@@ -47,12 +52,12 @@ def process_recruitment(
     new_character_data = {
         "player_id": player_id,
         "nombre": candidate["nombre"],
-        "rango": "Operativo", # Rango estándar para nuevos reclutas
+        "rango": DEFAULT_RECRUIT_RANK,
         "es_comandante": False,
         "stats_json": candidate["stats_json"],
         "costo": candidate["costo"],
-        "estado": "Disponible",
-        "ubicacion": "Barracones"
+        "estado": DEFAULT_RECRUIT_STATUS,
+        "ubicacion": DEFAULT_RECRUIT_LOCATION
     }
 
     return new_credits, new_character_data

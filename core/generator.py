@@ -2,6 +2,16 @@
 import random
 from typing import Dict, Any, List
 from core.constants import RACES, CLASSES
+from config.app_constants import (
+    CANDIDATE_NAME_SUFFIX_MIN,
+    CANDIDATE_NAME_SUFFIX_MAX,
+    ATTRIBUTE_BASE_MIN,
+    ATTRIBUTE_BASE_MAX,
+    RECRUITMENT_BASE_COST_MULTIPLIER,
+    RECRUITMENT_COST_VARIANCE_MIN,
+    RECRUITMENT_COST_VARIANCE_MAX,
+    DEFAULT_CANDIDATE_POOL_SIZE
+)
 
 def generate_random_candidate(existing_names: List[str]) -> Dict[str, Any]:
     """
@@ -23,19 +33,19 @@ def generate_random_candidate(existing_names: List[str]) -> Dict[str, Any]:
     # En un juego real, aquí usaríamos una lista de nombres y apellidos.
     # Por simplicidad, usamos un patrón "Raza-Clase-Numero".
     while True:
-        suffix = random.randint(100, 999)
+        suffix = random.randint(CANDIDATE_NAME_SUFFIX_MIN, CANDIDATE_NAME_SUFFIX_MAX)
         name = f"{race_name}-{class_name}-{suffix}"
         if name not in existing_names:
             break
 
     # 3. Generar Atributos base y aplicar bonus racial
     attributes = {
-        "fuerza": random.randint(1, 5),
-        "agilidad": random.randint(1, 5),
-        "intelecto": random.randint(1, 5),
-        "tecnica": random.randint(1, 5),
-        "presencia": random.randint(1, 5),
-        "voluntad": random.randint(1, 5),
+        "fuerza": random.randint(ATTRIBUTE_BASE_MIN, ATTRIBUTE_BASE_MAX),
+        "agilidad": random.randint(ATTRIBUTE_BASE_MIN, ATTRIBUTE_BASE_MAX),
+        "intelecto": random.randint(ATTRIBUTE_BASE_MIN, ATTRIBUTE_BASE_MAX),
+        "tecnica": random.randint(ATTRIBUTE_BASE_MIN, ATTRIBUTE_BASE_MAX),
+        "presencia": random.randint(ATTRIBUTE_BASE_MIN, ATTRIBUTE_BASE_MAX),
+        "voluntad": random.randint(ATTRIBUTE_BASE_MIN, ATTRIBUTE_BASE_MAX),
     }
     
     for attr, bonus in race_data.get("bonus", {}).items():
@@ -44,10 +54,10 @@ def generate_random_candidate(existing_names: List[str]) -> Dict[str, Any]:
     # 4. Calcular el Nivel y el Costo del candidato
     # El nivel es la suma de sus atributos base.
     level = sum(attributes.values())
-    
+
     # El costo se basa en el nivel, con un factor aleatorio para variabilidad.
-    base_cost = level * 25
-    cost_multiplier = random.uniform(0.8, 1.2)
+    base_cost = level * RECRUITMENT_BASE_COST_MULTIPLIER
+    cost_multiplier = random.uniform(RECRUITMENT_COST_VARIANCE_MIN, RECRUITMENT_COST_VARIANCE_MAX)
     cost = int(base_cost * cost_multiplier)
 
     # 5. Ensamblar el diccionario del candidato
@@ -70,7 +80,7 @@ def generate_random_candidate(existing_names: List[str]) -> Dict[str, Any]:
     
     return candidate
 
-def generate_candidate_pool(pool_size: int = 3, existing_names: List[str] = []) -> List[Dict[str, Any]]:
+def generate_candidate_pool(pool_size: int = DEFAULT_CANDIDATE_POOL_SIZE, existing_names: List[str] | None = None) -> List[Dict[str, Any]]:
     """
     Crea una lista de candidatos aleatorios para el centro de reclutamiento.
 
@@ -82,7 +92,7 @@ def generate_candidate_pool(pool_size: int = 3, existing_names: List[str] = []) 
         Una lista de diccionarios de candidatos.
     """
     candidates = []
-    current_names = list(existing_names)
+    current_names = list(existing_names) if existing_names else []
     for _ in range(pool_size):
         candidate = generate_random_candidate(current_names)
         candidates.append(candidate)
