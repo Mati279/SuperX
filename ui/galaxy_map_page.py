@@ -304,11 +304,17 @@ def _render_interactive_galaxy_map():
                     if (highlightIds.has(sys.id)) {{
                         circle.classList.add("highlight");
                     }}
+                    circle.style.pointerEvents = "all";
                     circle.addEventListener("mousemove", (event) => showTooltip(event, sys));
                     circle.addEventListener("mouseleave", hideTooltip);
                     circle.addEventListener("mousedown", (evt) => {{ evt.stopPropagation(); evt.preventDefault(); }});
                     circle.addEventListener("touchstart", (evt) => {{ evt.stopPropagation(); }});
-                    circle.addEventListener("click", (evt) => {{ evt.stopPropagation(); evt.preventDefault(); handleClick(sys.id); }});
+                    circle.addEventListener("click", (evt) => {{
+                        evt.stopPropagation();
+                        evt.preventDefault();
+                        console.log("click sistema", sys.id);
+                        handleClick(sys.id);
+                    }});
                     starsLayer.appendChild(circle);
                 }});
             }}
@@ -331,10 +337,11 @@ def _render_interactive_galaxy_map():
             }}
 
             function handleClick(systemId) {{
+                console.log("click sistema -> enviar a streamlit", systemId);
                 if (streamlit && streamlit.setComponentValue) {{
                     streamlit.setComponentValue(systemId);
-                }} else if (window.parent && window.parent.postMessage) {{
-                    // Fallbacks para distintas versiones del protocolo
+                }}
+                if (window.parent && window.parent.postMessage) {{
                     window.parent.postMessage({{ type: "streamlit:setComponentValue", value: systemId }}, "*");
                     window.parent.postMessage({{ type: "streamlit:componentValue", value: systemId }}, "*");
                 }}
