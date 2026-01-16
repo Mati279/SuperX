@@ -291,7 +291,7 @@ def _render_war_room_page():
     player_id = get_player()['id']
     commander_name = get_commander()['nombre']
     
-    log_container = st.container(height=300)
+    log_container = st.container(height=520)
     logs = get_recent_logs(player_id)
     for log in reversed(logs):
         if "ERROR" not in log['evento_texto']:
