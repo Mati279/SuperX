@@ -95,7 +95,7 @@ class GalaxyGenerator:
         )[0]
         biome_data = PLANET_BIOMES[biome_name]
         size = self._pick_planet_size()
-        explored_pct = round(self.random.uniform(5, 35), 2)
+        explored_pct = 0.0
         resources = self._sample_resources(star_class, max_items=3)
 
         # Generar lunas
