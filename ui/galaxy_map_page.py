@@ -1,7 +1,6 @@
 # ui/galaxy_map_page.py
 import json
 import math
-import random
 import streamlit as st
 import streamlit.components.v1 as components
 from core.galaxy_generator import get_galaxy
@@ -111,24 +110,10 @@ def _planet_color_for_biome(biome: str) -> str:
 def _render_interactive_galaxy_map():
     st.header("Sistemas Conocidos")
     galaxy = get_galaxy()
-    systems_sorted = sorted(galaxy.systems, key=lambda s: s.id)
-    system_options = {f"(ID {s.id}) {s.name}": s.id for s in systems_sorted}
-    placeholder_opt = "(Seleccionar sistema)"
 
     col_map, col_controls = st.columns([5, 2])
     with col_controls:
-        chooser = st.selectbox(
-            "Abrir sistema manualmente",
-            [placeholder_opt] + list(system_options.keys()),
-            index=0,
-            key="manual_system_selector",
-        )
-        if chooser and chooser != placeholder_opt:
-            st.session_state.map_view = "system"
-            st.session_state.selected_system_id = system_options[chooser]
-            st.rerun()
         search_term = st.text_input("Buscar sistema", placeholder="Ej. Alpha-Orionis")
-        show_unknown = st.toggle("Mostrar desconocidos", value=True)
         class_options = sorted({s.star.class_type for s in galaxy.systems})
         selected_classes = st.multiselect(
             "Clases visibles", class_options, default=class_options
@@ -174,44 +159,6 @@ def _render_interactive_galaxy_map():
                 "resource_prob": _resource_probability(selected_resource, system.star.class_type) if resource_filter_active else None,
             }
         )
-
-    xs = [pos[0] for pos in scaled_positions.values()]
-    ys = [pos[1] for pos in scaled_positions.values()]
-    center_x = sum(xs) / max(len(xs), 1)
-    center_y = sum(ys) / max(len(ys), 1)
-    max_radius = max(
-        (math.hypot(x - center_x, y - center_y) for x, y in scaled_positions.values()),
-        default=0,
-    )
-    max_allowed = min(center_x, canvas_width - center_x, center_y, canvas_height - center_y)
-    outer_radius = min(max_radius + 160, max_allowed - 20)
-    rng = random.Random(17)
-    if show_unknown:
-        unknown_payload = []
-        for idx in range(30):
-            angle_deg = (idx * (360 / 30)) + rng.uniform(-8, 8)
-            angle_rad = math.radians(angle_deg)
-            radius_jitter = rng.uniform(-18, 24)
-            ux = center_x + (outer_radius + radius_jitter) * math.cos(angle_rad)
-            uy = center_y + (outer_radius + radius_jitter) * math.sin(angle_rad)
-            unknown_payload.append(
-                {
-                    "id": -(idx + 1),
-                    "name": "Desconocido",
-                    "class": "?",
-                    "rarity": "Desconocido",
-                    "energy": "N/A",
-                    "rule": "Sin datos",
-                    "x": round(ux, 2),
-                    "y": round(uy, 2),
-                    "color": "#6b7380",
-                    "radius": 5.5,
-                    "resource_prob": None,
-                    "unknown": True,
-                }
-            )
-
-        systems_payload.extend(unknown_payload)
 
     connections = _build_connections(galaxy.systems, scaled_positions) if show_routes else []
 
@@ -263,8 +210,6 @@ def _render_interactive_galaxy_map():
         .star.resource-dim {{ opacity: 0.12; filter: drop-shadow(0 0 2px rgba(255,255,255,0.05)); }}
         .star.highlight {{ filter: drop-shadow(0 0 14px rgba(150, 255, 255, 0.9)); r: 11; }}
         .star:hover {{ r: 12; filter: drop-shadow(0 0 16px rgba(255,255,255,0.9)); }}
-        .star.unknown {{ opacity: 0.6; filter: drop-shadow(0 0 4px rgba(160,160,160,0.25)); }}
-        .star.unknown:hover {{ r: 7.5; filter: drop-shadow(0 0 6px rgba(180,180,180,0.35)); }}
         .route {{ stroke: #5b7bff; stroke-opacity: 0.25; stroke-width: 2; stroke-linecap: round; }}
         .route.highlight {{ stroke-opacity: 0.5; }}
         .legend {{
@@ -376,18 +321,14 @@ def _render_interactive_galaxy_map():
                     if (resourceMode && sys.resource_prob !== null && sys.resource_prob !== undefined) {{
                         circle.setAttribute("data-resource-prob", sys.resource_prob);
                     }}
-                    if (sys.unknown) {{
-                        circle.classList.add("unknown");
-                    }} else {{
-                        if (!filteredIds.has(sys.id)) {{
-                            circle.classList.add("dim");
-                        }}
-                        if (resourceMode && (!sys.resource_prob || sys.resource_prob <= 0)) {{
-                            circle.classList.add("resource-dim");
-                        }}
-                        if (highlightIds.has(sys.id)) {{
-                            circle.classList.add("highlight");
-                        }}
+                    if (!filteredIds.has(sys.id)) {{
+                        circle.classList.add("dim");
+                    }}
+                    if (resourceMode && (!sys.resource_prob || sys.resource_prob <= 0)) {{
+                        circle.classList.add("resource-dim");
+                    }}
+                    if (highlightIds.has(sys.id)) {{
+                        circle.classList.add("highlight");
                     }}
                     circle.style.pointerEvents = "all";
                     circle.addEventListener("mousemove", (event) => showTooltip(event, sys));
@@ -397,9 +338,6 @@ def _render_interactive_galaxy_map():
                     circle.addEventListener("click", (evt) => {{
                         evt.stopPropagation();
                         evt.preventDefault();
-                        if (sys.unknown) {{
-                            return;
-                        }}
                         console.log("planeta apretado", sys.name);
                         handleClick(sys.id);
                     }});
@@ -411,13 +349,6 @@ def _render_interactive_galaxy_map():
                 tooltip.style.display = "block";
                 tooltip.style.left = (evt.pageX + 14) + "px";
                 tooltip.style.top = (evt.pageY + 14) + "px";
-                if (sys.unknown) {{
-                    tooltip.innerHTML = `
-                        <strong>${{sys.name}}</strong><br/>
-                        Estado: Sin datos
-                    `;
-                    return;
-                }}
                 const resourceLine = resourceMode ? `<br/>${{resourceName}}: ${{sys.resource_prob ?? 0}}%` : "";
                 tooltip.innerHTML = `
                     <strong>(ID ${{sys.id}}) ${{sys.name}}</strong><br/>
@@ -479,6 +410,16 @@ def _render_interactive_galaxy_map():
     if selected_system_id is not None:
         st.session_state.map_view = "system"
         st.session_state.selected_system_id = selected_system_id
+        st.rerun()
+
+    # Fallback: selector por lista si el click no funciona en el navegador
+    systems_sorted = sorted(galaxy.systems, key=lambda s: s.id)
+    system_options = {f"(ID {s.id}) {s.name}": s.id for s in systems_sorted}
+    placeholder_opt = "(Seleccionar sistema)"
+    chooser = st.selectbox("Abrir sistema manualmente", [placeholder_opt] + list(system_options.keys()), index=0, key="manual_system_selector")
+    if chooser and chooser != placeholder_opt:
+        st.session_state.map_view = "system"
+        st.session_state.selected_system_id = system_options[chooser]
         st.rerun()
 
 
