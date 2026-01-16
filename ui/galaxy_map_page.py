@@ -148,6 +148,7 @@ def _render_interactive_galaxy_map():
     <head>
     <meta charset="UTF-8" />
     <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+    <script src="https://unpkg.com/streamlit-component-lib@1.1.0/dist/index.js"></script>
     <style>
         :root {{
             --bg-1: #0b0f18;
@@ -338,8 +339,13 @@ def _render_interactive_galaxy_map():
 
             function handleClick(systemId) {{
                 console.log("click sistema -> enviar a streamlit", systemId);
+                if (window.Streamlit && window.Streamlit.setComponentValue) {{
+                    window.Streamlit.setComponentValue(systemId);
+                    return;
+                }}
                 if (streamlit && streamlit.setComponentValue) {{
                     streamlit.setComponentValue(systemId);
+                    return;
                 }}
                 if (window.parent && window.parent.postMessage) {{
                     const payload = (type) => ({{
