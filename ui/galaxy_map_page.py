@@ -379,11 +379,23 @@ def _render_interactive_galaxy_map():
     """
 
     with col_map:
-        selected_system_id = components.html(html_template, height=860, scrolling=False)
+        selection_raw = components.html(
+            html_template,
+            height=860,
+            scrolling=False,
+            key="galaxy_map_component",
+        )
 
-    if selected_system_id:
+    selected_system_id = None
+    if selection_raw not in (None, "", "null"):
+        try:
+            selected_system_id = int(selection_raw)
+        except (TypeError, ValueError):
+            selected_system_id = None
+
+    if selected_system_id is not None:
         st.session_state.map_view = "system"
-        st.session_state.selected_system_id = int(selected_system_id)
+        st.session_state.selected_system_id = selected_system_id
         st.rerun()
 
 
