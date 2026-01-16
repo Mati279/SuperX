@@ -1,13 +1,13 @@
 # ui/main_game_page.py
 import streamlit as st
 from .state import logout_user, get_player, get_commander
-from data.log_repository import get_recent_logs
+from data.log_repository import get_recent_logs, log_event
 from services.gemini_service import resolve_player_action
 
 # --- Nuevos imports para STRT (Sistema de Tiempo) ---
 from core.time_engine import get_world_status_display, check_and_trigger_tick, debug_force_tick
 from data.world_repository import get_pending_actions_count
-from data.player_repository import get_player_finances # Importamos el nuevo getter
+from data.player_repository import get_player_finances
 
 # --- Importar las vistas del juego ---
 from .faction_roster import show_faction_roster
@@ -153,12 +153,13 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 # --- Vistas Internas ---
 
 def _render_war_room_styles():
-    """Estilos visuales para el Puente de Mando."""
+    """Estilos visuales para el Puente de Mando con corrección para mensajes de usuario."""
     st.markdown(
         """
         <style>
         @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&display=swap");
 
+        /* Header del Puente */
         .war-room-header {
             margin-bottom: 12px;
             padding-bottom: 12px;
@@ -195,34 +196,30 @@ def _render_war_room_styles():
 
         /* --- ESTILOS DE CHAT --- */
 
-        /* 1. Mensajes de la IA (Assistant) - Azul Tecnológico */
+        /* 1. Mensajes por defecto (IA/Assistant) - Azul Tecnológico */
         div[data-testid="stChatMessage"] {
             border-radius: 12px;
             border: 1px solid rgba(80, 170, 220, 0.3);
-            background: linear-gradient(145deg, rgba(10, 20, 32, 0.88), rgba(6, 12, 20, 0.88));
+            background: linear-gradient(145deg, rgba(10, 20, 32, 0.95), rgba(6, 12, 20, 0.95));
             box-shadow: inset 0 0 14px rgba(60, 180, 235, 0.08);
+            margin-bottom: 10px;
         }
 
-        /* 2. Mensajes del Usuario (Player) - GRIS OSCURO */
-        /* Detectamos mensajes de usuario por la dirección inversa (row-reverse) típica de Streamlit */
-        div[data-testid="stChatMessage"][style*="flex-direction: row-reverse"] {
-            background: linear-gradient(145deg, #383838, #2b2b2b) !important;
-            border: 1px solid rgba(120, 120, 120, 0.3) !important;
+        /* 2. Mensajes del Usuario (Player) - GRIS OSCURO 
+           Detectamos el mensaje usando el marcador invisible .user-marker */
+        div[data-testid="stChatMessage"]:has(.user-marker) {
+            background: linear-gradient(145deg, #3a3a3a, #2b2b2b) !important;
+            border: 1px solid rgba(160, 160, 160, 0.3) !important;
             box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.2) !important;
-        }
-        
-        /* Fallback: Selector alternativo por si el estilo inline cambia */
-        div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatar"]:contains("👤")) {
-            background: linear-gradient(145deg, #383838, #2b2b2b) !important;
-            border: 1px solid rgba(120, 120, 120, 0.3) !important;
         }
 
         /* Texto de los mensajes */
         div[data-testid="stChatMessage"] div[data-testid="stChatMessageContent"] {
             font-family: "Share Tech Mono", monospace;
             color: #d5f3ff;
-            font-size: 13px;
+            font-size: 14px;
         }
+        
         div[data-testid="stChatMessage"] span[title] {
             font-family: "Orbitron", sans-serif;
             letter-spacing: 1px;
@@ -234,54 +231,22 @@ def _render_war_room_styles():
             border: 1px solid rgba(90, 200, 255, 0.5);
             background: linear-gradient(135deg, rgba(9, 18, 30, 0.95), rgba(6, 12, 20, 0.95));
             box-shadow: 0 12px 26px rgba(8, 14, 24, 0.5), inset 0 0 18px rgba(75, 200, 255, 0.12);
-            min-height: 180px;
-            position: relative;
-            overflow: hidden;
-        }
-        div[data-testid="stChatInput"]::before {
-            content: "";
-            position: absolute;
-            inset: 0;
-            background: repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 4px);
-            opacity: 0.35;
-            pointer-events: none;
-        }
-        div[data-testid="stChatInput"]::after {
-            content: "";
-            position: absolute;
-            inset: 6px;
-            border-radius: 12px;
-            border: 1px dashed rgba(120, 210, 255, 0.25);
-            pointer-events: none;
         }
         div[data-testid="stChatInput"] textarea {
             font-family: "Share Tech Mono", monospace;
             font-size: 14px;
             color: #dcf6ff;
-            letter-spacing: 0.6px;
-            min-height: 140px;
-            height: 140px;
-            resize: vertical;
-        }
-        div[data-testid="stChatInput"] textarea::placeholder {
-            color: rgba(160, 210, 255, 0.6);
-            text-transform: uppercase;
-            letter-spacing: 1.2px;
         }
         div[data-testid="stChatInput"] button {
             border-radius: 10px;
             border: 1px solid rgba(120, 215, 255, 0.5);
             background: linear-gradient(135deg, rgba(36, 86, 122, 0.9), rgba(20, 40, 64, 0.9));
-            box-shadow: 0 0 12px rgba(90, 210, 255, 0.35);
-        }
-        div[data-testid="stChatInput"] button:hover {
-            border-color: rgba(150, 235, 255, 0.8);
-            box-shadow: 0 0 18px rgba(90, 210, 255, 0.5);
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
 
 def _render_war_room_page():
     """Página del Puente de Mando con integración STRT."""
@@ -311,7 +276,8 @@ def _render_war_room_page():
     commander_name = get_commander()['nombre']
     
     log_container = st.container(height=520)
-    logs = get_recent_logs(player_id, limit=20)  # Aumentar a 20 para ver más contexto
+    logs = get_recent_logs(player_id, limit=20)
+    
     for log in reversed(logs):
         if "ERROR" not in log['evento_texto']:
             evento_texto = log['evento_texto']
@@ -320,7 +286,11 @@ def _render_war_room_page():
             if evento_texto.startswith("[PLAYER]"):
                 # Mensaje del usuario
                 mensaje_limpio = evento_texto.replace("[PLAYER] ", "")
-                log_container.chat_message("user", avatar="👤").write(mensaje_limpio)
+                
+                # Renderizar mensaje de usuario e inyectar MARCADOR INVISIBLE
+                with log_container.chat_message("user", avatar="👤"):
+                    st.write(mensaje_limpio)
+                    st.markdown('<div class="user-marker" style="display:none;"></div>', unsafe_allow_html=True)
             else:
                 # Mensaje de la IA/sistema
                 icon = "📜"
@@ -329,8 +299,8 @@ def _render_war_room_page():
                 if "DEBUG" in evento_texto: icon = "🛠️"
                 if "Misión EXITOSA" in evento_texto: icon = "✅"
                 if "Misión FALLIDA" in evento_texto: icon = "❌"
+                
                 if evento_texto.startswith("[GM]"):
-                    # Mensaje del Game Master
                     mensaje_limpio = evento_texto.replace("[GM] ", "")
                     log_container.chat_message("assistant", avatar=icon).write(mensaje_limpio)
                 else:
@@ -343,31 +313,18 @@ def _render_war_room_page():
     action = st.chat_input(input_placeholder, disabled=status['is_frozen'])
 
     if action:
-        # Registrar el mensaje del usuario en los logs
-        from data.log_repository import log_event
+        # Registrar el mensaje del usuario
         log_event(f"[PLAYER] {action}", player_id)
 
-        # Construir historial de conversación desde los logs recientes
-        conversation_history = []
-        for log in logs[-10:]:  # Últimos 10 mensajes (5 intercambios)
-            evento = log['evento_texto']
-            if evento.startswith("[PLAYER]"):
-                conversation_history.append({
-                    "role": "user",
-                    "text": evento.replace("[PLAYER] ", "")
-                })
-            elif evento.startswith("[GM]"):
-                conversation_history.append({
-                    "role": "assistant",
-                    "text": evento.replace("[GM] ", "")
-                })
-
+        # Usar spinner mientras la IA procesa
         with st.spinner("Transmitiendo órdenes..."):
             try:
-                result = resolve_player_action(action, player_id, conversation_history)
+                # Corregimos la llamada a solo 2 argumentos como pide el servicio actual
+                result = resolve_player_action(action, player_id)
                 st.rerun()
             except Exception as e:
                 st.error(f"⚠️ Error: {e}")
+
 
 def _render_commander_sheet_page():
     """Página de la Ficha del Comandante."""
