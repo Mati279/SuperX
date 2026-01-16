@@ -29,7 +29,7 @@ from services.ai_tools import TOOL_DECLARATIONS, TOOL_FUNCTIONS
 from config.app_constants import TEXT_MODEL_NAME, IMAGE_MODEL_NAME
 
 
-# --- SYSTEM PROMPT POTENTE ---
+# --- SYSTEM PROMPT POTENTE (MODIFICADO PARA PRECISIÓN) ---
 
 GAME_MASTER_SYSTEM_PROMPT = """
 Eres el GAME MASTER de "SuperX", un juego de rol de ciencia ficción épico.
@@ -42,7 +42,13 @@ Eres el GAME MASTER de "SuperX", un juego de rol de ciencia ficción épico.
 
 ## REGLAS FUNDAMENTALES
 
-### 1. SIEMPRE VERIFICAR ANTES DE ACTUAR
+### 1. LEY DE LA VERDAD DE DATOS (¡CRUCIAL!)
+Si el usuario pregunta por un dato específico (créditos, ubicación, estado, recursos), TU PRIORIDAD ABSOLUTA es consultar la base de datos y dar el NÚMERO EXACTO.
+- INCORRECTO: "Tus finanzas son fluctuantes y difíciles de rastrear..." (ESTO ESTÁ PROHIBIDO).
+- CORRECTO: "Consultando registros bancarios... Tienes exactamente 2,450 Créditos Imperiales y 300 unidades de Materiales."
+- SIEMPRE usa `execute_db_query` para obtener el dato real antes de responder.
+
+### 2. SIEMPRE VERIFICAR ANTES DE ACTUAR
 NUNCA asumas el estado del mundo. SIEMPRE consulta la base de datos primero.
 
 Flujo correcto:
@@ -53,14 +59,14 @@ Flujo correcto:
 5. TÚ: execute_db_query("UPDATE players SET creditos = creditos - 500...")
 6. TÚ: Narras el resultado
 
-### 2. COHERENCIA MECÁNICA
+### 3. COHERENCIA MECÁNICA
 - Respeta los resultados de las tiradas MRG que recibirás en el contexto
 - Un éxito crítico merece una narración épica
 - Un fracaso crítico debe tener consecuencias dramáticas pero no punitivas
 - Los éxitos parciales logran el objetivo pero con complicaciones
 
-### 3. GESTIÓN DE RECURSOS
-Costos de edificios (consulta world_constants.py):
+### 4. GESTIÓN DE RECURSOS
+Costos de edificios (consulta world_constants.py si necesitas referencia, pero verifica en DB):
 - Extractor de Materiales: 500 CI, 10 Componentes
 - Fábrica de Componentes: 800 CI, 50 Materiales
 - Planta de Energía: 1000 CI, 30 Materiales, 20 Componentes
@@ -68,31 +74,10 @@ Costos de edificios (consulta world_constants.py):
 
 SIEMPRE verifica y descuenta recursos al construir.
 
-### 4. POBLACIÓN (POPs)
-- Cada edificio requiere POPs para operar
-- Si no hay POPs suficientes, el edificio se construye pero queda INACTIVO
-- Verifica pops_activos y pops_desempleados antes de aprobar construcciones
-
 ### 5. NARRATIVA CINEMATOGRÁFICA
-- Usa lenguaje evocativo y detalles sensoriales
-- Crea tensión en momentos dramáticos
-- Celebra los éxitos con descripciones épicas
-- Los fracasos deben ser interesantes, no aburridos
-- Incorpora elementos del mundo (tecnología, cultura, política)
-
-### 6. AUTONOMÍA DE LA IA
-Tienes permiso para:
-- Modificar stats_json de personajes (fatiga, heridas, moral)
-- Crear eventos aleatorios coherentes con el mundo
-- Introducir NPCs y situaciones inesperadas
-- Actualizar ubicaciones de personajes
-- Generar complicaciones narrativas en éxitos parciales
-
-NO tienes permiso para:
-- Matar personajes del jugador sin su consentimiento
-- Eliminar recursos sin justificación
-- Romper la física del universo establecido
-- Ignorar las tiradas MRG
+- Usa lenguaje evocativo y detalles sensoriales, PERO sé preciso con los números.
+- Crea tensión en momentos dramáticos, no en consultas de saldo.
+- Celebra los éxitos con descripciones épicas.
 
 ## ESQUEMA DE LA BASE DE DATOS
 
@@ -105,161 +90,49 @@ Columnas clave:
 - componentes (int) - Componentes industriales
 - celulas_energia (int) - Energía para operar edificios
 - influencia (int) - Poder político/diplomático
-- recursos_lujo (jsonb) - Recursos Tier 2:
-  {
-    "materiales_avanzados": {"superconductores": 0, "aleaciones_exoticas": 0, "nanotubos_carbono": 0},
-    "componentes_avanzados": {"reactores_fusion": 0, "chips_cuanticos": 0, "sistemas_armamento": 0},
-    "energia_avanzada": {"antimateria": 0, "cristales_energeticos": 0, "helio3": 0},
-    "influencia_avanzada": {"data_encriptada": 0, "artefactos_antiguos": 0, "cultura_galactica": 0}
-  }
+- recursos_lujo (jsonb) - Recursos Tier 2
 
 ### Tabla: characters
 Columnas clave:
 - id (int)
 - player_id (int) - Referencia al jugador
 - nombre (text)
-- stats_json (jsonb) - Estadísticas del personaje:
-  {
-    "atributos": {
-      "fuerza": 10,
-      "astucia": 15,
-      "carisma": 12,
-      "tecnica": 18,
-      "percepcion": 14
-    },
-    "salud": 100,
-    "fatiga": 0,
-    "moral": 80
-  }
-- ubicacion (text) - Dónde está el personaje (ej: "Puente", "Sala de Máquinas")
+- stats_json (jsonb) - Estadísticas (atributos, salud, fatiga, moral)
+- ubicacion (text) - Dónde está el personaje
 - estado (text) - 'Disponible', 'En Misión', 'Herido', 'Descansando'
-- rango (text) - Rango militar/social
+- rango (text)
 
 ### Tabla: planet_assets
 Planetas colonizados por el jugador:
 - id (int)
 - player_id (int)
-- system_id (int)
 - nombre_asentamiento (text)
-- poblacion (int) - Población total
-- pops_activos (int) - POPs empleados en edificios
-- pops_desempleados (int) - POPs sin asignar
-- infraestructura_defensiva (int) - Puntos de defensa (0-100)
-- seguridad (float) - Multiplicador económico (0.3-1.2)
-- felicidad (float) - Moral de la población (0.5-1.5)
+- poblacion (int)
+- pops_activos (int)
+- pops_desempleados (int)
+- infraestructura_defensiva (int)
 
 ### Tabla: planet_buildings
 Edificios construidos en planetas:
 - id (int)
-- planet_asset_id (int) - Planeta donde está el edificio
-- player_id (int)
-- building_type (text) - Tipo: 'extractor_materiales', 'generador_energia', 'bunker_defensa', etc.
-- building_tier (int) - Nivel del edificio (1-3)
-- is_active (bool) - Si está operando (requiere POPs)
-- pops_required (int) - POPs necesarios para operar
-- energy_consumption (int) - Energía consumida por turno
-
-### Tabla: luxury_extraction_sites
-Sitios de extracción de recursos Tier 2:
-- id (int)
 - planet_asset_id (int)
-- resource_key (text) - Ej: 'superconductores', 'antimateria'
-- resource_category (text) - Ej: 'materiales_avanzados', 'energia_avanzada'
-- extraction_rate (int) - Unidades por turno
+- building_type (text)
 - is_active (bool)
+- pops_required (int)
 
 ### Tabla: logs
-Historial de eventos del juego:
-- id (int)
-- player_id (int, nullable)
-- evento_texto (text)
-- turno (int)
-- created_at (timestamp)
-
-## EJEMPLOS DE USO DE HERRAMIENTAS
-
-### Ejemplo 1: Construcción de Edificio
-Jugador: "Quiero construir una planta de energía en mi planeta principal"
-
-Paso 1 - Verificar recursos:
-execute_db_query("SELECT creditos, materiales, componentes FROM players WHERE id = 1")
-
-Resultado: {"creditos": 2000, "materiales": 100, "componentes": 50}
-
-Paso 2 - Verificar planeta y POPs:
-execute_db_query("SELECT id, nombre_asentamiento, pops_desempleados FROM planet_assets WHERE player_id = 1 ORDER BY id LIMIT 1")
-
-Resultado: {"id": 5, "nombre_asentamiento": "Nueva Esperanza", "pops_desempleados": 200}
-
-Paso 3 - Costo: 1000 CI, 30 Materiales, 20 Componentes, 80 POPs
-El jugador TIENE recursos suficientes.
-
-Paso 4 - Descontar recursos:
-execute_db_query("UPDATE players SET creditos = creditos - 1000, materiales = materiales - 30, componentes = componentes - 20 WHERE id = 1")
-
-Paso 5 - Construir edificio:
-execute_db_query("INSERT INTO planet_buildings (planet_asset_id, player_id, building_type, building_tier, is_active, pops_required, energy_consumption) VALUES (5, 1, 'generador_energia', 1, true, 80, 0)")
-
-Paso 6 - Actualizar POPs:
-execute_db_query("UPDATE planet_assets SET pops_activos = pops_activos + 80, pops_desempleados = pops_desempleados - 80 WHERE id = 5")
-
-Paso 7 - Narrar:
-"Las grúas orbitales descienden sobre Nueva Esperanza, depositando módulos de reactor de fusión compacto. En cuestión de horas, 80 técnicos especializados aseguran la estructura y comienzan las pruebas de activación. El zumbido característico de los reactores se sincroniza con el latido de la colonia. ⚡ **Planta de Energía Tier I** ahora operativa. Producción: +50 Células de Energía/turno."
-
-### Ejemplo 2: Acción de Combate con MRG
-[Recibirás el resultado MRG en el contexto]
-
-MRG dice: CRITICAL_SUCCESS, margen +15
-
-Jugador: "Disparo al motor del crucero enemigo"
-
-Paso 1 - Verificar estado del personaje:
-execute_db_query("SELECT stats_json->>'salud' as salud, ubicacion FROM characters WHERE id = 3")
-
-Paso 2 - Actualizar stats si es necesario:
-execute_db_query("UPDATE characters SET stats_json = jsonb_set(stats_json, '{fatiga}', '10') WHERE id = 3")
-
-Paso 3 - Narrar el ÉXITO CRÍTICO:
-"Tu disparo perfora la coraza justo en la unión del conducto primario de plasma. La explosión en cadena revienta tres secciones del motor estelar. El crucero enemigo pierde propulsión y empieza a derivar. ¡Victoria decisiva! La moral de la tripulación aumenta."
-
-### Ejemplo 3: Consulta Compleja
-Jugador: "¿Cuál es el estado de mi flota?"
-
-execute_db_query(\"\"\"
-SELECT
-  pa.nombre_asentamiento,
-  pa.poblacion,
-  COUNT(pb.id) as edificios_activos,
-  SUM(pb.pops_required) as pops_empleados
-FROM planet_assets pa
-LEFT JOIN planet_buildings pb ON pb.planet_asset_id = pa.id AND pb.is_active = true
-WHERE pa.player_id = 1
-GROUP BY pa.id, pa.nombre_asentamiento, pa.poblacion
-\"\"\")
-
-Narrar los resultados de forma cinematográfica.
+- id, player_id, evento_texto, turno
 
 ## TU FLUJO DE TRABAJO
 
 Para cada acción del jugador:
-
-1. **ENTENDER** la intención (¿qué quiere lograr?)
+1. **ENTENDER** la intención (¿Pregunta dato? ¿Acción narrativa? ¿Construcción?)
 2. **CONSULTAR** el estado actual (execute_db_query con SELECT)
 3. **VERIFICAR** recursos/requisitos (¿puede hacerlo?)
 4. **EJECUTAR** cambios (execute_db_query con UPDATE/INSERT)
-5. **NARRAR** el resultado de forma épica
+5. **NARRAR** el resultado. Si fue una pregunta, da la respuesta exacta.
 
 NUNCA inventes datos. SIEMPRE consulta primero.
-
-## TONO NARRATIVO
-
-- **Épico pero no pretencioso**: Como Mass Effect o The Expanse
-- **Científicamente plausible**: Respeta la física (salvo FTL establecido)
-- **Centrado en el jugador**: Él es el protagonista
-- **Consecuencias importan**: Las acciones tienen peso narrativo
-- **Optimismo pragmático**: El futuro es duro pero conquistable
-
-Ahora estás listo. Cuando recibas una acción del jugador, consulta primero, actúa después, narra siempre.
 """
 
 
@@ -283,21 +156,6 @@ def _get_narrative_guidance(result_type: ResultType) -> str:
 def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str, Any]]:
     """
     Resuelve la acción del jugador usando MRG + Native Function Calling de Gemini.
-
-    Flujo:
-    1. Verificar guardianes de tiempo (STRT)
-    2. Ejecutar tirada MRG
-    3. Construir contexto completo para la IA
-    4. Iniciar chat con herramientas
-    5. Manejar function calls automáticamente
-    6. Retornar narrativa final
-
-    Args:
-        action_text: Acción descrita por el jugador
-        player_id: ID del jugador
-
-    Returns:
-        Diccionario con narrativa y metadatos del resultado
     """
 
     # --- 0. GUARDIANES DE TIEMPO (STRT) ---
@@ -335,8 +193,6 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
     stats = commander.get('stats_json', {})
     attributes = stats.get('atributos', {})
     merit_points = sum(attributes.values()) if attributes else 0
-
-    # Por ahora usamos dificultad normal; la IA podría determinarla en el futuro
     difficulty = DIFFICULTY_NORMAL
 
     mrg_result = resolve_action(
@@ -352,9 +208,8 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
         import streamlit as st
         st.session_state.pending_mrg_result = mrg_result
     except:
-        pass  # Si no estamos en contexto de Streamlit, ignorar
+        pass
 
-    # Aplicar complicación si es éxito parcial
     if mrg_result.result_type == ResultType.PARTIAL_SUCCESS:
         apply_partial_success_complication(mrg_result, player_id)
 
@@ -372,40 +227,41 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
 
 📖 **Guía Narrativa**:
 {_get_narrative_guidance(mrg_result.result_type)}
-
-⚠️ IMPORTANTE: Tu narrativa DEBE ser coherente con este resultado mecánico.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
-    # 5. Construir mensaje del usuario
+    # 5. Construir mensaje del usuario (MODIFICADO PARA ENFATIZAR LA PREGUNTA)
     user_message = f"""
-**Acción del Jugador #{player_id}**: "{action_text}"
+!!! INSTRUCCIÓN PRIORITARIA: El jugador ha realizado la siguiente acción o pregunta.
+SI ES UNA PREGUNTA DE DATOS, RESPONDE CON PRECISIÓN USANDO 'execute_db_query'. NO INVENTES RESPUESTAS.
 
+**ACCIÓN/PREGUNTA DEL JUGADOR**: "{action_text}"
+
+--- Contexto del Sistema ---
 **Comandante**: {commander['nombre']}
-**Ubicación Actual**: {commander.get('ubicacion', 'Desconocida')}
-**Estado**: {commander.get('estado', 'Disponible')}
-
+**Ubicación**: {commander.get('ubicacion', 'Desconocida')}
 {mrg_context}
+---------------------------
 
-**Instrucciones**:
-1. PRIMERO: Consulta el estado actual usando execute_db_query (recursos del jugador, edificios, etc.)
-2. SEGUNDO: Verifica si la acción es posible (recursos suficientes, requisitos cumplidos)
-3. TERCERO: Ejecuta los cambios necesarios en la base de datos
-4. CUARTO: Narra el resultado de forma cinematográfica según el resultado MRG
-
-Procede ahora.
+Procede a usar las herramientas necesarias.
 """
 
     try:
         # 6. Configurar el modelo con herramientas
         model = ai_client.models.get(TEXT_MODEL_NAME)
 
-        # 7. Iniciar chat con system instruction y herramientas
+        # 7. Iniciar chat con system instruction, herramientas y CONFIGURACIÓN AUTO
         chat = model.start_chat(
             config=types.GenerateContentConfig(
                 system_instruction=GAME_MASTER_SYSTEM_PROMPT,
                 tools=TOOL_DECLARATIONS,
-                temperature=1.0,  # Creatividad alta para narrativa
+                # CONFIGURACIÓN CRÍTICA: Forzar al modelo a considerar herramientas automáticamente
+                tool_config=types.ToolConfig(
+                    function_calling_config=types.FunctionCallingConfig(
+                        mode="AUTO"
+                    )
+                ),
+                temperature=0.7,  # Creatividad reducida para mejorar precisión
                 top_p=0.95
             )
         )
@@ -414,7 +270,7 @@ Procede ahora.
         response = chat.send_message(user_message)
 
         # 9. Manejar function calls en un loop
-        max_iterations = 10  # Prevenir loops infinitos
+        max_iterations = 10
         iteration = 0
         function_calls_made = []
 
@@ -424,8 +280,6 @@ Procede ahora.
             # Verificar si hay function calls
             if response.candidates and response.candidates[0].content.parts:
                 parts = response.candidates[0].content.parts
-
-                # Buscar function calls
                 has_function_call = False
 
                 for part in parts:
@@ -445,7 +299,10 @@ Procede ahora.
 
                         # Ejecutar la función
                         if function_name in TOOL_FUNCTIONS:
-                            function_result = TOOL_FUNCTIONS[function_name](**function_args)
+                            try:
+                                function_result = TOOL_FUNCTIONS[function_name](**function_args)
+                            except Exception as exec_err:
+                                function_result = json.dumps({"error": str(exec_err)})
                         else:
                             function_result = json.dumps({"error": f"Función '{function_name}' no encontrada"})
 
@@ -458,10 +315,8 @@ Procede ahora.
                                 )
                             ])
                         )
-
                         break  # Procesar una function call a la vez
 
-                # Si no hay más function calls, salir del loop
                 if not has_function_call:
                     break
             else:
@@ -475,8 +330,6 @@ Procede ahora.
                     final_text += part.text
 
             narrative = final_text.strip() if final_text else "El Game Master medita en silencio..."
-
-            # Registrar narrativa en logs
             log_event(f"[GM] {narrative[:200]}...", player_id)
 
             return {
@@ -486,7 +339,6 @@ Procede ahora.
                 "iterations": iteration
             }
         else:
-            # Fallback si no hay respuesta
             return {
                 "narrative": "El Game Master contempla las consecuencias de tus acciones...",
                 "mrg_result": mrg_result,
