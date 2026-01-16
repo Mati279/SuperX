@@ -400,23 +400,25 @@ def _render_interactive_galaxy_map():
 
 
 def _render_system_orbits(system: System):
-    """Visual simple del sol y planetas orbitando."""
+    """Visual del sol y planetas orbitando con click en planeta."""
     star_colors = {"G": "#f8f5ff", "O": "#8ec5ff", "M": "#f2b880", "D": "#d7d7d7", "X": "#d6a4ff"}
-    center_x = 320
-    center_y = 320
-    orbit_step = 35
+    star_glow = {"G": 18, "O": 22, "M": 16, "D": 18, "X": 24}
+    center_x = 360
+    center_y = 360
+    orbit_step = 38
     planets = []
     for ring, body in sorted(system.orbital_rings.items()):
         if isinstance(body, Planet):
             angle_deg = (ring * 33) % 360
             angle_rad = math.radians(angle_deg)
-            radius = 60 + ring * orbit_step
+            radius = 70 + ring * orbit_step
             px = center_x + radius * math.cos(angle_rad)
             py = center_y + radius * math.sin(angle_rad)
-            size_map = {"Pequeno": 6, "Mediano": 8, "Grande": 11}
-            pr = size_map.get(body.size, 7)
+            size_map = {"Pequeno": 7, "Mediano": 10, "Grande": 13}
+            pr = size_map.get(body.size, 9)
             resources = ", ".join(body.resources[:3]) if body.resources else "Sin recursos"
             planets.append({
+                "id": body.id,
                 "name": body.name,
                 "biome": body.biome,
                 "size": body.size,
@@ -433,17 +435,20 @@ def _render_system_orbits(system: System):
 
     html = f"""
     <style>
-    .sys-wrapper {{ width: 100%; height: 660px; display: flex; justify-content: center; align-items: center; }}
+    .sys-wrapper {{ width: 100%; height: 720px; display: flex; justify-content: center; align-items: center; }}
     .sys-canvas {{
-        width: 640px; height: 640px; border-radius: 12px;
+        width: 720px; height: 720px; border-radius: 12px;
         background: radial-gradient(circle at 30% 20%, #111a2e, #080c16 70%);
         border: 1px solid #1d2a3c; position: relative; overflow: hidden;
     }}
     .sys-tooltip {{
         position: absolute; background: rgba(8,12,22,0.95); color: #e6ecff;
         border: 1px solid #1f2a3d; padding: 8px 10px; border-radius: 8px;
-        font-size: 12px; pointer-events: none; display: none; max-width: 220px;
+        font-size: 12px; pointer-events: none; display: none; max-width: 240px;
     }}
+    .legend {{ position:absolute; top:10px; right:10px; background:rgba(10,14,24,0.8); padding:8px 10px; border:1px solid #1f2a3d; border-radius:8px; color:#cfd8f5; font-size:12px; }}
+    .legend h4 {{ margin:0 0 6px 0; font-size:12px; color:#9fb2ff; }}
+    .legend-row {{ margin:2px 0; }}
     </style>
     <div class="sys-wrapper">
         <svg id="system-orbits" class="sys-canvas" viewBox="0 0 {center_x*2} {center_y*2}" preserveAspectRatio="xMidYMid meet">
@@ -453,9 +458,14 @@ def _render_system_orbits(system: System):
                     <stop offset="100%" stop-color="{star_color}" stop-opacity="0.1" />
                 </radialGradient>
             </defs>
-            <circle cx="{center_x}" cy="{center_y}" r="16" fill="url(#starGlow)" stroke="{star_color}" stroke-width="2" />
+            <circle cx="{center_x}" cy="{center_y}" r="{star_glow.get(system.star.class_type, 20)}" fill="url(#starGlow)" stroke="{star_color}" stroke-width="2.5" />
         </svg>
         <div id="sys-tooltip" class="sys-tooltip"></div>
+        <div class="legend">
+            <h4>Claves visuales</h4>
+            <div class="legend-row">■ Tamaño y nombre escalan con el planeta</div>
+            <div class="legend-row">■ Click en planeta para abrir detalles</div>
+        </div>
     </div>
     <script>
       const planets = {planets_json};
@@ -485,6 +495,7 @@ def _render_system_orbits(system: System):
         planet.setAttribute("fill", "#7ec7ff");
         planet.setAttribute("stroke", "#b2d7ff");
         planet.setAttribute("stroke-width", "1");
+        planet.style.cursor = "pointer";
         planet.addEventListener("mousemove", (evt) => {{
             tooltip.style.display = "block";
             tooltip.style.left = (evt.pageX + 10) + "px";
@@ -496,19 +507,29 @@ def _render_system_orbits(system: System):
                 Recursos: ${{p.resources}}`;
         }});
         planet.addEventListener("mouseleave", () => tooltip.style.display = "none");
+        planet.addEventListener("click", () => {{
+            console.log("planeta apretado (mapa orbital)", p.name);
+            if (window.parent && window.parent.Streamlit && window.parent.Streamlit.setComponentValue) {{
+                window.parent.Streamlit.setComponentValue("planet:" + p.id);
+            }} else if (window.parent && window.parent.postMessage) {{
+                window.parent.postMessage({{ type: "streamlit:setComponentValue", value: "planet:" + p.id }}, "*");
+                window.parent.postMessage({{ type: "streamlit:componentValue", value: "planet:" + p.id }}, "*");
+            }}
+        }});
         svg.appendChild(planet);
 
         const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
         label.setAttribute("x", p.x + 10);
         label.setAttribute("y", p.y + 4);
         label.setAttribute("fill", "#dfe8ff");
-        label.setAttribute("font-size", "11");
+        label.setAttribute("font-size", p.r >= 12 ? "13" : "11");
+        label.setAttribute("font-weight", "600");
         label.textContent = `${{p.name}} (R${{p.ring}})`;
         svg.appendChild(label);
       }});
     </script>
     """
-    components.html(html, height=700)
+    return components.html(html, height=780)
 
 
 def _render_system_view():
@@ -522,8 +543,12 @@ def _render_system_view():
         return
 
     st.header(f"Sistema: {system.name}")
-    if st.button("<- Volver al Mapa Galactico"):
-        _reset_to_galaxy_view()
+    back_col, title_col = st.columns([1, 5])
+    with title_col:
+        st.write("")
+    with back_col:
+        if st.button("Volver", use_container_width=True, type="primary"):
+            _reset_to_galaxy_view()
 
     with st.expander("Informacion de la Estrella Central", expanded=True):
         st.subheader(f"Estrella: {system.star.name}")
@@ -532,22 +557,30 @@ def _render_system_view():
         st.caption(f"Clase: {system.star.class_type} | Rareza: {system.star.rarity}")
 
     st.subheader("Vista orbital")
-    _render_system_orbits(system)
+    planet_click = _render_system_orbits(system)
+    if planet_click:
+        if isinstance(planet_click, str) and planet_click.startswith("planet:"):
+            try:
+                planet_id = int(planet_click.split("planet:")[1])
+                st.session_state.map_view = "planet"
+                st.session_state.selected_planet_id = planet_id
+                st.rerun()
+            except ValueError:
+                pass
 
-    st.subheader("Anillos Orbitales")
+    st.subheader("Cuerpos celestiales")
     for ring in range(1, 10):
         body = system.orbital_rings.get(ring)
         with st.container(border=True):
-            col1, col2, col3 = st.columns([1, 2, 3])
+            col1, col2, col3 = st.columns([1, 3, 3])
             with col1:
-                st.subheader(f"Anillo {ring}")
+                st.caption(f"Anillo {ring}")
             with col2:
                 if body is None:
                     st.write("_(Vacio)_")
                 elif isinstance(body, Planet):
-                    st.write(f"**Planeta:** {body.name}")
-                    st.write(f"Bioma: {body.biome}")
-                    st.write(f"Tamano: {body.size}")
+                    st.write(f"**{body.name}**")
+                    st.write(f"Bioma: {body.biome} | Tamano: {body.size}")
                 elif isinstance(body, AsteroidBelt):
                     st.write(f"**Cinturon de Asteroides:** {body.name}")
             with col3:
