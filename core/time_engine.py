@@ -16,6 +16,9 @@ from data.character_repository import update_character
 from data.player_repository import get_player_credits, update_player_credits
 from data.log_repository import log_event
 
+# IMPORT NUEVO: Servicio de Eventos Narrativos
+from services.event_service import generate_tick_event
+
 # Forzamos la zona horaria a Argentina (GMT-3)
 SAFE_TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
 
@@ -64,6 +67,14 @@ def _execute_game_logic_tick(execution_time: datetime):
     """
     tick_start = datetime.now()
     log_event(f"🔄 INICIANDO PROCESAMIENTO DE TICK: {execution_time.isoformat()}")
+
+    # Obtener número de tick actual para referencias
+    world_state = get_world_state()
+    current_tick = world_state.get('current_tick', 1)
+
+    # 0. FASE NARRATIVA: Evento Global
+    log_event("running phase 0: Generación de Evento Global...")
+    generate_tick_event(current_tick)
 
     # 1. Fase de Decremento (Countdowns y Persistencia)
     _phase_decrement_and_persistence()

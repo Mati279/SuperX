@@ -1,7 +1,8 @@
 # services/gemini_service.py
 """
-Gemini Service - Native Function Calling Implementation
-Sistema de Game Master IA con acceso completo a la base de datos.
+Gemini Service - Asistente Táctico IA (Implementation v2)
+Personalidad: Asistente Táctico (Estilo Jarvis/Cortana).
+Restricciones: Niebla de Guerra (Solo conoce datos del jugador).
 """
 
 import json
@@ -12,6 +13,8 @@ from data.database import ai_client
 from data.log_repository import log_event
 from data.game_config_repository import get_game_config
 from data.character_repository import get_commander_by_player_id
+from data.player_repository import get_player_finances
+from data.planet_repository import get_all_player_planets
 from data.world_repository import queue_player_action, get_world_state
 
 # Importar el motor de tiempo
@@ -29,54 +32,79 @@ from services.ai_tools import TOOL_DECLARATIONS, TOOL_FUNCTIONS
 from config.app_constants import TEXT_MODEL_NAME, IMAGE_MODEL_NAME
 
 
-# --- SYSTEM PROMPT (MODO TWEET + PRECISIÓN) ---
+# --- SYSTEM PROMPT (ASISTENTE TÁCTICO) ---
 
-GAME_MASTER_SYSTEM_PROMPT = """
-Eres el GAME MASTER de "SuperX".
+def _get_assistant_system_prompt(commander_name: str, faction_name: str) -> str:
+    return f"""
+Eres la UNIDAD DE INTELIGENCIA TÁCTICA asignada al Comandante {commander_name}.
+Tu lealtad es absoluta a la facción: {faction_name}.
 
-## TU ROL
-- Interfaz táctica del juego.
-- Tu objetivo es informar resultados de forma RÁPIDA y CONCISA.
+## TU PERSONALIDAD
+- Actúas como un asistente avanzado (estilo Jarvis, Cortana, EDI).
+- Eres profesional, eficiente, proactivo y respetuoso.
+- NO tienes límite de caracteres forzado, pero valoras la precisión. Explica los detalles si el Comandante lo requiere.
+- Usas terminología militar/sci-fi adecuada (ej: "Afirmativo", "Escaneando", "En proceso").
 
-## REGLAS DE RESPUESTA
-1. **LONGITUD:** Intenta ser breve (estilo Tweet, ~280 caracteres), pero SIEMPRE termina tu frase. Si necesitas más espacio para explicar algo complejo, úsalo.
-2. **ESTILO:** Militar, directo, bitácora de vuelo. Sin florituras poéticas innecesarias.
-3. **DATOS:** Si preguntan un número, da solo el número y el concepto.
+## PROTOCOLO DE CONOCIMIENTO LIMITADO (NIEBLA DE GUERRA)
+- **CRÍTICO:** NO ERES OMNISCIENTE.
+- Solo tienes acceso a:
+  1. Los datos proporcionados en el [CONTEXTO TÁCTICO] actual.
+  2. Herramientas de base de datos explícitas (`execute_db_query`) para consultar inventarios propios.
+- Si el Comandante pregunta por la ubicación de enemigos, bases ocultas o recursos en sistemas no explorados, **DEBES RESPONDER QUE NO TIENES DATOS**.
+- No inventes coordenadas ni hechos sobre otros jugadores.
 
-## LEY DE LA VERDAD DE DATOS
-- Si preguntan créditos/recursos: "Saldo actual: [X] Créditos." (Usa `execute_db_query`).
-- NUNCA inventes números.
+## INSTRUCCIONES OPERATIVAS
+1. **Analizar:** Interpreta la intención del Comandante.
+2. **Verificar Contexto:** ¿Tengo la información en mis sensores (Contexto Táctico)?
+3. **Ejecutar:** Usa herramientas si es necesario (consultas SQL limitadas, cálculos).
+4. **Responder:** Informa el resultado con tu personalidad de IA Táctica.
 
-## FLUJO
-1. Entender.
-2. Consultar DB (`execute_db_query`).
-3. Ejecutar acción.
-4. Responder.
-
-Ejemplo Narrativa: "Escaneo completado. Detección de iridio en sector B4. Sin hostiles."
+Si la orden requiere una tirada de habilidad (MRG), el sistema te proveerá el resultado. Nárralo épicamente basándote en el éxito o fracaso.
 """
 
+# --- CONTEXTO DE CONOCIMIENTO (FOG OF WAR) ---
 
-# --- FUNCIÓN AUXILIAR: NARRATIVA MRG ---
-
-def _get_narrative_guidance(result_type: ResultType) -> str:
-    """Retorna guía narrativa según el resultado MRG."""
-    guidance = {
-        ResultType.CRITICAL_SUCCESS: "Éxito Crítico. Resultado perfecto.",
-        ResultType.TOTAL_SUCCESS: "Éxito. Misión cumplida.",
-        ResultType.PARTIAL_SUCCESS: "Éxito parcial. Complicaciones menores.",
-        ResultType.PARTIAL_FAILURE: "Fallo. Objetivo no logrado.",
-        ResultType.TOTAL_FAILURE: "Fallo total. Retroceso operativo.",
-        ResultType.CRITICAL_FAILURE: "Catástrofe. Daños severos."
-    }
-    return guidance.get(result_type, "Resultado de acción.")
+def _build_player_context(player_id: int, commander_data: Dict) -> str:
+    """
+    Construye el JSON de contexto limitado: Lo que la IA 'sabe' sobre el jugador.
+    Esto previene alucinaciones sobre datos globales.
+    """
+    try:
+        # 1. Finanzas y Recursos
+        finances = get_player_finances(player_id)
+        
+        # 2. Activos Planetarios (Solo sus colonias)
+        planets = get_all_player_planets(player_id)
+        planet_summary = [
+            f"{p['nombre_asentamiento']} (Pops: {p['poblacion']})" 
+            for p in planets
+        ]
+        
+        # 3. Estado del Comandante
+        stats = commander_data.get('stats_json', {})
+        attributes = stats.get('atributos', {})
+        
+        context = {
+            "estado_comandante": {
+                "nombre": commander_data['nombre'],
+                "ubicacion_actual": commander_data.get('ubicacion', 'Desconocida'),
+                "atributos": attributes
+            },
+            "recursos_logisiticos": finances,
+            "dominios_conocidos": planet_summary,
+            "alerta_sistema": "Sensores nominales. Datos externos limitados a sectores explorados."
+        }
+        
+        return json.dumps(context, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error_contexto": str(e)})
 
 
 # --- FUNCIÓN PRINCIPAL: RESOLVER ACCIÓN ---
 
 def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str, Any]]:
     """
-    Resuelve la acción del jugador usando MRG + Native Function Calling de Gemini.
+    Resuelve la acción del jugador actuando como su Asistente IA.
     """
 
     # --- 0. GUARDIANES DE TIEMPO (STRT) ---
@@ -84,35 +112,42 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
 
     world_state = get_world_state()
     if world_state.get("is_frozen", False):
-        return {"narrative": "❄️ Universo en Éxtasis.", "mrg_result": None}
+        return {"narrative": "❄️ SISTEMA: Cronología congelada por administración. En espera.", "mrg_result": None}
 
     if is_lock_in_window():
         queue_player_action(player_id, action_text)
-        return {"narrative": "⚠️ Ventana Bloqueo. Orden encolada.", "mrg_result": None}
+        return {"narrative": "⏱️ SISTEMA: Ventana de Salto Temporal activa. Orden encolada para el próximo ciclo.", "mrg_result": None}
 
     # --- 1. CONFIGURACIÓN ---
     if not ai_client:
-        raise ConnectionError("IA no disponible.")
+        raise ConnectionError("Enlace neuronal con IA interrumpido.")
 
-    game_config = get_game_config()
     commander = get_commander_by_player_id(player_id)
     if not commander:
-        raise ValueError("Comandante no encontrado.")
+        raise ValueError("Error: Identidad de Comandante no verificada.")
+
+    # Construir el Contexto (Lo que sabe Jarvis)
+    tactical_context = _build_player_context(player_id, commander)
+    
+    # Generar System Prompt Personalizado
+    faction_name = commander.get('faccion_id', 'Independiente') # Asumiendo campo o buscar nombre facción
+    system_prompt = _get_assistant_system_prompt(commander['nombre'], str(faction_name))
 
     # --- 2. DETECTOR DE CONSULTAS VS ACCIONES ---
-    query_keywords = ["cuantos", "cuántos", "que", "qué", "como", "cómo", "donde", "dónde", "quien", "quién", "estado", "listar", "ver", "info", "ayuda", "tengo"]
+    # Nota: Mantenemos la lógica simple de keywords, pero la IA ahora responde mejor.
+    query_keywords = ["cuantos", "cuántos", "que", "qué", "como", "cómo", "donde", "dónde", "quien", "quién", "estado", "listar", "ver", "info", "ayuda", "tengo", "analisis", "analizar"]
     is_informational_query = any(action_text.lstrip().lower().startswith(k) for k in query_keywords) or "?" in action_text
 
     mrg_result = None
-    mrg_context = ""
+    mrg_info_block = ""
 
     if is_informational_query:
-        # Consulta: Sin tirada
+        # Consulta
         class DummyResult:
             result_type = ResultType.TOTAL_SUCCESS
             roll = None
         mrg_result = DummyResult()
-        mrg_context = "\nℹ️ CONSULTA DE DATOS. Responde corto y exacto.\n"
+        mrg_info_block = ">>> TIPO: SOLICITUD DE INFORMACIÓN. No requiere tirada."
     else:
         # Acción: Tirada MRG
         stats = commander.get('stats_json', {})
@@ -130,17 +165,23 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
         if mrg_result.result_type == ResultType.PARTIAL_SUCCESS:
             apply_partial_success_complication(mrg_result, player_id)
 
-        mrg_context = f"\n🎲 Resultado: {mrg_result.result_type.value}\n"
+        # Información técnica para que la IA la narre
+        mrg_info_block = f"""
+>>> REPORTE DE EJECUCIÓN FÍSICA (MRG):
+- Resultado: {mrg_result.result_type.value}
+- Detalle Técnico: Roll {mrg_result.roll}
+Usa este resultado para narrar el éxito o fracaso de la acción.
+"""
 
     # --- 3. MENSAJE USUARIO ---
     user_message = f"""
-!!! MODO TWEET ACTIVO:
-INTENTA RESPONDER EN MENOS DE 280 CARACTERES, PERO NO CORTES LA FRASE.
-SI ES DATO, USA `execute_db_query`.
+[CONTEXTO TÁCTICO - NIVEL DE SEGURIDAD MÁXIMO]
+{tactical_context}
 
-**ACCIÓN**: "{action_text}"
-**Comandante**: {commander['nombre']}
-{mrg_context}
+[ORDEN DEL COMANDANTE]
+"{action_text}"
+
+{mrg_info_block}
 """
 
     try:
@@ -148,7 +189,7 @@ SI ES DATO, USA `execute_db_query`.
         chat = ai_client.chats.create(
             model=TEXT_MODEL_NAME,
             config=types.GenerateContentConfig(
-                system_instruction=GAME_MASTER_SYSTEM_PROMPT,
+                system_instruction=system_prompt,
                 tools=TOOL_DECLARATIONS,
                 tool_config=types.ToolConfig(
                     function_calling_config=types.FunctionCallingConfig(
@@ -156,8 +197,6 @@ SI ES DATO, USA `execute_db_query`.
                     )
                 ),
                 temperature=0.7,
-                # AUMENTAMOS ESTO PARA EVITAR CORTES DE HARDWARE
-                # La IA intentará ser breve por el prompt, pero si necesita más, tendrá espacio.
                 max_output_tokens=1024, 
                 top_p=0.95
             )
@@ -184,7 +223,7 @@ SI ES DATO, USA `execute_db_query`.
                         fname = fc.name
                         fargs = fc.args
 
-                        log_event(f"[AI] Tool: {fname}", player_id)
+                        log_event(f"[AI Ops] Ejecutando: {fname}", player_id)
                         function_calls_made.append({"function": fname, "args": fargs})
 
                         result_str = ""
@@ -195,7 +234,7 @@ SI ES DATO, USA `execute_db_query`.
                             except Exception as e:
                                 result_str = json.dumps({"error": str(e)})
                         else:
-                            result_str = json.dumps({"error": "Función no encontrada"})
+                            result_str = json.dumps({"error": "Herramienta no reconocida en la base de datos."})
 
                         response = chat.send_message(
                             [
@@ -218,7 +257,8 @@ SI ES DATO, USA `execute_db_query`.
             text_parts = [p.text for p in response.candidates[0].content.parts if p.text]
             narrative = "".join(text_parts).strip()
 
-        log_event(f"[GM] {narrative[:100]}...", player_id)
+        # Log pequeño para debug, pero la narrativa completa va al usuario
+        log_event(f"[ASISTENTE] Respuesta generada para {commander['nombre']}", player_id)
 
         return {
             "narrative": narrative,
@@ -227,8 +267,8 @@ SI ES DATO, USA `execute_db_query`.
         }
 
     except Exception as e:
-        log_event(f"Error AI: {e}", player_id, is_error=True)
-        return {"narrative": f"⚠️ Error: {str(e)}", "mrg_result": None}
+        log_event(f"Fallo crítico en núcleo AI: {e}", player_id, is_error=True)
+        return {"narrative": f"⚠️ **ALERTA DE SISTEMA**: Fallo en enlace neuronal. Error: {str(e)}", "mrg_result": None}
 
 
 # --- FUNCIÓN AUXILIAR: GENERACIÓN DE IMÁGENES ---
