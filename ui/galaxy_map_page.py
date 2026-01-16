@@ -300,8 +300,13 @@ def _render_interactive_galaxy_map():
         }}
         #info-panel h2 {{ margin: 0 0 10px 0; font-size: 20px; color: #fff; }}
         .info-row {{ display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; color: #aeb9cc; border-bottom: 1px solid #1f2a3d; padding-bottom: 4px; }}
+        
+        /* BOTÓN DE ENTRADA (Ahora es un <a> real para evitar bloqueos) */
         .enter-btn {{
             margin-top: 15px;
+            display: block;
+            text-align: center;
+            text-decoration: none;
             background: linear-gradient(135deg, #2b4570, #1a2a44);
             border: 1px solid #5b7bff;
             color: white;
@@ -310,11 +315,13 @@ def _render_interactive_galaxy_map():
             border-radius: 6px;
             cursor: pointer;
             font-weight: bold;
+            font-size: 14px;
             text-transform: uppercase;
             letter-spacing: 1px;
             transition: all 0.2s;
         }}
-        .enter-btn:hover {{ background: #5b7bff; box-shadow: 0 0 15px rgba(91, 123, 255, 0.4); }}
+        .enter-btn:hover {{ background: #5b7bff; box-shadow: 0 0 15px rgba(91, 123, 255, 0.4); color: #fff; }}
+        
         .close-panel {{
             position: absolute; top: 10px; right: 10px;
             background: transparent; border: none; color: #555;
@@ -353,7 +360,7 @@ def _render_interactive_galaxy_map():
                     <div id="panel-resource-row" class="info-row" style="display:none">
                         <span>Recurso:</span> <span id="panel-resource" style="color: #f1d26a">-</span>
                     </div>
-                    <button id="btn-enter-system" class="enter-btn">ENTRAR AL SISTEMA 🚀</button>
+                    <a id="btn-enter-system" href="#" target="_top" class="enter-btn">ENTRAR AL SISTEMA 🚀</a>
                 </div>
 
                 <div class="legend">
@@ -389,6 +396,7 @@ def _render_interactive_galaxy_map():
             const routesLayer = document.getElementById("routes-layer");
             const miniTooltip = document.getElementById("mini-tooltip");
             const infoPanel = document.getElementById("info-panel");
+            const enterBtn = document.getElementById("btn-enter-system");
             
             let currentSelectedSystemId = null;
 
@@ -414,13 +422,10 @@ def _render_interactive_galaxy_map():
                     circle.setAttribute("fill", sys.color);
                     circle.setAttribute("class", "star");
                     
-                    // Filter Logic
                     if (!filteredIds.has(sys.id)) {{
                         circle.classList.add("dim");
                     }}
                     
-                    // Interaction Events
-                    // 1. Hover (Mini Tooltip)
                     circle.addEventListener("mouseenter", () => {{
                         miniTooltip.style.display = "block";
                         miniTooltip.textContent = sys.name;
@@ -433,7 +438,6 @@ def _render_interactive_galaxy_map():
                         miniTooltip.style.display = "none";
                     }});
                     
-                    // 2. Click (Select & Open Panel)
                     circle.addEventListener("click", (evt) => {{
                         evt.stopPropagation();
                         evt.preventDefault();
@@ -448,7 +452,6 @@ def _render_interactive_galaxy_map():
             function selectSystem(sys) {{
                 currentSelectedSystemId = sys.id;
                 
-                // Populate Panel
                 document.getElementById("panel-title").textContent = `(ID ${{sys.id}}) ${{sys.name}}`;
                 document.getElementById("panel-class").textContent = sys.class;
                 document.getElementById("panel-rarity").textContent = sys.rarity;
@@ -464,7 +467,23 @@ def _render_interactive_galaxy_map():
                     resRow.style.display = "none";
                 }}
                 
-                // Show Panel
+                // ACTUALIZAR LINK DEL BOTÓN
+                // Intentamos construir la URL del padre. 
+                // Si falla por cross-origin, document.referrer suele funcionar en componentes de Streamlit.
+                try {{
+                    let baseUrl = window.parent.location.href;
+                    // Fallback simple si window.parent falla
+                    if (!baseUrl) baseUrl = document.referrer;
+                    
+                    const url = new URL(baseUrl);
+                    url.searchParams.set("system_id", sys.id);
+                    enterBtn.href = url.toString();
+                }} catch (e) {{
+                    console.warn("No se pudo acceder a parent URL, usando fallback relativo", e);
+                    // Último recurso: intentar inferir ruta o usar referrer
+                    enterBtn.href = "?system_id=" + sys.id;
+                }}
+                
                 infoPanel.style.display = "flex";
             }}
 
@@ -473,30 +492,12 @@ def _render_interactive_galaxy_map():
                 currentSelectedSystemId = null;
             }}
 
-            // Click background to deselect
             document.querySelector(".map-frame").addEventListener("click", (e) => {{
-                // Si el click no fue en una estrella ni dentro del panel, cerramos
                 if (!e.target.classList.contains("star") && !infoPanel.contains(e.target)) {{
                     closePanel();
                 }}
             }});
 
-            // -- Navigation Logic --
-            document.getElementById("btn-enter-system").addEventListener("click", () => {{
-                if (currentSelectedSystemId !== null) {{
-                    console.log("Navegando a sistema:", currentSelectedSystemId);
-                    try {{
-                        const targetWin = window.parent || window.top || window;
-                        const url = new URL(targetWin.location.href);
-                        url.searchParams.set("system_id", currentSelectedSystemId);
-                        targetWin.location.href = url.toString();
-                    }} catch (e) {{
-                        console.error("Navigation error:", e);
-                    }}
-                }}
-            }});
-
-            // -- Init --
             drawRoutes();
             drawStars();
 
