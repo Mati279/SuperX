@@ -184,7 +184,7 @@ SI ES DATO, USA `execute_db_query`.
                     )
                 ),
                 temperature=0.7, # Equilibrado
-                max_output_tokens=300, # Límite forzado para asegurar brevedad
+                max_output_tokens=1024, # Suficiente espacio para terminar frases sin cortarlas
                 top_p=0.95
             )
         )

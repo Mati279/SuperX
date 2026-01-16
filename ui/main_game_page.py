@@ -193,20 +193,19 @@ def _render_war_room_styles():
             margin: 6px 0 10px 0;
         }
 
-        div[data-testid="stChatMessage"] {
+        /* Mensajes de la IA (assistant) - Azul */
+        div[data-testid="stChatMessage"]:not(:has(img[alt="👤"])) {
             border-radius: 12px;
             border: 1px solid rgba(80, 170, 220, 0.3);
             background: linear-gradient(145deg, rgba(10, 20, 32, 0.88), rgba(6, 12, 20, 0.88));
             box-shadow: inset 0 0 14px rgba(60, 180, 235, 0.08);
         }
-        /* Estilo especial para mensajes del usuario */
-        div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageContent"]) {
-            border: 1px solid rgba(80, 170, 220, 0.3);
-        }
-        div[data-testid="stChatMessage"][data-testid*="user"] {
-            border: 1px solid rgba(95, 216, 100, 0.4);
-            background: linear-gradient(145deg, rgba(15, 30, 15, 0.88), rgba(8, 20, 8, 0.88));
-            box-shadow: inset 0 0 14px rgba(95, 216, 100, 0.08);
+        /* Mensajes del usuario - Gris oscuro */
+        div[data-testid="stChatMessage"]:has(img[alt="👤"]) {
+            border-radius: 12px;
+            border: 1px solid rgba(100, 100, 100, 0.4);
+            background: linear-gradient(145deg, rgba(43, 43, 43, 0.92), rgba(35, 35, 35, 0.92)) !important;
+            box-shadow: inset 0 0 14px rgba(80, 80, 80, 0.15);
         }
         div[data-testid="stChatMessage"] div[data-testid="stChatMessageContent"] {
             font-family: "Share Tech Mono", monospace;
