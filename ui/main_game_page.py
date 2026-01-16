@@ -25,6 +25,9 @@ from .ship_status_page import show_ship_status_page
 from .diplomacy_page import render_diplomacy_page
 from .prestige_widget import render_prestige_mini_widget
 
+# --- Importar widget MRG ---
+from .mrg_resolution_widget import render_full_mrg_resolution
+
 
 def render_main_game_page(cookie_manager):
     """
@@ -165,18 +168,16 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 # --- Vistas Internas ---
 
 def _render_war_room_page():
-    """Página del Puente de Mando con integración STRT."""
+    """Página del Puente de Mando con integración STRT y MRG."""
     st.title("Puente de Mando")
-    
+
     # Obtener estado del mundo para mensajes condicionales
     status = get_world_status_display()
-    
+
     if status['is_lock_in']:
         st.warning("⚠️ VENTANA DE BLOQUEO ACTIVA: Las órdenes se ejecutarán al iniciar el próximo ciclo.")
     if status['is_frozen']:
         st.error("❄️ ALERTA: El flujo temporal está detenido (FREEZE). Sistemas tácticos en espera.")
-
-    st.subheader("Bitácora de Misión")
 
     player = get_player()
     commander = get_commander()
@@ -187,6 +188,30 @@ def _render_war_room_page():
 
     player_id = player['id']
     commander_name = commander['nombre']
+    faction_id = player.get('faction_id')
+
+    # --- NUEVO: Mostrar resolución MRG pendiente si existe ---
+    if 'pending_mrg_result' in st.session_state and st.session_state.pending_mrg_result:
+        result = st.session_state.pending_mrg_result
+
+        render_full_mrg_resolution(
+            result=result,
+            player_id=player_id,
+            faction_id=faction_id,
+            energy_spent=0  # TODO: Calcular energía real gastada cuando tengamos sistema de recursos
+        )
+
+        # Limpiar después de que el jugador haya seleccionado (si aplica)
+        if not result.requires_player_choice or result.selected_benefit or result.selected_malus:
+            # Dar un momento para que el jugador vea el resultado antes de limpiar
+            if st.button("Continuar", type="primary", use_container_width=True):
+                del st.session_state.pending_mrg_result
+                st.rerun()
+
+        st.divider()
+    # --- FIN NUEVO ---
+
+    st.subheader("Bitácora de Misión")
 
     log_container = st.container(height=LOG_CONTAINER_HEIGHT)
     logs = get_recent_logs(player_id)
@@ -197,20 +222,20 @@ def _render_war_room_page():
             if "VENTANA DE BLOQUEO" in log['evento_texto']: icon = "⏳"
             if "CONGELADO" in log['evento_texto']: icon = "❄️"
             if "DEBUG" in log['evento_texto']: icon = "🛠️"
-            
+
             log_container.chat_message("assistant", avatar=icon).write(log['evento_texto'])
-            
+
     # Input de acción
     input_placeholder = f"¿Órdenes, Comandante {commander_name}?"
     if status['is_frozen']:
         input_placeholder = "Sistemas congelados. Entrada deshabilitada."
-        
+
     action = st.chat_input(input_placeholder, disabled=status['is_frozen'])
-    
+
     if action:
         with st.spinner("Transmitiendo órdenes..."):
             try:
-                # resolve_player_action ahora maneja la lógica de cola internamente
+                # resolve_player_action ahora maneja la lógica de cola y MRG internamente
                 result = resolve_player_action(action, player_id)
                 st.rerun()
             except Exception as e:
