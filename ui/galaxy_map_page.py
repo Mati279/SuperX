@@ -111,7 +111,7 @@ def _resource_radius_factor(probability: float) -> float:
     if probability is None:
         return 1.0
     clamped = max(0.0, min(probability, 100.0))
-    return 0.3 + (clamped / 100.0) * 3.2
+    return 0.15 + (clamped / 100.0) * 6.4
 
 
 def _resource_color(resource_name: str) -> str:
