@@ -1,5 +1,5 @@
 # data/world_repository.py
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from .database import supabase
 from data.log_repository import log_event
@@ -69,3 +69,25 @@ def get_pending_actions_count(player_id: int) -> int:
         return response.count if response.count else 0
     except Exception:
         return 0
+
+def get_all_pending_actions() -> List[Dict[str, Any]]:
+    """Recupera todas las acciones pendientes para procesar en el Tick."""
+    try:
+        response = supabase.table("action_queue").select("*").eq("status", "PENDING").execute()
+        return response.data if response.data else []
+    except Exception as e:
+        log_event(f"Error recuperando cola de acciones: {e}", is_error=True)
+        return []
+
+def mark_action_processed(action_id: int, result_status: str) -> None:
+    """
+    Actualiza el estado de una acción tras el tick.
+    result_status: 'PROCESSED' o 'ERROR'
+    """
+    try:
+        supabase.table("action_queue").update({
+            "status": result_status,
+            "processed_at": datetime.utcnow().isoformat()
+        }).eq("id", action_id).execute()
+    except Exception as e:
+        log_event(f"Error actualizando estado de acción {action_id}: {e}", is_error=True)

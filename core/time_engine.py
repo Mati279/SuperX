@@ -1,7 +1,13 @@
 # core/time_engine.py
 from datetime import datetime, time
 import pytz
-from data.world_repository import get_world_state, try_trigger_db_tick, force_db_tick
+from data.world_repository import (
+    get_world_state, 
+    try_trigger_db_tick, 
+    force_db_tick,
+    get_all_pending_actions, 
+    mark_action_processed
+)
 from data.log_repository import log_event
 
 # Forzamos la zona horaria a Argentina (GMT-3)
@@ -48,14 +54,43 @@ def _execute_game_logic_tick(execution_time: datetime):
     Lógica pesada del juego que ocurre cuando cambia el día.
     Generación de recursos, movimiento de flotas, etc.
     """
-    log_event(f"🔄 EJECUTANDO TICK GALÁCTICO: {execution_time.isoformat()}")
+    log_event(f"🔄 INICIANDO PROCESAMIENTO DE TICK: {execution_time.isoformat()}")
     
-    # AQUÍ IRÍA LA LÓGICA DE:
-    # 1. Procesar la action_queue pendiente.
-    # 2. Regenerar puntos de acción/recursos.
-    # 3. Mover naves en tránsito.
+    # 1. PROCESAR COLA DE ACCIONES (LOCK-IN)
+    pending_actions = get_all_pending_actions()
     
-    # Por ahora, solo dejamos constancia en el log.
+    if pending_actions:
+        log_event(f"📂 Procesando {len(pending_actions)} acciones encolada(s)...")
+        
+        # Importación local para evitar Circular Import Error
+        # time_engine -> gemini_service -> time_engine (¡Boom!)
+        from services.gemini_service import resolve_player_action
+        
+        for item in pending_actions:
+            player_id = item['player_id']
+            action_text = item['action_text']
+            action_id = item['id']
+            
+            try:
+                log_event(f"▶ Ejecutando orden diferida ID {action_id}...", player_id)
+                
+                # Ejecutamos la acción como si el jugador la acabara de enviar.
+                # Nota: resolve_player_action tiene guardias de tiempo, pero como el Tick
+                # ocurre teóricamente a las 00:00:01, ya no estamos en la ventana 23:50-00:00,
+                # así que la acción pasará.
+                resolve_player_action(action_text, player_id)
+                
+                mark_action_processed(action_id, "PROCESSED")
+                
+            except Exception as e:
+                log_event(f"❌ Error procesando orden diferida {action_id}: {e}", player_id, is_error=True)
+                mark_action_processed(action_id, "ERROR")
+    else:
+        log_event("📂 No hay acciones pendientes en la cola.")
+
+    # 2. OTROS EVENTOS DEL SISTEMA (Recursos, Movimiento, etc.)
+    # ... Aquí agregarías lógica futura para regenerar recursos o mover naves ...
+    
     log_event("✅ Ciclo solar completado. Sistemas nominales.")
 
 def get_world_status_display() -> dict:
