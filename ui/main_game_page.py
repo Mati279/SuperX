@@ -62,7 +62,7 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         
         # --- BOTÓN DEBUG ---
         # Solo visible si lo deseas, o para todos en desarrollo
-        if st.button("🚨 DEBUG: FORZAR TICK", use_container_width=True, type="secondary"):
+        if st.button("🚨 DEBUG: FORZAR TICK", width='stretch', type="secondary"):
             with st.spinner("Forzando salto temporal..."):
                 debug_force_tick()
             st.rerun()
@@ -101,49 +101,49 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 
         st.header(f"Facción: {player['faccion_nombre']}")
         if player.get('banner_url'):
-            # CORRECCIÓN AQUÍ: Se reemplaza use_column_width='auto' por use_container_width=True
-            st.image(player['banner_url'], use_container_width=True)
+            # CORRECCIÓN: Se reemplaza use_container_width=True por width='stretch'
+            st.image(player['banner_url'], width='stretch')
 
         st.subheader(f"Cmdt. {commander['nombre']}")
         
         st.divider()
         st.header("Navegación")
 
-        # Botones de Navegación
-        if st.button("Puente de Mando", use_container_width=True, type="primary" if st.session_state.current_page == "Puente de Mando" else "secondary"):
+        # Botones de Navegación con width='stretch'
+        if st.button("Puente de Mando", width='stretch', type="primary" if st.session_state.current_page == "Puente de Mando" else "secondary"):
             st.session_state.current_page = "Puente de Mando"
             st.rerun()
 
-        if st.button("Mapa de la Galaxia", use_container_width=True, type="primary" if st.session_state.current_page == "Mapa de la Galaxia" else "secondary"):
+        if st.button("Mapa de la Galaxia", width='stretch', type="primary" if st.session_state.current_page == "Mapa de la Galaxia" else "secondary"):
             st.session_state.current_page = "Mapa de la Galaxia"
             st.rerun()
 
-        if st.button("Estado de la Nave", use_container_width=True, type="primary" if st.session_state.current_page == "Estado de la Nave" else "secondary"):
+        if st.button("Estado de la Nave", width='stretch', type="primary" if st.session_state.current_page == "Estado de la Nave" else "secondary"):
             st.session_state.current_page = "Estado de la Nave"
             st.rerun()
 
         st.divider()
         st.header("Gestión de Facción")
 
-        if st.button("Ficha del Comandante", use_container_width=True, type="primary" if st.session_state.current_page == "Ficha del Comandante" else "secondary"):
+        if st.button("Ficha del Comandante", width='stretch', type="primary" if st.session_state.current_page == "Ficha del Comandante" else "secondary"):
             st.session_state.current_page = "Ficha del Comandante"
             st.rerun()
 
-        if st.button("Comando de Facción", use_container_width=True, type="primary" if st.session_state.current_page == "Comando de Facción" else "secondary"):
+        if st.button("Comando de Facción", width='stretch', type="primary" if st.session_state.current_page == "Comando de Facción" else "secondary"):
             st.session_state.current_page = "Comando de Facción"
             st.rerun()
 
-        if st.button("Centro de Reclutamiento", use_container_width=True, type="primary" if st.session_state.current_page == "Centro de Reclutamiento" else "secondary"):
+        if st.button("Centro de Reclutamiento", width='stretch', type="primary" if st.session_state.current_page == "Centro de Reclutamiento" else "secondary"):
             st.session_state.current_page = "Centro de Reclutamiento"
             st.rerun()
 
         st.divider()
-        if st.button("Cerrar Sesión", use_container_width=True):
+        if st.button("Cerrar Sesión", width='stretch'):
             logout_user(cookie_manager)
             st.rerun()
 
 
-# --- Vistas Internas (Restauradas) ---
+# --- Vistas Internas ---
 
 def _render_war_room_page():
     """Página del Puente de Mando con integración STRT."""
