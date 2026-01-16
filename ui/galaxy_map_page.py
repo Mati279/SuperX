@@ -180,58 +180,69 @@ def _render_interactive_galaxy_map():
     center_x = sum(xs) / max(len(xs), 1)
     center_y = sum(ys) / max(len(ys), 1)
     known_positions = list(scaled_positions.values())
-    rim_systems = sorted(
-        galaxy.systems,
-        key=lambda s: math.hypot(
-            scaled_positions[s.id][0] - center_x,
-            scaled_positions[s.id][1] - center_y,
-        ),
-        reverse=True,
-    )[: max(8, min(12, len(galaxy.systems)))]
+    distances = []
+    for system in galaxy.systems:
+        x, y = scaled_positions[system.id]
+        distances.append((math.hypot(x - center_x, y - center_y), system))
+    distances.sort(key=lambda t: t[0], reverse=True)
+    rim_count = min(14, max(8, int(len(distances) * 0.4))) if distances else 0
+    rim_systems = [system for _, system in distances[:rim_count]]
+    max_radius = distances[0][0] if distances else 0.0
+    outer_min_radius = max_radius + 120
     rng = random.Random(17)
     unknown_payload = []
     unknown_edges = []
-    if show_unknown:
+    if show_unknown and rim_systems:
         unknown_positions = []
-        attempts = 0
-        min_spacing = 26
-        min_offset = 140
-        max_offset_cap = 280
-        max_attempts = 700
-        margin = 36
-        while len(unknown_payload) < 30 and attempts < max_attempts:
-            attempts += 1
-            if attempts == 400:
-                min_spacing = 20
-                min_offset = 110
-            seed = rng.choice(rim_systems)
-            sx, sy = scaled_positions[seed.id]
-            vx, vy = sx - center_x, sy - center_y
-            vlen = math.hypot(vx, vy) or 1.0
-            ux, uy = vx / vlen, vy / vlen
-            angle_jitter = math.radians(rng.uniform(-20, 20))
-            cos_a, sin_a = math.cos(angle_jitter), math.sin(angle_jitter)
-            dx = (ux * cos_a) - (uy * sin_a)
-            dy = (ux * sin_a) + (uy * cos_a)
-            max_offset = float("inf")
+        min_spacing = 48
+        min_offset = 210
+        max_offset_cap = 360
+        max_attempts = 900
+        margin = 40
+        target_unknown = 30
+
+        def can_place(px: float, py: float) -> bool:
+            if not (margin <= px <= canvas_width - margin and margin <= py <= canvas_height - margin):
+                return False
+            if math.hypot(px - center_x, py - center_y) < outer_min_radius:
+                return False
+            if any(math.hypot(px - kx, py - ky) < min_spacing for kx, ky in known_positions):
+                return False
+            if any(math.hypot(px - ux, py - uy) < min_spacing for ux, uy in unknown_positions):
+                return False
+            return True
+
+        def max_offset_for_dir(sx: float, sy: float, dx: float, dy: float) -> float:
+            max_offset = max_offset_cap
             if abs(dx) > 1e-6:
                 bound_x = (canvas_width - margin - sx) / dx if dx > 0 else (margin - sx) / dx
                 max_offset = min(max_offset, bound_x)
             if abs(dy) > 1e-6:
                 bound_y = (canvas_height - margin - sy) / dy if dy > 0 else (margin - sy) / dy
                 max_offset = min(max_offset, bound_y)
-            max_offset = min(max_offset, max_offset_cap)
-            if max_offset < min_offset:
-                continue
-            offset = rng.uniform(min_offset, max_offset)
-            px = sx + dx * offset
-            py = sy + dy * offset
-            if not (margin <= px <= canvas_width - margin and margin <= py <= canvas_height - margin):
-                continue
-            if any(math.hypot(px - kx, py - ky) < min_spacing for kx, ky in known_positions):
-                continue
-            if any(math.hypot(px - ux0, py - uy0) < min_spacing for ux0, uy0 in unknown_positions):
-                continue
+            return max_offset
+
+        def place_from_seed(seed: System, angle_span_deg: float) -> tuple[float, float] | None:
+            sx, sy = scaled_positions[seed.id]
+            vx, vy = sx - center_x, sy - center_y
+            vlen = math.hypot(vx, vy) or 1.0
+            base_dx, base_dy = vx / vlen, vy / vlen
+            for _ in range(22):
+                angle_jitter = math.radians(rng.uniform(-angle_span_deg, angle_span_deg))
+                cos_a, sin_a = math.cos(angle_jitter), math.sin(angle_jitter)
+                dx = (base_dx * cos_a) - (base_dy * sin_a)
+                dy = (base_dx * sin_a) + (base_dy * cos_a)
+                max_offset = max_offset_for_dir(sx, sy, dx, dy)
+                if max_offset < min_offset:
+                    continue
+                offset = rng.uniform(min_offset, max_offset)
+                px = sx + dx * offset
+                py = sy + dy * offset
+                if can_place(px, py):
+                    return px, py
+            return None
+
+        def add_unknown(px: float, py: float, seed: System) -> None:
             unknown_id = -(len(unknown_payload) + 1)
             unknown_positions.append((px, py))
             unknown_payload.append(
@@ -250,6 +261,7 @@ def _render_interactive_galaxy_map():
                     "unknown": True,
                 }
             )
+            sx, sy = scaled_positions[seed.id]
             unknown_edges.append(
                 {
                     "a_id": seed.id,
@@ -261,6 +273,53 @@ def _render_interactive_galaxy_map():
                     "unknown": True,
                 }
             )
+
+        seed_order = sorted(
+            rim_systems,
+            key=lambda s: math.atan2(
+                scaled_positions[s.id][1] - center_y,
+                scaled_positions[s.id][0] - center_x,
+            ),
+        )
+        missing_seeds = []
+        for seed in seed_order:
+            placed = place_from_seed(seed, 16)
+            if not placed:
+                missing_seeds.append(seed)
+                continue
+            add_unknown(placed[0], placed[1], seed)
+
+        if missing_seeds:
+            saved_spacing = min_spacing
+            saved_offset = min_offset
+            min_spacing = max(32, min_spacing - 12)
+            min_offset = max(160, min_offset - 40)
+            for seed in missing_seeds:
+                placed = place_from_seed(seed, 32)
+                if placed:
+                    add_unknown(placed[0], placed[1], seed)
+            min_spacing = saved_spacing
+            min_offset = saved_offset
+
+        attempts = 0
+        seed_idx = 0
+        seed_cycle = seed_order[:]
+        rng.shuffle(seed_cycle)
+        while len(unknown_payload) < target_unknown and attempts < max_attempts:
+            attempts += 1
+            if attempts == 500:
+                min_spacing = 38
+                min_offset = 180
+                outer_min_radius = max_radius + 100
+            if attempts == 750:
+                min_spacing = 30
+                min_offset = 150
+                outer_min_radius = max_radius + 80
+            seed = seed_cycle[seed_idx % len(seed_cycle)]
+            seed_idx += 1
+            placed = place_from_seed(seed, 34)
+            if placed:
+                add_unknown(placed[0], placed[1], seed)
 
         systems_payload.extend(unknown_payload)
 
