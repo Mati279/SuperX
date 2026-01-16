@@ -6,7 +6,10 @@
       "Bash(find:*)",
       "Bash(python -m py_compile:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(python test_galaxy_scan.py:*)",
+      "Bash(python test_galaxy_scan_simple.py:*)",
+      "Bash(python:*)"
     ]
   }
 }
