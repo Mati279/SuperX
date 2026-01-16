@@ -1,11 +1,14 @@
 # data/database.py
 from supabase import create_client, Client
 from google import genai
-from config.settings import SUPABASE_URL, SUPABASE_KEY, GEMINI_API_KEY
 import logging
+# CORRECCIÓN: Importamos el módulo como objeto para evitar KeyError en la búsqueda de símbolos
+import config.settings as settings
 
-# Configurar logging
-logger = logging.getLogger(__name__)
+# Extraer variables del módulo importado
+SUPABASE_URL = settings.SUPABASE_URL
+SUPABASE_KEY = settings.SUPABASE_KEY
+GEMINI_API_KEY = settings.GEMINI_API_KEY
 
 # --- Inicialización de Clientes ---
 
@@ -17,8 +20,8 @@ ai_client: genai.Client | None = None
 if GEMINI_API_KEY:
     try:
         ai_client = genai.Client(api_key=GEMINI_API_KEY)
-        logger.info("Cliente de Google Gemini conectado exitosamente.")
+        print("✅ Cliente de Google Gemini conectado exitosamente.")
     except Exception as e:
-        logger.warning(f"Error al inicializar el cliente de Gemini: {e}")
+        print(f"⚠️ Error al inicializar el cliente de Gemini: {e}")
 else:
-    logger.warning("No se encontró la GEMINI_API_KEY. Las funciones de IA estarán desactivadas.")
+    print("📢 Advertencia: No se encontró la GEMINI_API_KEY. Las funciones de IA estarán desactivadas.")
