@@ -193,20 +193,31 @@ def _render_war_room_styles():
             margin: 6px 0 10px 0;
         }
 
-        /* Mensajes de la IA (assistant) - Azul */
-        div[data-testid="stChatMessage"]:not(:has(img[alt="👤"])) {
+        /* --- ESTILOS DE CHAT --- */
+
+        /* 1. Mensajes de la IA (Assistant) - Azul Tecnológico */
+        div[data-testid="stChatMessage"] {
             border-radius: 12px;
             border: 1px solid rgba(80, 170, 220, 0.3);
             background: linear-gradient(145deg, rgba(10, 20, 32, 0.88), rgba(6, 12, 20, 0.88));
             box-shadow: inset 0 0 14px rgba(60, 180, 235, 0.08);
         }
-        /* Mensajes del usuario - Gris oscuro */
-        div[data-testid="stChatMessage"]:has(img[alt="👤"]) {
-            border-radius: 12px;
-            border: 1px solid rgba(100, 100, 100, 0.4);
-            background: linear-gradient(145deg, rgba(43, 43, 43, 0.92), rgba(35, 35, 35, 0.92)) !important;
-            box-shadow: inset 0 0 14px rgba(80, 80, 80, 0.15);
+
+        /* 2. Mensajes del Usuario (Player) - GRIS OSCURO */
+        /* Detectamos mensajes de usuario por la dirección inversa (row-reverse) típica de Streamlit */
+        div[data-testid="stChatMessage"][style*="flex-direction: row-reverse"] {
+            background: linear-gradient(145deg, #383838, #2b2b2b) !important;
+            border: 1px solid rgba(120, 120, 120, 0.3) !important;
+            box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.2) !important;
         }
+        
+        /* Fallback: Selector alternativo por si el estilo inline cambia */
+        div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatar"]:contains("👤")) {
+            background: linear-gradient(145deg, #383838, #2b2b2b) !important;
+            border: 1px solid rgba(120, 120, 120, 0.3) !important;
+        }
+
+        /* Texto de los mensajes */
         div[data-testid="stChatMessage"] div[data-testid="stChatMessageContent"] {
             font-family: "Share Tech Mono", monospace;
             color: #d5f3ff;
@@ -217,6 +228,7 @@ def _render_war_room_styles():
             letter-spacing: 1px;
         }
 
+        /* Input de Chat */
         div[data-testid="stChatInput"] {
             border-radius: 16px;
             border: 1px solid rgba(90, 200, 255, 0.5);
@@ -270,7 +282,6 @@ def _render_war_room_styles():
         """,
         unsafe_allow_html=True,
     )
-
 
 def _render_war_room_page():
     """Página del Puente de Mando con integración STRT."""
