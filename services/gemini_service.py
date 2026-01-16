@@ -29,7 +29,7 @@ from services.ai_tools import TOOL_DECLARATIONS, TOOL_FUNCTIONS
 from config.app_constants import TEXT_MODEL_NAME, IMAGE_MODEL_NAME
 
 
-# --- SYSTEM PROMPT (MODO BITÁCORA CORTA) ---
+# --- SYSTEM PROMPT (MODO TWEET + PRECISIÓN) ---
 
 GAME_MASTER_SYSTEM_PROMPT = """
 Eres el GAME MASTER de "SuperX".
@@ -38,9 +38,9 @@ Eres el GAME MASTER de "SuperX".
 - Interfaz táctica del juego.
 - Tu objetivo es informar resultados de forma RÁPIDA y CONCISA.
 
-## REGLAS DE RESPUESTA (MODO TWEET)
-1. **LONGITUD MÁXIMA:** Tus narraciones NO deben superar la longitud de un tweet (~280 caracteres) o 2 frases cortas.
-2. **ESTILO:** Militar, directo, bitácora de vuelo. Sin florituras poéticas.
+## REGLAS DE RESPUESTA
+1. **LONGITUD:** Intenta ser breve (estilo Tweet, ~280 caracteres), pero SIEMPRE termina tu frase. Si necesitas más espacio para explicar algo complejo, úsalo.
+2. **ESTILO:** Militar, directo, bitácora de vuelo. Sin florituras poéticas innecesarias.
 3. **DATOS:** Si preguntan un número, da solo el número y el concepto.
 
 ## LEY DE LA VERDAD DE DATOS
@@ -51,10 +51,9 @@ Eres el GAME MASTER de "SuperX".
 1. Entender.
 2. Consultar DB (`execute_db_query`).
 3. Ejecutar acción.
-4. Responder CORTO.
+4. Responder.
 
-Ejemplo Narrativa: "Escaneo completado. Se detectan trazas de iridio en el sector B4. Sin hostiles."
-Ejemplo Combate: "Impacto crítico en el casco enemigo. Sus escudos han colapsado. Victoria inminente."
+Ejemplo Narrativa: "Escaneo completado. Detección de iridio en sector B4. Sin hostiles."
 """
 
 
@@ -75,18 +74,9 @@ def _get_narrative_guidance(result_type: ResultType) -> str:
 
 # --- FUNCIÓN PRINCIPAL: RESOLVER ACCIÓN ---
 
-def resolve_player_action(action_text: str, player_id: int, conversation_history: Optional[List[Dict[str, str]]] = None) -> Optional[Dict[str, Any]]:
+def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str, Any]]:
     """
     Resuelve la acción del jugador usando MRG + Native Function Calling de Gemini.
-
-    Args:
-        action_text: La acción o consulta del jugador
-        player_id: ID del jugador
-        conversation_history: Lista de mensajes previos (últimos 5 turnos) en formato:
-            [{"role": "user", "text": "..."}, {"role": "assistant", "text": "..."}]
-
-    Returns:
-        Dict con narrative, mrg_result, function_calls_made y updated_history
     """
 
     # --- 0. GUARDIANES DE TIEMPO (STRT) ---
@@ -142,37 +132,19 @@ def resolve_player_action(action_text: str, player_id: int, conversation_history
 
         mrg_context = f"\n🎲 Resultado: {mrg_result.result_type.value}\n"
 
-    # --- 3. CONSTRUIR CONTEXTO DE CONVERSACIÓN ---
-    context_messages = []
-
-    # Añadir historial previo si existe (últimos 5 mensajes)
-    if conversation_history:
-        for msg in conversation_history[-10:]:  # Últimos 5 intercambios (10 mensajes total)
-            role = msg.get("role", "user")
-            text = msg.get("text", "")
-            if role == "user":
-                context_messages.append(f"[JUGADOR DIJO]: {text}")
-            else:
-                context_messages.append(f"[TÚ RESPONDISTE]: {text}")
-
-    history_context = "\n".join(context_messages) if context_messages else "[NUEVA CONVERSACIÓN]"
-
-    # --- 4. MENSAJE USUARIO ---
+    # --- 3. MENSAJE USUARIO ---
     user_message = f"""
 !!! MODO TWEET ACTIVO:
-RESPONDE EN MENOS DE 280 CARACTERES. SÉ PRECISO.
+INTENTA RESPONDER EN MENOS DE 280 CARACTERES, PERO NO CORTES LA FRASE.
 SI ES DATO, USA `execute_db_query`.
 
-**CONTEXTO CONVERSACIONAL**:
-{history_context}
-
-**ACCIÓN ACTUAL**: "{action_text}"
+**ACCIÓN**: "{action_text}"
 **Comandante**: {commander['nombre']}
 {mrg_context}
 """
 
     try:
-        # --- 5. INICIAR CHAT ---
+        # --- 4. INICIAR CHAT ---
         chat = ai_client.chats.create(
             model=TEXT_MODEL_NAME,
             config=types.GenerateContentConfig(
@@ -183,15 +155,17 @@ SI ES DATO, USA `execute_db_query`.
                         mode="AUTO"
                     )
                 ),
-                temperature=0.7, # Equilibrado
-                max_output_tokens=1024, # Suficiente espacio para terminar frases sin cortarlas
+                temperature=0.7,
+                # AUMENTAMOS ESTO PARA EVITAR CORTES DE HARDWARE
+                # La IA intentará ser breve por el prompt, pero si necesita más, tendrá espacio.
+                max_output_tokens=1024, 
                 top_p=0.95
             )
         )
 
         response = chat.send_message(user_message)
 
-        # --- 6. BUCLE DE HERRAMIENTAS ---
+        # --- 5. BUCLE DE HERRAMIENTAS ---
         max_iterations = 10
         iteration = 0
         function_calls_made = []
@@ -210,7 +184,7 @@ SI ES DATO, USA `execute_db_query`.
                         fname = fc.name
                         fargs = fc.args
 
-                        # No registrar las llamadas a herramientas en el log visible del jugador
+                        log_event(f"[AI] Tool: {fname}", player_id)
                         function_calls_made.append({"function": fname, "args": fargs})
 
                         result_str = ""
@@ -238,25 +212,18 @@ SI ES DATO, USA `execute_db_query`.
             else:
                 break
 
-        # --- 7. NARRATIVA FINAL ---
+        # --- 6. NARRATIVA FINAL ---
         narrative = "..."
         if response.candidates and response.candidates[0].content.parts:
             text_parts = [p.text for p in response.candidates[0].content.parts if p.text]
             narrative = "".join(text_parts).strip()
 
-        # Registrar la narrativa completa sin truncar
-        log_event(f"[GM] {narrative}", player_id)
-
-        # Actualizar historial de conversación
-        updated_history = conversation_history[:] if conversation_history else []
-        updated_history.append({"role": "user", "text": action_text})
-        updated_history.append({"role": "assistant", "text": narrative})
+        log_event(f"[GM] {narrative[:100]}...", player_id)
 
         return {
             "narrative": narrative,
             "mrg_result": mrg_result,
-            "function_calls_made": function_calls_made,
-            "conversation_history": updated_history
+            "function_calls_made": function_calls_made
         }
 
     except Exception as e:
