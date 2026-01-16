@@ -18,27 +18,15 @@ def show_galaxy_map_page():
         st.session_state.selected_system_id = None
         st.session_state.selected_planet_id = None
 
-    # --- LÓGICA DE NAVEGACIÓN (Bridging JS -> Python) ---
-    # El mapa interactivo (JS) recarga la página con ?system_id=ID cuando se hace click.
-    # Capturamos ese parámetro aquí para cambiar el estado de la sesión.
-    if "system_id" in st.query_params:
+    # Si viene system_id por querystring, navegar directo
+    query_params = st.query_params
+    if st.session_state.map_view == "galaxy" and "system_id" in query_params:
         try:
-            target_system_id = int(st.query_params["system_id"])
-            
-            # Actualizamos el estado para entrar al sistema
-            st.session_state.selected_system_id = target_system_id
+            st.session_state.selected_system_id = int(query_params.get("system_id"))
             st.session_state.map_view = "system"
-            
-            # ¡IMPORTANTE! Limpiamos el query param para evitar bucles de navegación
-            # y mantener la URL limpia.
-            del st.query_params["system_id"]
-            
-        except (ValueError, TypeError):
-            # Limpieza defensiva si el ID no es válido
-            if "system_id" in st.query_params:
-                del st.query_params["system_id"]
+        except Exception:
+            pass
 
-    # --- Renderizado de Vistas ---
     if st.session_state.map_view == "galaxy":
         _render_interactive_galaxy_map()
     elif st.session_state.map_view == "system" and st.session_state.selected_system_id is not None:
@@ -391,7 +379,7 @@ def _render_interactive_galaxy_map():
                     circle.addEventListener("click", (evt) => {{
                         evt.stopPropagation();
                         evt.preventDefault();
-                        console.log("Sistema clickeado:", sys.name, "ID:", sys.id);
+                        console.log("planeta apretado", sys.name);
                         handleClick(sys.id);
                     }});
                     starsLayer.appendChild(circle);
@@ -415,9 +403,8 @@ def _render_interactive_galaxy_map():
                 tooltip.style.display = "none";
             }}
 
-            // Función para manejar el click y navegar recargando la página con un query param
             function handleClick(systemId) {{
-                console.log("Navegando a sistema ID:", systemId);
+                console.log("click sistema -> navegar con query param", systemId);
                 try {{
                     const targetWin = window.parent || window.top || window;
                     const url = new URL(targetWin.location.href);
@@ -452,8 +439,19 @@ def _render_interactive_galaxy_map():
     """
 
     with col_map:
-        # Renderizamos el HTML sin esperar valor de retorno
-        components.html(html_template, height=860, scrolling=False)
+        selection_raw = components.html(html_template, height=860, scrolling=False)
+
+    selected_system_id = None
+    if selection_raw not in (None, "", "null"):
+        try:
+            selected_system_id = int(selection_raw)
+        except (TypeError, ValueError):
+            selected_system_id = None
+
+    if selected_system_id is not None:
+        st.session_state.map_view = "system"
+        st.session_state.selected_system_id = selected_system_id
+        st.rerun()
 
 
 def _render_system_orbits(system: System):
@@ -580,9 +578,14 @@ def _render_system_orbits(system: System):
                 Recursos: ${{p.resources}}`;
         }});
         planet.addEventListener("mouseleave", () => tooltip.style.display = "none");
-        // Nota: El click en planetas no navega via URL param en esta versión simplificada
         planet.addEventListener("click", () => {{
-            console.log("Planeta seleccionado (Orbital View):", p.name);
+            console.log("planeta apretado (mapa orbital)", p.name);
+            if (window.parent && window.parent.Streamlit && window.parent.Streamlit.setComponentValue) {{
+                window.parent.Streamlit.setComponentValue("planet:" + p.id);
+            }} else if (window.parent && window.parent.postMessage) {{
+                window.parent.postMessage({{ type: "streamlit:setComponentValue", value: "planet:" + p.id }}, "*");
+                window.parent.postMessage({{ type: "streamlit:componentValue", value: "planet:" + p.id }}, "*");
+            }}
         }});
         svg.appendChild(planet);
 
@@ -622,8 +625,16 @@ def _render_system_view():
         st.caption(f"Clase: {system.star.class_type} | Rareza: {system.star.rarity}")
 
     st.subheader("Vista orbital")
-    # Renderizamos la vista orbital
-    _render_system_orbits(system)
+    planet_click = _render_system_orbits(system)
+    if planet_click:
+        if isinstance(planet_click, str) and planet_click.startswith("planet:"):
+            try:
+                planet_id = int(planet_click.split("planet:")[1])
+                st.session_state.map_view = "planet"
+                st.session_state.selected_planet_id = planet_id
+                st.rerun()
+            except ValueError:
+                pass
 
     st.subheader("Cuerpos celestiales")
     for ring in range(1, 10):
