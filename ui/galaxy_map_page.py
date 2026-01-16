@@ -403,6 +403,14 @@ def _render_system_orbits(system: System):
     """Visual del sol y planetas orbitando con click en planeta."""
     star_colors = {"G": "#f8f5ff", "O": "#8ec5ff", "M": "#f2b880", "D": "#d7d7d7", "X": "#d6a4ff"}
     star_glow = {"G": 18, "O": 22, "M": 16, "D": 18, "X": 24}
+    planet_colors = {
+        "Terrestre (Gaya)": "#7be0a5",
+        "Desértico": "#e3c07b",
+        "Oceánico": "#6fb6ff",
+        "Volcánico": "#ff7058",
+        "Gélido": "#a8d8ff",
+        "Gigante Gaseoso": "#c6a3ff",
+    }
     center_x = 360
     center_y = 360
     orbit_step = 38
@@ -416,6 +424,7 @@ def _render_system_orbits(system: System):
             py = center_y + radius * math.sin(angle_rad)
             size_map = {"Pequeno": 7, "Mediano": 10, "Grande": 13}
             pr = size_map.get(body.size, 9)
+            color = planet_colors.get(body.biome, "#7ec7ff")
             resources = ", ".join(body.resources[:3]) if body.resources else "Sin recursos"
             planets.append({
                 "id": body.id,
@@ -428,6 +437,7 @@ def _render_system_orbits(system: System):
                 "y": round(py, 2),
                 "r": pr,
                 "ring": ring,
+                "color": color,
             })
 
     planets_json = json.dumps(planets)
@@ -458,7 +468,12 @@ def _render_system_orbits(system: System):
                     <stop offset="100%" stop-color="{star_color}" stop-opacity="0.1" />
                 </radialGradient>
             </defs>
-            <circle cx="{center_x}" cy="{center_y}" r="{star_glow.get(system.star.class_type, 20)}" fill="url(#starGlow)" stroke="{star_color}" stroke-width="2.5" />
+            <circle cx="{center_x}" cy="{center_y}" r="{star_glow.get(system.star.class_type, 20)}" fill="url(#starGlow)" stroke="{star_color}" stroke-width="2.5" filter="url(#glowShadow)" />
+            <defs>
+              <filter id="glowShadow" x="-50%" y="-50%" width="200%" height="200%">
+                <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="{star_color}" flood-opacity="0.7" />
+              </filter>
+            </defs>
         </svg>
         <div id="sys-tooltip" class="sys-tooltip"></div>
         <div class="legend">
@@ -492,7 +507,7 @@ def _render_system_orbits(system: System):
         planet.setAttribute("cx", p.x);
         planet.setAttribute("cy", p.y);
         planet.setAttribute("r", p.r);
-        planet.setAttribute("fill", "#7ec7ff");
+        planet.setAttribute("fill", p.color);
         planet.setAttribute("stroke", "#b2d7ff");
         planet.setAttribute("stroke-width", "1");
         planet.style.cursor = "pointer";
@@ -543,11 +558,8 @@ def _render_system_view():
         return
 
     st.header(f"Sistema: {system.name}")
-    back_col, title_col = st.columns([1, 5])
-    with title_col:
-        st.write("")
-    with back_col:
-        if st.button("Volver", use_container_width=True, type="primary"):
+    with st.container():
+        if st.button("← Volver al mapa", use_container_width=True, type="primary", key="back_to_map"):
             _reset_to_galaxy_view()
 
     with st.expander("Informacion de la Estrella Central", expanded=True):

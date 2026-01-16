@@ -154,7 +154,7 @@ class GalaxyGenerator:
             position=(x, y)
         )
 
-        for ring in range(1, 10):
+        for ring in range(1, 7):
             # Determinar la zona orbital
             current_zone = None
             for zone_info in ORBITAL_ZONES.values():
