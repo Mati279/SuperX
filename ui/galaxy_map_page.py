@@ -208,6 +208,10 @@ def _render_interactive_galaxy_map():
         .toolbar {{ position: absolute; top: 16px; right: 16px; display: flex; gap: 8px; }}
         .btn {{ background: rgba(16, 26, 42, 0.9); color: #e6ecff; border: 1px solid var(--stroke); padding: 8px 10px; border-radius: 10px; cursor: pointer; font-size: 12px; transition: all 0.2s ease; }}
         .btn:hover {{ border-color: #5b7bff; color: #9fb2ff; }}
+        .lens-btn {{
+            pointer-events: all;
+            opacity: 0.9;
+        }}
         #tooltip {{
             position: absolute;
             pointer-events: none;
@@ -280,6 +284,8 @@ def _render_interactive_galaxy_map():
             function drawStars() {{
                 starsLayer.innerHTML = "";
                 systems.forEach(sys => {{
+                    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+
                     const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
                     circle.setAttribute("cx", sys.x);
                     circle.setAttribute("cy", sys.y);
@@ -307,15 +313,31 @@ def _render_interactive_galaxy_map():
                     circle.style.pointerEvents = "all";
                     circle.addEventListener("mousemove", (event) => showTooltip(event, sys));
                     circle.addEventListener("mouseleave", hideTooltip);
-                    circle.addEventListener("mousedown", (evt) => {{ evt.stopPropagation(); evt.preventDefault(); }});
-                    circle.addEventListener("touchstart", (evt) => {{ evt.stopPropagation(); }});
-                    circle.addEventListener("click", (evt) => {{
-                        evt.stopPropagation();
-                        evt.preventDefault();
-                        console.log("click sistema", sys.id);
-                        handleClick(sys.id);
+
+                    const lens = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                    lens.setAttribute("cx", sys.x);
+                    lens.setAttribute("cy", sys.y - (sys.radius + 6));
+                    lens.setAttribute("r", 6);
+                    lens.setAttribute("fill", "#0d1a2e");
+                    lens.setAttribute("stroke", "#9fb2ff");
+                    lens.setAttribute("stroke-width", "1.5");
+                    lens.setAttribute("class", "lens-btn");
+                    lens.style.cursor = "pointer";
+
+                    [circle, lens].forEach(el => {{
+                        el.addEventListener("mousedown", (evt) => {{ evt.stopPropagation(); evt.preventDefault(); }});
+                        el.addEventListener("touchstart", (evt) => {{ evt.stopPropagation(); }});
+                        el.addEventListener("click", (evt) => {{
+                            evt.stopPropagation();
+                            evt.preventDefault();
+                            console.log("click sistema", sys.id);
+                            handleClick(sys.id);
+                        }});
                     }});
-                    starsLayer.appendChild(circle);
+
+                    group.appendChild(circle);
+                    group.appendChild(lens);
+                    starsLayer.appendChild(group);
                 }});
             }}
 
