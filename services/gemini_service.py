@@ -8,7 +8,7 @@ import json
 from typing import Dict, Any, Optional, List
 from google.genai import types
 
-from data.database import ai_client, supabase
+from data.database import ai_client
 from data.log_repository import log_event
 from data.game_config_repository import get_game_config
 from data.character_repository import get_commander_by_player_id
@@ -60,10 +60,8 @@ Flujo correcto:
 6. TÚ: Narras el resultado
 
 ### 3. COHERENCIA MECÁNICA
-- Respeta los resultados de las tiradas MRG que recibirás en el contexto
-- Un éxito crítico merece una narración épica
-- Un fracaso crítico debe tener consecuencias dramáticas pero no punitivas
-- Los éxitos parciales logran el objetivo pero con complicaciones
+- Si recibes un resultado MRG, respétalo.
+- Si NO hay resultado MRG (porque fue una consulta simple), responde directamente sin inventar tiradas.
 
 ### 4. GESTIÓN DE RECURSOS
 Costos de edificios (consulta world_constants.py si necesitas referencia, pero verifica en DB):
@@ -189,57 +187,78 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
     if not commander:
         raise ValueError("No se encontró un comandante para el jugador.")
 
-    # 3. Ejecutar tirada MRG
-    stats = commander.get('stats_json', {})
-    attributes = stats.get('atributos', {})
-    merit_points = sum(attributes.values()) if attributes else 0
-    difficulty = DIFFICULTY_NORMAL
+    # --- 3. DETECTOR DE CONSULTAS VS ACCIONES (NUEVO) ---
+    # Si es una pregunta simple, NO tiramos dados MRG para evitar "Complicaciones" injustas.
+    query_keywords = ["cuantos", "cuántos", "que", "qué", "como", "cómo", "donde", "dónde", "quien", "quién", "estado", "listar", "ver", "info", "ayuda", "tengo"]
+    is_informational_query = any(action_text.lstrip().lower().startswith(k) for k in query_keywords) or "?" in action_text
 
-    mrg_result = resolve_action(
-        merit_points=merit_points,
-        difficulty=difficulty,
-        action_description=action_text,
-        entity_id=commander['id'],
-        entity_name=commander['nombre']
-    )
+    mrg_result = None
+    mrg_context = ""
 
-    # Guardar resultado en sesión para la UI
+    if is_informational_query:
+        # Es una consulta: Simulamos un éxito total automático (sin tirar dados)
+        # Esto evita que apply_partial_success_complication reste recursos por preguntar la hora.
+        class DummyRoll:
+            total = 0
+            die_1 = 0
+            die_2 = 0
+        
+        class DummyResult:
+            result_type = ResultType.TOTAL_SUCCESS # Éxito limpio
+            roll = DummyRoll()
+            bonus_applied = 0
+            merit_points = 0
+            difficulty = 0
+            margin = 0
+        
+        mrg_result = DummyResult()
+        mrg_context = "\nℹ️ TIPO DE ACCIÓN: Consulta de Datos (Resolución Automática: Éxito). Responde con precisión usando la DB.\n"
+    
+    else:
+        # Es una acción real: Usamos el MRG
+        stats = commander.get('stats_json', {})
+        attributes = stats.get('atributos', {})
+        merit_points = sum(attributes.values()) if attributes else 0
+        difficulty = DIFFICULTY_NORMAL
+
+        mrg_result = resolve_action(
+            merit_points=merit_points,
+            difficulty=difficulty,
+            action_description=action_text,
+            entity_id=commander['id'],
+            entity_name=commander['nombre']
+        )
+
+        # Si es éxito parcial, aplicamos complicación (SOLO si no era consulta)
+        if mrg_result.result_type == ResultType.PARTIAL_SUCCESS:
+            apply_partial_success_complication(mrg_result, player_id)
+
+        # Construir contexto MRG real
+        mrg_context = f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 RESULTADO DE TIRADA MRG (Motor de Resolución Galáctico)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎲 Resultado: {mrg_result.result_type.value}
+📖 Guía: {_get_narrative_guidance(mrg_result.result_type)}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+
+    # Guardar resultado en sesión para la UI (si aplica)
     try:
         import streamlit as st
         st.session_state.pending_mrg_result = mrg_result
     except:
         pass
 
-    if mrg_result.result_type == ResultType.PARTIAL_SUCCESS:
-        apply_partial_success_complication(mrg_result, player_id)
-
-    # 4. Construir contexto MRG para la IA
-    mrg_context = f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 RESULTADO DE TIRADA MRG (Motor de Resolución Galáctico)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-🎲 **Tirada de Dados**: {mrg_result.roll.die_1} + {mrg_result.roll.die_2} = {mrg_result.roll.total}
-⚡ **Bono del Comandante**: +{mrg_result.bonus_applied} (basado en mérito total: {mrg_result.merit_points})
-🎯 **Dificultad**: {mrg_result.difficulty}
-📈 **Margen**: {mrg_result.margin:+d}
-🏆 **Resultado**: {mrg_result.result_type.value}
-
-📖 **Guía Narrativa**:
-{_get_narrative_guidance(mrg_result.result_type)}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-
-    # 5. Construir mensaje del usuario (MODIFICADO PARA ENFATIZAR LA PREGUNTA)
+    # 4. Construir mensaje del usuario
     user_message = f"""
-!!! INSTRUCCIÓN PRIORITARIA: El jugador ha realizado la siguiente acción o pregunta.
-SI ES UNA PREGUNTA DE DATOS, RESPONDE CON PRECISIÓN USANDO 'execute_db_query'. NO INVENTES RESPUESTAS.
+!!! INSTRUCCIÓN PRIORITARIA:
+SI ES UNA PREGUNTA DE DATOS, RESPONDE CON PRECISIÓN USANDO 'execute_db_query'. NO INVENTES.
 
 **ACCIÓN/PREGUNTA DEL JUGADOR**: "{action_text}"
 
 --- Contexto del Sistema ---
 **Comandante**: {commander['nombre']}
-**Ubicación**: {commander.get('ubicacion', 'Desconocida')}
 {mrg_context}
 ---------------------------
 
@@ -247,30 +266,27 @@ Procede a usar las herramientas necesarias.
 """
 
     try:
-        # 6. (PASO ELIMINADO: No necesitamos 'models.get' en el nuevo SDK)
-        
-        # 7. Iniciar chat DIRECTAMENTE desde el cliente
-        # CORRECCIÓN AQUÍ: Usamos ai_client.chats.create
+        # 5. Iniciar chat con herramientas (CORREGIDO PARA NUEVO SDK)
+        # Usamos ai_client.chats.create en lugar de models.get().start_chat()
         chat = ai_client.chats.create(
             model=TEXT_MODEL_NAME,
             config=types.GenerateContentConfig(
                 system_instruction=GAME_MASTER_SYSTEM_PROMPT,
                 tools=TOOL_DECLARATIONS,
-                # CONFIGURACIÓN CRÍTICA: Forzar al modelo a considerar herramientas automáticamente
                 tool_config=types.ToolConfig(
                     function_calling_config=types.FunctionCallingConfig(
                         mode="AUTO"
                     )
                 ),
-                temperature=0.7,  # Creatividad reducida para mejorar precisión
+                temperature=0.4 if is_informational_query else 0.8, # Más preciso si es consulta, más creativo si es acción
                 top_p=0.95
             )
         )
 
-        # 8. Enviar mensaje del usuario
+        # 6. Enviar mensaje del usuario
         response = chat.send_message(user_message)
 
-        # 9. Manejar function calls en un loop
+        # 7. Manejar function calls en un loop (ReAct Loop)
         max_iterations = 10
         iteration = 0
         function_calls_made = []
@@ -278,85 +294,71 @@ Procede a usar las herramientas necesarias.
         while iteration < max_iterations:
             iteration += 1
 
-            # Verificar si hay function calls (estructura del SDK nuevo)
+            # Verificar si hay function calls (Estructura nuevo SDK)
             if response.candidates and response.candidates[0].content.parts:
                 parts = response.candidates[0].content.parts
                 has_function_call = False
 
                 for part in parts:
-                    if part.function_call: # Verificación directa en el objeto Part
+                    if part.function_call:
                         has_function_call = True
                         function_call = part.function_call
+                        
+                        fname = function_call.name
+                        fargs = function_call.args
 
-                        function_name = function_call.name
-                        function_args = function_call.args # Ya es un dict o similar en el nuevo SDK
+                        # Log
+                        log_event(f"[AI] Tool: {fname}", player_id)
+                        function_calls_made.append({"function": fname, "args": fargs})
 
-                        # Log de la llamada
-                        log_event(f"[AI] Function call: {function_name}(...)", player_id)
-                        function_calls_made.append({
-                            "function": function_name,
-                            "args": function_args
-                        })
-
-                        # Ejecutar la función
-                        if function_name in TOOL_FUNCTIONS:
+                        # Ejecutar
+                        if fname in TOOL_FUNCTIONS:
                             try:
-                                # Convertir args a dict si es necesario
-                                args_dict = dict(function_args) if function_args else {}
-                                function_result = TOOL_FUNCTIONS[function_name](**args_dict)
-                            except Exception as exec_err:
-                                function_result = json.dumps({"error": str(exec_err)})
+                                # Convertir args a dict python estándar
+                                args_dict = {k: v for k, v in fargs.items()}
+                                result_str = TOOL_FUNCTIONS[fname](**args_dict)
+                            except Exception as e:
+                                result_str = json.dumps({"error": str(e)})
                         else:
-                            function_result = json.dumps({"error": f"Función '{function_name}' no encontrada"})
+                            result_str = json.dumps({"error": "Función no encontrada"})
 
-                        # Enviar resultado de vuelta a la IA
+                        # Responder a la IA con el resultado
                         response = chat.send_message(
                             types.Content(parts=[
                                 types.Part.from_function_response(
-                                    name=function_name,
-                                    response={"result": function_result}
+                                    name=fname,
+                                    response={"result": result_str}
                                 )
                             ])
                         )
-                        break  # Procesar una function call a la vez y reevaluar
+                        break # Procesar una llamada a la vez
 
                 if not has_function_call:
                     break
             else:
                 break
 
-        # 10. Extraer narrativa final
+        # 8. Extraer narrativa final
         if response.candidates and response.candidates[0].content.parts:
             final_text = ""
             for part in response.candidates[0].content.parts:
                 if part.text:
                     final_text += part.text
-
-            narrative = final_text.strip() if final_text else "El Game Master medita en silencio..."
-            log_event(f"[GM] {narrative[:200]}...", player_id)
-
+            
+            narrative = final_text.strip()
+            log_event(f"[GM] {narrative[:100]}...", player_id)
+            
             return {
                 "narrative": narrative,
                 "mrg_result": mrg_result,
-                "function_calls_made": function_calls_made,
-                "iterations": iteration
-            }
-        else:
-            return {
-                "narrative": "El Game Master contempla las consecuencias de tus acciones...",
-                "mrg_result": mrg_result,
-                "function_calls_made": function_calls_made,
-                "iterations": iteration
+                "function_calls_made": function_calls_made
             }
 
+        return {"narrative": "...", "mrg_result": mrg_result}
+
     except Exception as e:
-        log_event(f"Error crítico en IA con Function Calling: {e}", player_id, is_error=True)
-        # Importante: No relanzar para que no rompa la UI, pero devolver error visible
-        return {
-             "narrative": f"⚠️ **Error de Comunicación Neural**: {str(e)}",
-             "mrg_result": mrg_result,
-             "error": str(e)
-        }
+        log_event(f"Error AI: {e}", player_id, is_error=True)
+        return {"narrative": f"⚠️ Error de sistema: {e}", "mrg_result": None}
 
 
 # --- FUNCIÓN AUXILIAR: GENERACIÓN DE IMÁGENES (SIN CAMBIOS) ---
