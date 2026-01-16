@@ -331,7 +331,9 @@ def _render_interactive_galaxy_map():
                 if (streamlit && streamlit.setComponentValue) {{
                     streamlit.setComponentValue(systemId);
                 }} else if (window.parent && window.parent.postMessage) {{
+                    // Fallbacks para distintas versiones del protocolo
                     window.parent.postMessage({{ type: "streamlit:setComponentValue", value: systemId }}, "*");
+                    window.parent.postMessage({{ type: "streamlit:componentValue", value: systemId }}, "*");
                 }}
             }}
 
@@ -359,7 +361,7 @@ def _render_interactive_galaxy_map():
     """
 
     with col_map:
-        selection_raw = components.html(html_template, height=860, scrolling=False)
+        selection_raw = components.html(html_template, height=860, scrolling=False, key="galaxy_map_html")
 
     selected_system_id = None
     if selection_raw not in (None, "", "null"):
