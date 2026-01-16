@@ -312,7 +312,7 @@ def _render_interactive_galaxy_map():
                     circle.addEventListener("click", (evt) => {{
                         evt.stopPropagation();
                         evt.preventDefault();
-                        console.log("click sistema", sys.id);
+                        console.log("planeta apretado", sys.name);
                         handleClick(sys.id);
                     }});
                     starsLayer.appendChild(circle);
