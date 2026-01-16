@@ -199,6 +199,15 @@ def _render_war_room_styles():
             background: linear-gradient(145deg, rgba(10, 20, 32, 0.88), rgba(6, 12, 20, 0.88));
             box-shadow: inset 0 0 14px rgba(60, 180, 235, 0.08);
         }
+        /* Estilo especial para mensajes del usuario */
+        div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageContent"]) {
+            border: 1px solid rgba(80, 170, 220, 0.3);
+        }
+        div[data-testid="stChatMessage"][data-testid*="user"] {
+            border: 1px solid rgba(95, 216, 100, 0.4);
+            background: linear-gradient(145deg, rgba(15, 30, 15, 0.88), rgba(8, 20, 8, 0.88));
+            box-shadow: inset 0 0 14px rgba(95, 216, 100, 0.08);
+        }
         div[data-testid="stChatMessage"] div[data-testid="stChatMessageContent"] {
             font-family: "Share Tech Mono", monospace;
             color: #d5f3ff;
@@ -292,28 +301,60 @@ def _render_war_room_page():
     commander_name = get_commander()['nombre']
     
     log_container = st.container(height=520)
-    logs = get_recent_logs(player_id)
+    logs = get_recent_logs(player_id, limit=20)  # Aumentar a 20 para ver más contexto
     for log in reversed(logs):
         if "ERROR" not in log['evento_texto']:
-            icon = "📜"
-            if "VENTANA DE BLOQUEO" in log['evento_texto']: icon = "⏳"
-            if "CONGELADO" in log['evento_texto']: icon = "❄️"
-            if "DEBUG" in log['evento_texto']: icon = "🛠️"
-            if "Misión EXITOSA" in log['evento_texto']: icon = "✅"
-            if "Misión FALLIDA" in log['evento_texto']: icon = "❌"
-            
-            log_container.chat_message("assistant", avatar=icon).write(log['evento_texto'])
+            evento_texto = log['evento_texto']
+
+            # Detectar si es un mensaje del jugador o de la IA
+            if evento_texto.startswith("[PLAYER]"):
+                # Mensaje del usuario
+                mensaje_limpio = evento_texto.replace("[PLAYER] ", "")
+                log_container.chat_message("user", avatar="👤").write(mensaje_limpio)
+            else:
+                # Mensaje de la IA/sistema
+                icon = "📜"
+                if "VENTANA DE BLOQUEO" in evento_texto: icon = "⏳"
+                if "CONGELADO" in evento_texto: icon = "❄️"
+                if "DEBUG" in evento_texto: icon = "🛠️"
+                if "Misión EXITOSA" in evento_texto: icon = "✅"
+                if "Misión FALLIDA" in evento_texto: icon = "❌"
+                if evento_texto.startswith("[GM]"):
+                    # Mensaje del Game Master
+                    mensaje_limpio = evento_texto.replace("[GM] ", "")
+                    log_container.chat_message("assistant", avatar=icon).write(mensaje_limpio)
+                else:
+                    log_container.chat_message("assistant", avatar=icon).write(evento_texto)
             
     input_placeholder = f"¿Órdenes, Comandante {commander_name}?"
     if status['is_frozen']:
         input_placeholder = "Sistemas congelados. Entrada deshabilitada."
         
     action = st.chat_input(input_placeholder, disabled=status['is_frozen'])
-    
+
     if action:
+        # Registrar el mensaje del usuario en los logs
+        from data.log_repository import log_event
+        log_event(f"[PLAYER] {action}", player_id)
+
+        # Construir historial de conversación desde los logs recientes
+        conversation_history = []
+        for log in logs[-10:]:  # Últimos 10 mensajes (5 intercambios)
+            evento = log['evento_texto']
+            if evento.startswith("[PLAYER]"):
+                conversation_history.append({
+                    "role": "user",
+                    "text": evento.replace("[PLAYER] ", "")
+                })
+            elif evento.startswith("[GM]"):
+                conversation_history.append({
+                    "role": "assistant",
+                    "text": evento.replace("[GM] ", "")
+                })
+
         with st.spinner("Transmitiendo órdenes..."):
             try:
-                result = resolve_player_action(action, player_id)
+                result = resolve_player_action(action, player_id, conversation_history)
                 st.rerun()
             except Exception as e:
                 st.error(f"⚠️ Error: {e}")

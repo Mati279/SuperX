@@ -75,9 +75,18 @@ def _get_narrative_guidance(result_type: ResultType) -> str:
 
 # --- FUNCIÓN PRINCIPAL: RESOLVER ACCIÓN ---
 
-def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str, Any]]:
+def resolve_player_action(action_text: str, player_id: int, conversation_history: Optional[List[Dict[str, str]]] = None) -> Optional[Dict[str, Any]]:
     """
     Resuelve la acción del jugador usando MRG + Native Function Calling de Gemini.
+
+    Args:
+        action_text: La acción o consulta del jugador
+        player_id: ID del jugador
+        conversation_history: Lista de mensajes previos (últimos 5 turnos) en formato:
+            [{"role": "user", "text": "..."}, {"role": "assistant", "text": "..."}]
+
+    Returns:
+        Dict con narrative, mrg_result, function_calls_made y updated_history
     """
 
     # --- 0. GUARDIANES DE TIEMPO (STRT) ---
@@ -133,19 +142,37 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
 
         mrg_context = f"\n🎲 Resultado: {mrg_result.result_type.value}\n"
 
-    # --- 3. MENSAJE USUARIO ---
+    # --- 3. CONSTRUIR CONTEXTO DE CONVERSACIÓN ---
+    context_messages = []
+
+    # Añadir historial previo si existe (últimos 5 mensajes)
+    if conversation_history:
+        for msg in conversation_history[-10:]:  # Últimos 5 intercambios (10 mensajes total)
+            role = msg.get("role", "user")
+            text = msg.get("text", "")
+            if role == "user":
+                context_messages.append(f"[JUGADOR DIJO]: {text}")
+            else:
+                context_messages.append(f"[TÚ RESPONDISTE]: {text}")
+
+    history_context = "\n".join(context_messages) if context_messages else "[NUEVA CONVERSACIÓN]"
+
+    # --- 4. MENSAJE USUARIO ---
     user_message = f"""
 !!! MODO TWEET ACTIVO:
 RESPONDE EN MENOS DE 280 CARACTERES. SÉ PRECISO.
 SI ES DATO, USA `execute_db_query`.
 
-**ACCIÓN**: "{action_text}"
+**CONTEXTO CONVERSACIONAL**:
+{history_context}
+
+**ACCIÓN ACTUAL**: "{action_text}"
 **Comandante**: {commander['nombre']}
 {mrg_context}
 """
 
     try:
-        # --- 4. INICIAR CHAT ---
+        # --- 5. INICIAR CHAT ---
         chat = ai_client.chats.create(
             model=TEXT_MODEL_NAME,
             config=types.GenerateContentConfig(
@@ -164,7 +191,7 @@ SI ES DATO, USA `execute_db_query`.
 
         response = chat.send_message(user_message)
 
-        # --- 5. BUCLE DE HERRAMIENTAS ---
+        # --- 6. BUCLE DE HERRAMIENTAS ---
         max_iterations = 10
         iteration = 0
         function_calls_made = []
@@ -183,7 +210,7 @@ SI ES DATO, USA `execute_db_query`.
                         fname = fc.name
                         fargs = fc.args
 
-                        log_event(f"[AI] Tool: {fname}", player_id)
+                        # No registrar las llamadas a herramientas en el log visible del jugador
                         function_calls_made.append({"function": fname, "args": fargs})
 
                         result_str = ""
@@ -211,18 +238,25 @@ SI ES DATO, USA `execute_db_query`.
             else:
                 break
 
-        # --- 6. NARRATIVA FINAL ---
+        # --- 7. NARRATIVA FINAL ---
         narrative = "..."
         if response.candidates and response.candidates[0].content.parts:
             text_parts = [p.text for p in response.candidates[0].content.parts if p.text]
             narrative = "".join(text_parts).strip()
 
-        log_event(f"[GM] {narrative[:100]}...", player_id)
+        # Registrar la narrativa completa sin truncar
+        log_event(f"[GM] {narrative}", player_id)
+
+        # Actualizar historial de conversación
+        updated_history = conversation_history[:] if conversation_history else []
+        updated_history.append({"role": "user", "text": action_text})
+        updated_history.append({"role": "assistant", "text": narrative})
 
         return {
             "narrative": narrative,
             "mrg_result": mrg_result,
-            "function_calls_made": function_calls_made
+            "function_calls_made": function_calls_made,
+            "conversation_history": updated_history
         }
 
     except Exception as e:
