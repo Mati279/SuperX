@@ -342,8 +342,13 @@ def _render_interactive_galaxy_map():
                     streamlit.setComponentValue(systemId);
                 }}
                 if (window.parent && window.parent.postMessage) {{
-                    window.parent.postMessage({{ type: "streamlit:setComponentValue", value: systemId }}, "*");
-                    window.parent.postMessage({{ type: "streamlit:componentValue", value: systemId }}, "*");
+                    const payload = (type) => ({{
+                        isStreamlitMessage: true,
+                        type,
+                        value: systemId
+                    }});
+                    window.parent.postMessage(payload("streamlit:setComponentValue"), "*");
+                    window.parent.postMessage(payload("streamlit:componentValue"), "*");
                 }}
             }}
 
