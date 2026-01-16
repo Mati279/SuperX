@@ -111,7 +111,21 @@ def _resource_radius_factor(probability: float) -> float:
     if probability is None:
         return 1.0
     clamped = max(0.0, min(probability, 100.0))
-    return 0.6 + (clamped / 100.0) * 1.2
+    return 0.45 + (clamped / 100.0) * 2.1
+
+
+def _resource_color(resource_name: str) -> str:
+    resource_colors = {
+        "Hierro": "#9aa2ad",
+        "Cobre": "#c77a48",
+        "Niquel": "#b6b6b6",
+        "Titanio": "#9bb7d6",
+        "Platino": "#d3d7db",
+        "Oricalco Oscuro": "#5b6a8a",
+        "Neutrilium": "#67c7b1",
+        "Aetherion": "#f1d26a",
+    }
+    return resource_colors.get(resource_name, "#9fb2ff")
 
 
 def _render_interactive_galaxy_map():
@@ -168,6 +182,9 @@ def _render_interactive_galaxy_map():
         radius = base_radius
         if resource_filter_active and resource_prob is not None:
             radius = base_radius * _resource_radius_factor(resource_prob)
+        color = star_colors.get(system.star.class_type, "#FFFFFF")
+        if resource_filter_active:
+            color = _resource_color(selected_resource)
         systems_payload.append(
             {
                 "id": system.id,
@@ -178,7 +195,7 @@ def _render_interactive_galaxy_map():
                 "rule": system.star.special_rule,
                 "x": round(x, 2),
                 "y": round(y, 2),
-                "color": star_colors.get(system.star.class_type, "#FFFFFF"),
+                "color": color,
                 "radius": round(radius, 2),
                 "resource_prob": resource_prob,
             }
