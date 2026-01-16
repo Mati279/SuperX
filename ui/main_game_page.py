@@ -8,6 +8,7 @@ from services.gemini_service import resolve_player_action
 from .faction_roster import show_faction_roster
 from .recruitment_center import show_recruitment_center
 from .galaxy_map_page import show_galaxy_map_page
+from .ship_status_page import show_ship_status_page
 
 
 def render_main_game_page(cookie_manager):
@@ -36,6 +37,7 @@ def render_main_game_page(cookie_manager):
         "Comando de Facción": show_faction_roster,
         "Centro de Reclutamiento": show_recruitment_center,
         "Mapa de la Galaxia": show_galaxy_map_page,
+        "Estado de la Nave": show_ship_status_page,
     }
     
     # Llama a la función correspondiente a la página seleccionada
@@ -62,6 +64,10 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 
         if st.button("Mapa de la Galaxia", use_container_width=True, type="primary" if st.session_state.current_page == "Mapa de la Galaxia" else "secondary"):
             st.session_state.current_page = "Mapa de la Galaxia"
+            st.rerun()
+
+        if st.button("Estado de la Nave", use_container_width=True, type="primary" if st.session_state.current_page == "Estado de la Nave" else "secondary"):
+            st.session_state.current_page = "Estado de la Nave"
             st.rerun()
 
         st.divider()
