@@ -1,7 +1,12 @@
 # services/gemini_service.py
 """
-Gemini Service - Native Function Calling Implementation
+Gemini Service - Native Function Calling Implementation (Refactorizado)
 Sistema de Game Master IA con acceso completo a la base de datos.
+
+REFACTORIZACIÓN: Adaptado al nuevo Google Gen AI SDK v1.0+
+- Corrección del manejo de function calling (Parts vs Content)
+- Query Guard: Detección de preguntas informativas vs acciones
+- Manejo robusto de errores SQL con autocorrección
 """
 
 import json
@@ -29,7 +34,9 @@ from services.ai_tools import TOOL_DECLARATIONS, TOOL_FUNCTIONS
 from config.app_constants import TEXT_MODEL_NAME, IMAGE_MODEL_NAME
 
 
-# --- SYSTEM PROMPT POTENTE (MODIFICADO PARA PRECISIÓN) ---
+# =============================================================================
+# SYSTEM PROMPT POTENTE (OPTIMIZADO PARA PRECISIÓN)
+# =============================================================================
 
 GAME_MASTER_SYSTEM_PROMPT = """
 Eres el GAME MASTER de "SuperX", un juego de rol de ciencia ficción épico.
@@ -43,10 +50,13 @@ Eres el GAME MASTER de "SuperX", un juego de rol de ciencia ficción épico.
 ## REGLAS FUNDAMENTALES
 
 ### 1. LEY DE LA VERDAD DE DATOS (¡CRUCIAL!)
-Si el usuario pregunta por un dato específico (créditos, ubicación, estado, recursos), TU PRIORIDAD ABSOLUTA es consultar la base de datos y dar el NÚMERO EXACTO.
-- INCORRECTO: "Tus finanzas son fluctuantes y difíciles de rastrear..." (ESTO ESTÁ PROHIBIDO).
-- CORRECTO: "Consultando registros bancarios... Tienes exactamente 2,450 Créditos Imperiales y 300 unidades de Materiales."
-- SIEMPRE usa `execute_db_query` para obtener el dato real antes de responder.
+Si el usuario pregunta por un dato específico (créditos, ubicación, estado, recursos),
+TU PRIORIDAD ABSOLUTA es consultar la base de datos y dar el NÚMERO EXACTO.
+
+INCORRECTO: "Tus finanzas son fluctuantes y difíciles de rastrear..." (ESTO ESTÁ PROHIBIDO).
+CORRECTO: "Consultando registros bancarios... Tienes exactamente 2,450 Créditos Imperiales."
+
+SIEMPRE usa `execute_db_query` para obtener el dato real antes de responder.
 
 ### 2. SIEMPRE VERIFICAR ANTES DE ACTUAR
 NUNCA asumas el estado del mundo. SIEMPRE consulta la base de datos primero.
@@ -55,16 +65,15 @@ Flujo correcto:
 1. Jugador: "Construyo una mina de hierro"
 2. TÚ: execute_db_query("SELECT creditos, materiales FROM players WHERE id = X")
 3. TÚ: Verificas si tiene recursos suficientes
-4. TÚ: Si tiene recursos → execute_db_query("INSERT INTO planet_buildings...")
-5. TÚ: execute_db_query("UPDATE players SET creditos = creditos - 500...")
-6. TÚ: Narras el resultado
+4. TÚ: Si tiene recursos → Insertas el edificio y descontas recursos
+5. TÚ: Narras el resultado épico
 
 ### 3. COHERENCIA MECÁNICA
-- Si recibes un resultado MRG, respétalo.
+- Si recibes un resultado MRG, respétalo en tu narrativa.
 - Si NO hay resultado MRG (porque fue una consulta simple), responde directamente sin inventar tiradas.
 
 ### 4. GESTIÓN DE RECURSOS
-Costos de edificios (consulta world_constants.py si necesitas referencia, pero verifica en DB):
+Costos de edificios (consulta la BD para confirmar):
 - Extractor de Materiales: 500 CI, 10 Componentes
 - Fábrica de Componentes: 800 CI, 50 Materiales
 - Planta de Energía: 1000 CI, 30 Materiales, 20 Componentes
@@ -77,49 +86,13 @@ SIEMPRE verifica y descuenta recursos al construir.
 - Crea tensión en momentos dramáticos, no en consultas de saldo.
 - Celebra los éxitos con descripciones épicas.
 
-## ESQUEMA DE LA BASE DE DATOS
-
-### Tabla: players
-Columnas clave:
-- id (int) - Identificador único
-- nombre (text) - Nombre del comandante
-- creditos (int) - Créditos Imperiales (CI), la moneda universal
-- materiales (int) - Recursos base para construcción
-- componentes (int) - Componentes industriales
-- celulas_energia (int) - Energía para operar edificios
-- influencia (int) - Poder político/diplomático
-- recursos_lujo (jsonb) - Recursos Tier 2
-
-### Tabla: characters
-Columnas clave:
-- id (int)
-- player_id (int) - Referencia al jugador
-- nombre (text)
-- stats_json (jsonb) - Estadísticas (atributos, salud, fatiga, moral)
-- ubicacion (text) - Dónde está el personaje
-- estado (text) - 'Disponible', 'En Misión', 'Herido', 'Descansando'
-- rango (text)
-
-### Tabla: planet_assets
-Planetas colonizados por el jugador:
-- id (int)
-- player_id (int)
-- nombre_asentamiento (text)
-- poblacion (int)
-- pops_activos (int)
-- pops_desempleados (int)
-- infraestructura_defensiva (int)
-
-### Tabla: planet_buildings
-Edificios construidos en planetas:
-- id (int)
-- planet_asset_id (int)
-- building_type (text)
-- is_active (bool)
-- pops_required (int)
-
-### Tabla: logs
-- id, player_id, evento_texto, turno
+### 6. MANEJO DE ERRORES SQL
+Si una consulta SQL falla, recibirás un mensaje de error detallado.
+DEBES:
+- Leer el error cuidadosamente
+- Identificar el problema (sintaxis, tabla/columna inexistente, etc.)
+- Corregir la consulta y volver a intentar
+- Si no puedes resolver el error después de 2 intentos, informa al jugador con claridad
 
 ## TU FLUJO DE TRABAJO
 
@@ -128,13 +101,15 @@ Para cada acción del jugador:
 2. **CONSULTAR** el estado actual (execute_db_query con SELECT)
 3. **VERIFICAR** recursos/requisitos (¿puede hacerlo?)
 4. **EJECUTAR** cambios (execute_db_query con UPDATE/INSERT)
-5. **NARRAR** el resultado. Si fue una pregunta, da la respuesta exacta.
+5. **NARRAR** el resultado con estilo cinematográfico
 
 NUNCA inventes datos. SIEMPRE consulta primero.
 """
 
 
-# --- FUNCIÓN AUXILIAR: NARRATIVA MRG ---
+# =============================================================================
+# FUNCIÓN AUXILIAR: NARRATIVA MRG
+# =============================================================================
 
 def _get_narrative_guidance(result_type: ResultType) -> str:
     """Retorna guía narrativa según el resultado MRG."""
@@ -149,11 +124,20 @@ def _get_narrative_guidance(result_type: ResultType) -> str:
     return guidance.get(result_type, "Narra el resultado de la acción.")
 
 
-# --- FUNCIÓN PRINCIPAL: RESOLVER ACCIÓN CON FUNCTION CALLING ---
+# =============================================================================
+# FUNCIÓN PRINCIPAL: RESOLVER ACCIÓN CON FUNCTION CALLING
+# =============================================================================
 
 def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str, Any]]:
     """
     Resuelve la acción del jugador usando MRG + Native Function Calling de Gemini.
+
+    Args:
+        action_text: Texto de la acción o pregunta del jugador
+        player_id: ID del jugador que realiza la acción
+
+    Returns:
+        Dict con la narrativa, resultado MRG y función calls realizados
     """
 
     # --- 0. GUARDIANES DE TIEMPO (STRT) ---
@@ -187,33 +171,46 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
     if not commander:
         raise ValueError("No se encontró un comandante para el jugador.")
 
-    # --- 3. DETECTOR DE CONSULTAS VS ACCIONES (NUEVO) ---
+    # --- 3. QUERY GUARD: DETECTOR DE CONSULTAS VS ACCIONES ---
     # Si es una pregunta simple, NO tiramos dados MRG para evitar "Complicaciones" injustas.
-    query_keywords = ["cuantos", "cuántos", "que", "qué", "como", "cómo", "donde", "dónde", "quien", "quién", "estado", "listar", "ver", "info", "ayuda", "tengo"]
-    is_informational_query = any(action_text.lstrip().lower().startswith(k) for k in query_keywords) or "?" in action_text
+
+    query_keywords = [
+        "cuanto", "cuánto", "cuantos", "cuántos",
+        "que", "qué", "cual", "cuál", "cuales", "cuáles",
+        "como", "cómo", "donde", "dónde", "cuando", "cuándo",
+        "quien", "quién", "quienes", "quiénes",
+        "estado", "listar", "ver", "mostrar", "info", "ayuda", "tengo", "hay"
+    ]
+
+    action_lower = action_text.lower().strip()
+    is_informational_query = (
+        any(action_lower.startswith(k) for k in query_keywords) or
+        "?" in action_text or
+        action_lower.startswith("cuál") or
+        action_lower.startswith("cual")
+    )
 
     mrg_result = None
     mrg_context = ""
 
     if is_informational_query:
         # Es una consulta: Simulamos un éxito total automático (sin tirar dados)
-        # Esto evita que apply_partial_success_complication reste recursos por preguntar la hora.
         class DummyRoll:
             total = 0
             die_1 = 0
             die_2 = 0
-        
+
         class DummyResult:
-            result_type = ResultType.TOTAL_SUCCESS # Éxito limpio
+            result_type = ResultType.TOTAL_SUCCESS
             roll = DummyRoll()
             bonus_applied = 0
             merit_points = 0
             difficulty = 0
             margin = 0
-        
+
         mrg_result = DummyResult()
         mrg_context = "\nℹ️ TIPO DE ACCIÓN: Consulta de Datos (Resolución Automática: Éxito). Responde con precisión usando la DB.\n"
-    
+
     else:
         # Es una acción real: Usamos el MRG
         stats = commander.get('stats_json', {})
@@ -258,6 +255,7 @@ SI ES UNA PREGUNTA DE DATOS, RESPONDE CON PRECISIÓN USANDO 'execute_db_query'. 
 **ACCIÓN/PREGUNTA DEL JUGADOR**: "{action_text}"
 
 --- Contexto del Sistema ---
+**Player ID**: {player_id}
 **Comandante**: {commander['nombre']}
 {mrg_context}
 ---------------------------
@@ -266,8 +264,7 @@ Procede a usar las herramientas necesarias.
 """
 
     try:
-        # 5. Iniciar chat con herramientas (CORREGIDO PARA NUEVO SDK)
-        # Usamos ai_client.chats.create en lugar de models.get().start_chat()
+        # 5. Iniciar chat con herramientas (NUEVO SDK)
         chat = ai_client.chats.create(
             model=TEXT_MODEL_NAME,
             config=types.GenerateContentConfig(
@@ -278,7 +275,8 @@ Procede a usar las herramientas necesarias.
                         mode="AUTO"
                     )
                 ),
-                temperature=0.4 if is_informational_query else 0.8, # Más preciso si es consulta, más creativo si es acción
+                # Temperatura ajustada: Más preciso si es consulta, más creativo si es acción
+                temperature=0.2 if is_informational_query else 0.8,
                 top_p=0.95
             )
         )
@@ -286,55 +284,75 @@ Procede a usar las herramientas necesarias.
         # 6. Enviar mensaje del usuario
         response = chat.send_message(user_message)
 
-        # 7. Manejar function calls en un loop (ReAct Loop)
-        max_iterations = 10
+        # 7. ReAct Loop: Manejar function calls iterativamente
+        max_iterations = 15
         iteration = 0
         function_calls_made = []
 
         while iteration < max_iterations:
             iteration += 1
 
-            # Verificar si hay function calls (Estructura nuevo SDK)
-            if response.candidates and response.candidates[0].content.parts:
-                parts = response.candidates[0].content.parts
-                has_function_call = False
-
-                for part in parts:
-                    if part.function_call:
-                        has_function_call = True
-                        function_call = part.function_call
-                        
-                        fname = function_call.name
-                        fargs = function_call.args
-
-                        # Log
-                        log_event(f"[AI] Tool: {fname}", player_id)
-                        function_calls_made.append({"function": fname, "args": fargs})
-
-                        # Ejecutar
-                        if fname in TOOL_FUNCTIONS:
-                            try:
-                                # Convertir args a dict python estándar
-                                args_dict = {k: v for k, v in fargs.items()}
-                                result_str = TOOL_FUNCTIONS[fname](**args_dict)
-                            except Exception as e:
-                                result_str = json.dumps({"error": str(e)})
-                        else:
-                            result_str = json.dumps({"error": "Función no encontrada"})
-
-                        # Responder a la IA con el resultado
-                        response = chat.send_message(
-                            types.Part.from_function_response(
-                                name=fname,
-                                response={"result": result_str}
-                            )
-                        )
-                        break # Procesar una llamada a la vez
-
-                if not has_function_call:
-                    break
-            else:
+            # Verificar si hay function calls en la respuesta
+            if not response.candidates or not response.candidates[0].content.parts:
                 break
+
+            content = response.candidates[0].content
+            if not content or not content.parts:
+                break
+
+            parts = content.parts
+            function_call_parts = []
+
+            # Recolectar todas las function calls en esta respuesta
+            for part in parts:
+                if part.function_call:
+                    function_call_parts.append(part)
+
+            # Si no hay function calls, terminamos el loop
+            if not function_call_parts:
+                break
+
+            # Procesar cada function call
+            function_responses = []
+
+            for fc_part in function_call_parts:
+                function_call = fc_part.function_call
+                fname = function_call.name
+                fargs = dict(function_call.args)
+
+                # Log
+                log_event(f"[AI Tool] {fname}({list(fargs.keys())})", player_id)
+                function_calls_made.append({"function": fname, "args": fargs})
+
+                # Ejecutar la función
+                if fname in TOOL_FUNCTIONS:
+                    try:
+                        result_str = TOOL_FUNCTIONS[fname](**fargs)
+                    except Exception as e:
+                        result_str = json.dumps({
+                            "status": "error",
+                            "type": "EXECUTION_ERROR",
+                            "message": str(e)
+                        }, indent=2)
+                        log_event(f"[AI Tool Error] {fname}: {e}", player_id, is_error=True)
+                else:
+                    result_str = json.dumps({
+                        "status": "error",
+                        "type": "FUNCTION_NOT_FOUND",
+                        "message": f"Función '{fname}' no encontrada"
+                    }, indent=2)
+
+                # Crear Part de respuesta
+                function_responses.append(
+                    types.Part.from_function_response(
+                        name=fname,
+                        response={"result": result_str}
+                    )
+                )
+
+            # Enviar todas las respuestas de function calls de vuelta a la IA
+            # CORRECCIÓN CRÍTICA: Enviar lista de Parts directamente, NO wrapped en Content
+            response = chat.send_message(function_responses)
 
         # 8. Extraer narrativa final
         if response.candidates and response.candidates[0].content.parts:
@@ -342,27 +360,51 @@ Procede a usar las herramientas necesarias.
             for part in response.candidates[0].content.parts:
                 if part.text:
                     final_text += part.text
-            
+
             narrative = final_text.strip()
-            log_event(f"[GM] {narrative[:100]}...", player_id)
-            
+
+            # Log de la narrativa (truncado)
+            log_event(f"[GM] {narrative[:200]}{'...' if len(narrative) > 200 else ''}", player_id)
+
             return {
                 "narrative": narrative,
                 "mrg_result": mrg_result,
                 "function_calls_made": function_calls_made
             }
 
-        return {"narrative": "...", "mrg_result": mrg_result}
+        # Fallback: Si no hay texto final
+        return {
+            "narrative": "El Game Master está procesando tu acción...",
+            "mrg_result": mrg_result,
+            "function_calls_made": function_calls_made
+        }
 
     except Exception as e:
-        log_event(f"Error AI: {e}", player_id, is_error=True)
-        return {"narrative": f"⚠️ Error de sistema: {e}", "mrg_result": None}
+        error_msg = str(e)
+        log_event(f"Error AI: {error_msg}", player_id, is_error=True)
+
+        return {
+            "narrative": f"⚠️ Error de sistema: {error_msg}",
+            "mrg_result": None,
+            "function_calls_made": []
+        }
 
 
-# --- FUNCIÓN AUXILIAR: GENERACIÓN DE IMÁGENES (SIN CAMBIOS) ---
+# =============================================================================
+# FUNCIÓN AUXILIAR: GENERACIÓN DE IMÁGENES
+# =============================================================================
 
 def generate_image(prompt: str, player_id: int) -> Optional[Any]:
-    """Genera una imagen usando el modelo de IA."""
+    """
+    Genera una imagen usando el modelo de IA.
+
+    Args:
+        prompt: Descripción de la imagen a generar
+        player_id: ID del jugador que solicita la imagen
+
+    Returns:
+        Respuesta del modelo de imagen o None si hay error
+    """
     if not ai_client:
         log_event("Intento de generar imagen sin cliente de IA inicializado.", player_id, is_error=True)
         raise ConnectionError("El servicio de IA no está disponible.")
@@ -372,8 +414,9 @@ def generate_image(prompt: str, player_id: int) -> Optional[Any]:
             model=IMAGE_MODEL_NAME,
             prompt=prompt,
         )
-        log_event(f"Imagen generada con prompt: '{prompt[:50]}...'", player_id)
+        log_event(f"Imagen generada: '{prompt[:80]}...'", player_id)
         return response
+
     except Exception as e:
         log_event(f"Error durante la generación de imagen: {e}", player_id, is_error=True)
         raise ConnectionError("Ocurrió un error al comunicarse con el servicio de IA para generar la imagen.")

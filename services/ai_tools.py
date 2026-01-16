@@ -1,7 +1,9 @@
 # services/ai_tools.py
 """
-AI Tools - Herramientas para Native Function Calling de Gemini
-Proporciona acceso "God Mode" a la base de datos para el Game Master IA.
+AI Tools - Herramientas para Native Function Calling de Gemini 2.5
+Proporciona acceso controlado a la base de datos para el Game Master IA.
+
+REFACTORIZACIÓN: Sincronizado con setup_ai_rpc_functions.sql y nuevo SDK de Google Gen AI
 """
 
 from typing import Any, Dict, List
@@ -10,341 +12,359 @@ from data.database import supabase
 from data.log_repository import log_event
 
 
-# --- HERRAMIENTA PRINCIPAL: EJECUCIÓN DE SQL ---
+# =============================================================================
+# HERRAMIENTA PRINCIPAL: EJECUCIÓN DE SQL
+# =============================================================================
 
 def execute_db_query(sql_query: str) -> str:
     """
-    Ejecuta una consulta SQL cruda en la base de datos PostgreSQL.
+    Ejecuta una consulta SQL en la base de datos PostgreSQL usando RPC de Supabase.
 
-    Esta herramienta le da a la IA acceso completo a la base de datos para:
+    Esta herramienta le da a la IA acceso controlado a la base de datos para:
     - Leer datos (SELECT)
     - Modificar datos (UPDATE, INSERT, DELETE)
     - Realizar JOINs complejos
-    - Ejecutar transacciones
+    - Verificar recursos antes de acciones
 
     Args:
         sql_query: Consulta SQL válida para PostgreSQL.
-                   Ejemplos:
-                   - "SELECT * FROM players WHERE id = 1"
-                   - "UPDATE characters SET ubicacion = 'Puente' WHERE id = 5"
-                   - "INSERT INTO planet_buildings (planet_asset_id, building_type, pops_required) VALUES (1, 'extractor_materiales', 100)"
 
     Returns:
-        String con el resultado:
-        - Para SELECT: JSON con los datos obtenidos
-        - Para UPDATE/INSERT/DELETE: Mensaje de confirmación
-        - Para errores: Descripción del error para que la IA se corrija
+        String JSON con el resultado o error para que la IA se autocorrija.
 
-    Notas de Seguridad:
-        - La IA debe ser cuidadosa con DELETE y UPDATE sin WHERE
-        - Los errores de sintaxis se devuelven a la IA para autocorrección
+    Ejemplos:
+        - SELECT: "SELECT * FROM players WHERE id = 1"
+        - UPDATE: "UPDATE characters SET ubicacion = 'Puente' WHERE id = 5"
+        - INSERT: "INSERT INTO planet_buildings (planet_asset_id, building_type) VALUES (1, 'extractor_materiales')"
     """
     try:
-        # Sanitización básica (remover comentarios SQL que podrían causar problemas)
+        # Sanitización básica
         sql_query = sql_query.strip()
 
-        # Log de la consulta (para auditoría)
-        log_event(f"[AI SQL] Ejecutando: {sql_query[:200]}...")
+        # Log de auditoría
+        log_event(f"[AI SQL] {sql_query[:150]}{'...' if len(sql_query) > 150 else ''}")
 
         # Determinar tipo de consulta
         query_type = sql_query.split()[0].upper()
 
+        # Bloquear comandos peligrosos
+        dangerous_keywords = ["DROP", "TRUNCATE", "ALTER", "CREATE", "GRANT", "REVOKE"]
+        if query_type in dangerous_keywords:
+            return json.dumps({
+                "status": "error",
+                "type": "FORBIDDEN_OPERATION",
+                "message": f"Operación '{query_type}' no permitida por seguridad.",
+                "hint": "Solo se permiten SELECT, INSERT, UPDATE, DELETE."
+            }, indent=2)
+
+        # Ejecutar según el tipo de consulta
         if query_type == "SELECT":
-            # Consulta de lectura
+            # Consultas de lectura: usar execute_sql_query (devuelve JSON array)
             response = supabase.rpc('execute_sql_query', {'query': sql_query}).execute()
 
-            # Si supabase no tiene RPC, usar postgrest directo
-            # Fallback: usar .from_().select() parseando la query
-            # Por simplicidad, asumimos que tienes un RPC function en Supabase
-            # Si no, ver implementación alternativa abajo
-
-            if response.data:
-                # Convertir a JSON legible
-                result = {
-                    "status": "success",
-                    "type": "SELECT",
-                    "rows": len(response.data) if isinstance(response.data, list) else 1,
-                    "data": response.data
-                }
-                return json.dumps(result, indent=2, default=str)
-            else:
+            # Verificar si hay error en la respuesta
+            if isinstance(response.data, dict) and response.data.get('error'):
                 return json.dumps({
-                    "status": "success",
-                    "type": "SELECT",
-                    "rows": 0,
-                    "data": []
-                })
+                    "status": "error",
+                    "type": "SQL_ERROR",
+                    "sqlstate": response.data.get('sqlstate', 'UNKNOWN'),
+                    "message": response.data.get('message', 'Error desconocido'),
+                    "detail": response.data.get('detail', ''),
+                    "hint": response.data.get('hint', 'Revisa la sintaxis SQL y nombres de columnas.')
+                }, indent=2)
+
+            # Respuesta exitosa
+            # response.data ya es un JSONB que contiene un array
+            data = response.data if response.data else []
+
+            return json.dumps({
+                "status": "success",
+                "type": "SELECT",
+                "rows": len(data) if isinstance(data, list) else 1,
+                "data": data
+            }, indent=2, default=str)
 
         elif query_type in ["UPDATE", "INSERT", "DELETE"]:
-            # Consultas de escritura
+            # Consultas de escritura: usar execute_sql_mutation
             response = supabase.rpc('execute_sql_mutation', {'query': sql_query}).execute()
+
+            # Verificar si hay error
+            if isinstance(response.data, dict) and response.data.get('error'):
+                return json.dumps({
+                    "status": "error",
+                    "type": "SQL_ERROR",
+                    "sqlstate": response.data.get('sqlstate', 'UNKNOWN'),
+                    "message": response.data.get('message', 'Error desconocido'),
+                    "detail": response.data.get('detail', ''),
+                    "hint": response.data.get('hint', 'Revisa la sintaxis SQL y restricciones de la BD.')
+                }, indent=2)
+
+            # Respuesta exitosa
+            affected_rows = response.data.get('affected_rows', 0) if isinstance(response.data, dict) else 0
 
             return json.dumps({
                 "status": "success",
                 "type": query_type,
-                "message": f"{query_type} ejecutado correctamente",
-                "affected_rows": response.data if response.data else "unknown"
+                "affected_rows": affected_rows,
+                "message": f"{query_type} ejecutado correctamente. {affected_rows} fila(s) afectada(s)."
             }, indent=2)
 
-        elif query_type == "BEGIN" or "COMMIT" in sql_query.upper() or "ROLLBACK" in sql_query.upper():
+        elif query_type in ["BEGIN", "COMMIT", "ROLLBACK"]:
             return json.dumps({
                 "status": "error",
+                "type": "TRANSACTION_NOT_ALLOWED",
                 "message": "Las transacciones explícitas no están permitidas. Cada consulta es atómica."
-            })
+            }, indent=2)
 
         else:
-            # Otras consultas (CREATE TABLE, DROP, etc.)
             return json.dumps({
                 "status": "error",
-                "message": f"Tipo de consulta '{query_type}' no permitido. Solo se permiten SELECT, INSERT, UPDATE, DELETE."
-            })
+                "type": "UNSUPPORTED_QUERY",
+                "message": f"Tipo de consulta '{query_type}' no soportado.",
+                "hint": "Solo se permiten SELECT, INSERT, UPDATE, DELETE."
+            }, indent=2)
 
     except Exception as e:
-        # Devolver el error a la IA para que se corrija
+        # Capturar errores de red, conexión, etc.
         error_message = str(e)
-
-        # Log del error
         log_event(f"[AI SQL ERROR] {error_message}", is_error=True)
 
         return json.dumps({
             "status": "error",
-            "type": "SQL_ERROR",
+            "type": "EXECUTION_ERROR",
             "message": error_message,
-            "hint": "Revisa la sintaxis SQL, nombres de tablas y columnas. Consulta el esquema de la base de datos."
+            "hint": "Error al ejecutar la consulta. Verifica la conexión con Supabase y la sintaxis SQL."
         }, indent=2)
 
 
-# --- IMPLEMENTACIÓN ALTERNATIVA SIN RPC ---
-# Si Supabase no tiene la función RPC, usar este enfoque:
-
-def execute_db_query_direct(sql_query: str) -> str:
-    """
-    Implementación directa sin RPC (usa psycopg2 o similar).
-    SOLO usar si no tienes acceso a RPC en Supabase.
-    """
-    import psycopg2
-    from config.settings import SUPABASE_URL, SUPABASE_KEY
-
-    # Extraer credenciales de conexión directa
-    # Necesitarás la connection string de Supabase (DB directo, no API)
-    # Formato: postgresql://user:pass@host:port/database
-
-    try:
-        # IMPORTANTE: Reemplazar con tu connection string real
-        # La obtienes en Supabase -> Settings -> Database -> Connection String
-        conn = psycopg2.connect(
-            "postgresql://postgres:[YOUR-PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres"
-        )
-
-        cursor = conn.cursor()
-        cursor.execute(sql_query)
-
-        query_type = sql_query.split()[0].upper()
-
-        if query_type == "SELECT":
-            columns = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
-
-            # Convertir a lista de diccionarios
-            data = [dict(zip(columns, row)) for row in rows]
-
-            result = {
-                "status": "success",
-                "type": "SELECT",
-                "rows": len(data),
-                "data": data
-            }
-        else:
-            conn.commit()
-            result = {
-                "status": "success",
-                "type": query_type,
-                "message": f"{query_type} ejecutado correctamente",
-                "affected_rows": cursor.rowcount
-            }
-
-        cursor.close()
-        conn.close()
-
-        return json.dumps(result, indent=2, default=str)
-
-    except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "type": "SQL_ERROR",
-            "message": str(e)
-        }, indent=2)
-
-
-# --- HERRAMIENTAS AUXILIARES (OPCIONALES) ---
+# =============================================================================
+# HERRAMIENTAS AUXILIARES
+# =============================================================================
 
 def get_table_schema(table_name: str) -> str:
     """
     Retorna el esquema de una tabla específica.
-    Útil si la IA necesita recordar las columnas disponibles.
+    Útil si la IA necesita conocer las columnas disponibles.
+
+    Args:
+        table_name: Nombre de la tabla (ej: 'players', 'characters')
+
+    Returns:
+        String JSON con la información del esquema o error.
     """
     try:
-        # Consultar información del esquema
-        query = f"""
-        SELECT column_name, data_type, is_nullable
-        FROM information_schema.columns
-        WHERE table_name = '{table_name}'
-        ORDER BY ordinal_position;
-        """
+        response = supabase.rpc('get_table_schema_info', {'table_name_param': table_name}).execute()
 
-        response = supabase.rpc('execute_sql_query', {'query': query}).execute()
+        # Verificar si hay error
+        if isinstance(response.data, dict) and response.data.get('error'):
+            return json.dumps({
+                "status": "error",
+                "message": response.data.get('message', f"Tabla '{table_name}' no encontrada")
+            }, indent=2)
 
-        if response.data:
-            schema_info = {
-                "table": table_name,
-                "columns": response.data
-            }
-            return json.dumps(schema_info, indent=2)
-        else:
-            return json.dumps({"error": f"Tabla '{table_name}' no encontrada"})
+        # Respuesta exitosa
+        return json.dumps({
+            "status": "success",
+            "table": table_name,
+            "schema": response.data
+        }, indent=2)
 
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return json.dumps({
+            "status": "error",
+            "message": str(e)
+        }, indent=2)
 
 
 def log_ai_action(action_description: str, player_id: int = None) -> str:
     """
     Registra una acción de la IA en los logs del sistema.
+
+    Args:
+        action_description: Descripción de la acción o evento
+        player_id: ID del jugador asociado (opcional)
+
+    Returns:
+        String JSON confirmando el registro.
     """
     try:
         log_event(f"[GM IA] {action_description}", player_id)
-        return json.dumps({"status": "logged"})
+        return json.dumps({
+            "status": "success",
+            "message": "Acción registrada en los logs del sistema"
+        }, indent=2)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return json.dumps({
+            "status": "error",
+            "message": str(e)
+        }, indent=2)
 
 
-# --- CONFIGURACIÓN PARA GEMINI ---
+# =============================================================================
+# CONFIGURACIÓN PARA GEMINI 2.5
+# =============================================================================
 
-# Declaración de herramientas en formato de Gemini 2.5
+# Declaración de herramientas en formato Google Gen AI SDK
 TOOL_DECLARATIONS = [
     {
         "function_declarations": [
             {
                 "name": "execute_db_query",
-                "description": """
-                Ejecuta consultas SQL directamente en la base de datos PostgreSQL del juego.
+                "description": """Ejecuta consultas SQL directamente en la base de datos PostgreSQL del juego.
 
-                Usa esta herramienta para:
-                - Leer el estado actual del juego (SELECT)
-                - Modificar datos del mundo (UPDATE, INSERT)
-                - Verificar recursos del jugador antes de permitir acciones
-                - Actualizar estadísticas de personajes
-                - Crear o modificar edificios planetarios
-                - Registrar eventos en logs
+USA ESTA HERRAMIENTA PARA:
+- Leer el estado actual del juego (SELECT)
+- Modificar datos del mundo (UPDATE, INSERT, DELETE)
+- Verificar recursos del jugador antes de permitir acciones
+- Actualizar estadísticas de personajes
+- Crear o modificar edificios planetarios
+- Registrar eventos
 
-                IMPORTANTE: Siempre verifica el estado actual ANTES de modificar datos.
-                Ejemplo: Antes de construir un edificio, verifica que el jugador tenga recursos suficientes.
+FLUJO CORRECTO:
+1. Primero SIEMPRE verificar el estado actual con SELECT
+2. Luego modificar con UPDATE/INSERT/DELETE
+3. Narrar el resultado
 
-                Esquema de la Base de Datos:
+ESQUEMA DE LA BASE DE DATOS:
 
-                players:
-                  - id (int)
-                  - nombre (text)
-                  - faccion_nombre (text)
-                  - creditos (int)
-                  - materiales (int)
-                  - componentes (int)
-                  - celulas_energia (int)
-                  - influencia (int)
-                  - recursos_lujo (jsonb) → {"materiales_avanzados": {"superconductores": 0, ...}, ...}
+players:
+  - id (int) - Identificador único del jugador
+  - nombre (text) - Nombre del jugador/facción
+  - faccion_nombre (text) - Nombre de la facción
+  - creditos (int) - Créditos Imperiales (CI), moneda universal
+  - materiales (int) - Recursos base para construcción
+  - componentes (int) - Componentes industriales avanzados
+  - celulas_energia (int) - Energía para operar edificios
+  - influencia (int) - Poder político/diplomático
+  - recursos_lujo (jsonb) - Recursos Tier 2 organizados por categoría
+    Estructura: {"materiales_avanzados": {"superconductores": 0, ...}, ...}
 
-                characters:
-                  - id (int)
-                  - player_id (int)
-                  - nombre (text)
-                  - stats_json (jsonb) → {"atributos": {"fuerza": 10, "astucia": 15, ...}, ...}
-                  - ubicacion (text)
-                  - estado (text) → 'Disponible', 'En Misión', 'Herido', etc.
-                  - rango (text)
+characters:
+  - id (int) - Identificador único del personaje
+  - player_id (int) - FK a players
+  - nombre (text) - Nombre del personaje
+  - stats_json (jsonb) - Estadísticas completas
+    Estructura: {"atributos": {"fuerza": 10, "astucia": 15, ...}, "salud": {...}, ...}
+  - ubicacion (text) - Ubicación actual del personaje
+  - estado (text) - Estado actual: 'Disponible', 'En Misión', 'Herido', 'Descansando'
+  - rango (text) - Rango militar/posición
 
-                planet_assets:
-                  - id (int)
-                  - player_id (int)
-                  - system_id (int)
-                  - nombre_asentamiento (text)
-                  - poblacion (int)
-                  - pops_activos (int)
-                  - pops_desempleados (int)
-                  - infraestructura_defensiva (int)
-                  - seguridad (float)
-                  - felicidad (float)
+planet_assets:
+  - id (int) - Identificador único del asentamiento
+  - player_id (int) - FK a players
+  - system_id (int) - ID del sistema estelar
+  - nombre_asentamiento (text) - Nombre de la colonia
+  - poblacion (int) - Población total (POPS)
+  - pops_activos (int) - POPS trabajando en edificios
+  - pops_desempleados (int) - POPS sin asignar
+  - infraestructura_defensiva (int) - Nivel de defensa
+  - seguridad (float) - Nivel de seguridad (0.0-1.0)
+  - felicidad (float) - Nivel de felicidad (0.0-1.0)
 
-                planet_buildings:
-                  - id (int)
-                  - planet_asset_id (int)
-                  - player_id (int)
-                  - building_type (text) → 'extractor_materiales', 'generador_energia', etc.
-                  - building_tier (int)
-                  - is_active (bool)
-                  - pops_required (int)
-                  - energy_consumption (int)
+planet_buildings:
+  - id (int) - Identificador único del edificio
+  - planet_asset_id (int) - FK a planet_assets
+  - player_id (int) - FK a players
+  - building_type (text) - Tipo: 'extractor_materiales', 'generador_energia', etc.
+  - building_tier (int) - Nivel del edificio (1, 2, 3...)
+  - is_active (bool) - Si está operativo
+  - pops_required (int) - POPS necesarios para operar
+  - energy_consumption (int) - Energía consumida por turno
 
-                luxury_extraction_sites:
-                  - id (int)
-                  - planet_asset_id (int)
-                  - player_id (int)
-                  - resource_key (text) → 'superconductores', 'antimateria', etc.
-                  - resource_category (text) → 'materiales_avanzados', 'energia_avanzada', etc.
-                  - extraction_rate (int)
-                  - is_active (bool)
+luxury_extraction_sites:
+  - id (int) - Identificador único del sitio
+  - planet_asset_id (int) - FK a planet_assets
+  - player_id (int) - FK a players
+  - resource_key (text) - Clave del recurso: 'superconductores', 'antimateria', etc.
+  - resource_category (text) - Categoría: 'materiales_avanzados', 'energia_avanzada', etc.
+  - extraction_rate (int) - Unidades extraídas por turno
+  - is_active (bool) - Si está operativo
 
-                logs:
-                  - id (int)
-                  - player_id (int, nullable)
-                  - evento_texto (text)
-                  - turno (int)
-                  - created_at (timestamp)
+logs:
+  - id (serial) - ID autoincrementable
+  - player_id (int, nullable) - FK a players
+  - evento_texto (text) - Descripción del evento
+  - turno (int) - Turno en que ocurrió
+  - created_at (timestamp) - Timestamp automático
 
-                Ejemplos de Consultas:
+EJEMPLOS DE CONSULTAS:
 
-                1. Verificar recursos del jugador:
-                   SELECT creditos, materiales, componentes FROM players WHERE id = 1;
+1. Verificar recursos del jugador:
+   SELECT creditos, materiales, componentes, celulas_energia FROM players WHERE id = 1;
 
-                2. Actualizar ubicación de personaje:
-                   UPDATE characters SET ubicacion = 'Sala de Máquinas' WHERE id = 5;
+2. Ver comandante del jugador:
+   SELECT nombre, ubicacion, estado, stats_json FROM characters WHERE player_id = 1 AND rango = 'Comandante';
 
-                3. Construir edificio (después de verificar recursos):
-                   INSERT INTO planet_buildings (planet_asset_id, player_id, building_type, pops_required, energy_consumption)
-                   VALUES (1, 1, 'extractor_materiales', 100, 5);
+3. Listar edificios en un planeta:
+   SELECT building_type, is_active, pops_required FROM planet_buildings WHERE planet_asset_id = 1;
 
-                4. Descontar recursos:
-                   UPDATE players SET creditos = creditos - 500, materiales = materiales - 50 WHERE id = 1;
+4. Construir edificio (PRIMERO verificar recursos, LUEGO construir):
+   -- Paso 1: Verificar
+   SELECT creditos, materiales FROM players WHERE id = 1;
+   -- Paso 2: Descontar recursos
+   UPDATE players SET creditos = creditos - 500, materiales = materiales - 50 WHERE id = 1;
+   -- Paso 3: Crear edificio
+   INSERT INTO planet_buildings (planet_asset_id, player_id, building_type, pops_required, energy_consumption)
+   VALUES (1, 1, 'extractor_materiales', 100, 5);
 
-                5. Consultas complejas con JOIN:
-                   SELECT p.nombre, c.nombre as comandante, c.ubicacion
-                   FROM players p
-                   JOIN characters c ON c.player_id = p.id
-                   WHERE p.id = 1;
-                """,
+5. Actualizar ubicación de personaje:
+   UPDATE characters SET ubicacion = 'Sala de Máquinas', estado = 'Descansando' WHERE id = 5;
+
+6. Consultas con JOIN:
+   SELECT p.nombre, c.nombre as comandante, c.ubicacion
+   FROM players p
+   JOIN characters c ON c.player_id = p.id
+   WHERE p.id = 1 AND c.rango = 'Comandante';
+
+COSTOS DE EDIFICIOS (REFERENCIA):
+- Extractor de Materiales: 500 CI, 10 Componentes
+- Fábrica de Componentes: 800 CI, 50 Materiales
+- Planta de Energía: 1000 CI, 30 Materiales, 20 Componentes
+- Búnker de Defensa: 1500 CI, 80 Materiales, 30 Componentes
+
+IMPORTANTE:
+- Si es una PREGUNTA (¿cuántos créditos tengo?), usa SELECT y responde con el NÚMERO EXACTO
+- Si es una ACCIÓN (construir edificio), verifica recursos primero, luego ejecuta
+- Si la query falla, recibirás un error detallado para que te corrijas
+""",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "sql_query": {
                             "type": "string",
-                            "description": "Consulta SQL válida en PostgreSQL. Debe ser sintácticamente correcta."
+                            "description": "Consulta SQL válida en PostgreSQL. Debe ser sintácticamente correcta y usar los nombres exactos de tablas y columnas del esquema."
                         }
                     },
                     "required": ["sql_query"]
                 }
             },
             {
+                "name": "get_table_schema",
+                "description": "Obtiene el esquema completo de una tabla específica, incluyendo nombres de columnas, tipos de datos y restricciones. Útil cuando la IA necesita recordar la estructura exacta de una tabla.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "table_name": {
+                            "type": "string",
+                            "description": "Nombre de la tabla (ej: 'players', 'characters', 'planet_assets', 'planet_buildings')"
+                        }
+                    },
+                    "required": ["table_name"]
+                }
+            },
+            {
                 "name": "log_ai_action",
-                "description": "Registra una acción narrativa o evento importante en los logs del sistema.",
+                "description": "Registra una acción narrativa o evento importante en los logs del sistema para auditoría y seguimiento.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "action_description": {
                             "type": "string",
-                            "description": "Descripción de la acción o evento a registrar"
+                            "description": "Descripción clara de la acción o evento a registrar"
                         },
                         "player_id": {
                             "type": "integer",
-                            "description": "ID del jugador asociado (opcional)"
+                            "description": "ID del jugador asociado (opcional, omitir para eventos globales)"
                         }
                     },
                     "required": ["action_description"]
@@ -355,9 +375,9 @@ TOOL_DECLARATIONS = [
 ]
 
 
-# Mapeo de nombres de función a implementaciones
+# Mapeo de nombres de función a implementaciones Python
 TOOL_FUNCTIONS = {
     "execute_db_query": execute_db_query,
-    "log_ai_action": log_ai_action,
-    "get_table_schema": get_table_schema
+    "get_table_schema": get_table_schema,
+    "log_ai_action": log_ai_action
 }
