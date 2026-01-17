@@ -10,7 +10,7 @@ from data.world_repository import get_pending_actions_count, get_commander_locat
 from data.player_repository import get_player_finances, delete_player_account
 
 # --- Importar las vistas del juego ---
-from .faction_roster import show_faction_roster, render_character_card
+from .faction_roster import show_faction_roster
 from .recruitment_center import show_recruitment_center
 from .galaxy_map_page import show_galaxy_map_page
 from .ship_status_page import show_ship_status_page
@@ -48,7 +48,6 @@ def render_main_game_page(cookie_manager):
     # --- 3. Renderizar la página seleccionada ---
     PAGES = {
         "Puente de Mando": _render_war_room_page,
-        "Ficha del Comandante": _render_commander_sheet_page,
         "Comando de Facción": show_faction_roster,
         "Centro de Reclutamiento": show_recruitment_center,
         "Mapa de la Galaxia": show_galaxy_map_page,
@@ -308,7 +307,7 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         st.divider()
         
         pages = ["Puente de Mando", "Mapa de la Galaxia", 
-                 "Ficha del Comandante", "Comando de Facción", "Centro de Reclutamiento", "Flota"]
+                 "Comando de Facción", "Centro de Reclutamiento", "Flota"]
         
         for p in pages:
             if st.button(p, use_container_width=True, type="primary" if st.session_state.current_page == p else "secondary"):
@@ -333,15 +332,6 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
                 st.rerun()
             else:
                 st.error("Error al eliminar.")
-
-
-def _render_commander_sheet_page():
-    """Renderiza la ficha específica del Comandante."""
-    st.title("Ficha de Servicio: Comandante")
-    player = get_player()
-    commander = get_commander()
-    if player and commander:
-        render_character_card(commander, player.id, is_commander=True)
 
 
 def _render_war_room_page():
