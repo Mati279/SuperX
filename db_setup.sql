@@ -20,6 +20,22 @@ INSERT INTO game_config (key, value) VALUES
 ('world_description', 'The known universe is in a fragile peace under the watchful eye of the Star Consortium. Megacorporations, criminal syndicates, and ancient alien factions compete for power in the shadows. Technology has advanced by leaps and bounds, but the galaxy remains a dangerous place full of mysteries.'),
 ('rules', '1. Actions are resolved based on character attributes (Strength, Agility, Intellect, Tech, Presence, Will) on a scale of 1 to 20. A higher score increases the probability of success.\n2. The GM (AI) has the final say on the outcome of an action, considering attributes and the situation.\n3. There is no health system (HP) or dice. Success is based on description and attribute logic.');
 
+-- Agregar esto al paso 2 o 3 de db_setup.sql si no está
+CREATE TABLE systems (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    x FLOAT NOT NULL,
+    y FLOAT NOT NULL,
+    star_type TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE starlanes (
+    id SERIAL PRIMARY KEY,
+    system_a_id INTEGER REFERENCES systems(id) ON DELETE CASCADE,
+    system_b_id INTEGER REFERENCES systems(id) ON DELETE CASCADE,
+    CONSTRAINT unique_starlane UNIQUE (system_a_id, system_b_id)
+);
 -- 3. Tabla PLAYERS (Tu Cuenta y Facción)
 CREATE TABLE players (
     id SERIAL PRIMARY KEY,
