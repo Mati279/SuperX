@@ -315,7 +315,23 @@ def _render_interactive_galaxy_map():
             st.info("Selecciona una estrella en el mapa o en la lista para ver detalles.")
 
     canvas_width, canvas_height = 1400, 900
-    scaled_positions = _scale_positions(systems, canvas_width, canvas_height)
+    # El margen utilizado por defecto en _scale_positions es 80
+    scaled_positions = _scale_positions(systems, canvas_width, canvas_height, margin=80)
+
+    # --- LÓGICA DE DEBUG: Círculo de 50 unidades alrededor de la base del jugador ---
+    debug_circle_json = "null"
+    if player_home_system_id and player_home_system_id in scaled_positions:
+        xs = [s.get('x', 0) for s in systems]
+        span_x = max(max(xs) - min(xs), 1)
+        # Factor de escala X: (ancho_objetivo - 2*margen) / rango_datos
+        scale_x = (canvas_width - 160) / span_x 
+        hx, hy = scaled_positions[player_home_system_id]
+        
+        debug_circle_json = json.dumps({
+            "cx": round(hx, 2),
+            "cy": round(hy, 2),
+            "r": round(50.0 * scale_x, 2) # 50 unidades de juego escaladas
+        })
 
     filtered_ids = {s['id'] for s in systems if s.get('star_class', 'G') in selected_classes}
     highlight_ids = {
@@ -386,6 +402,14 @@ def _render_interactive_galaxy_map():
         #tooltip {{ position: absolute; pointer-events: none; background: rgba(0,0,0,0.8); padding: 4px 8px; border-radius: 4px; font-size: 11px; color: #fff; display: none; border: 1px solid #444; z-index: 100; }}
         .toolbar {{ position: absolute; top: 10px; right: 10px; }}
         .btn {{ background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #333; cursor:pointer; padding: 5px 10px; border-radius: 4px; }}
+        /* Estilo para el círculo de debug */
+        .debug-distance-circle {{ 
+            fill: rgba(255, 0, 0, 0.05); 
+            stroke: rgba(255, 0, 0, 0.3); 
+            stroke-width: 2px; 
+            stroke-dasharray: 10,5; 
+            pointer-events: none;
+        }}
     </style>
     </head>
     <body>
@@ -398,6 +422,7 @@ def _render_interactive_galaxy_map():
                     <button class="btn" id="zout">-</button>
                 </div>
                 <svg id="galaxy-map" viewBox="0 0 {canvas_width} {canvas_height}">
+                    <g id="debug-layer"></g>
                     <g id="routes-layer"></g>
                     <g id="stars-layer"></g>
                 </svg>
@@ -409,10 +434,22 @@ def _render_interactive_galaxy_map():
             const filteredIds = new Set({filtered_json});
             const highlightIds = new Set({highlight_json});
             const playerHomeSystemIds = new Set({player_home_json});
+            const debugCircle = {debug_circle_json};
 
             const starsLayer = document.getElementById("stars-layer");
             const routesLayer = document.getElementById("routes-layer");
+            const debugLayer = document.getElementById("debug-layer");
             const tooltip = document.getElementById("tooltip");
+
+            // Dibujar círculo de debug si existe
+            if (debugCircle) {{
+                const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                circle.setAttribute("cx", debugCircle.cx);
+                circle.setAttribute("cy", debugCircle.cy);
+                circle.setAttribute("r", debugCircle.r);
+                circle.setAttribute("class", "debug-distance-circle");
+                debugLayer.appendChild(circle);
+            }}
 
             routes.forEach(r => {{
                 const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
