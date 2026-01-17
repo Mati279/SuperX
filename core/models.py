@@ -72,14 +72,17 @@ class CharacterProgression(BaseModel):
     rango: str = Field(default="Recluta")
 
 class CharacterAttributes(BaseModel):
-    """Atributos Primarios."""
+    """
+    Atributos Primarios.
+    Alineados con SKILL_MAPPING en constants.py para cálculo de habilidades.
+    """
     model_config = ConfigDict(extra='allow')
     fuerza: int = Field(default=5, ge=1, le=20)
-    destreza: int = Field(default=5, ge=1, le=20)
-    constitucion: int = Field(default=5, ge=1, le=20)
-    inteligencia: int = Field(default=5, ge=1, le=20)
-    sabiduria: int = Field(default=5, ge=1, le=20)
-    carisma: int = Field(default=5, ge=1, le=20)
+    agilidad: int = Field(default=5, ge=1, le=20)
+    tecnica: int = Field(default=5, ge=1, le=20)
+    intelecto: int = Field(default=5, ge=1, le=20)
+    voluntad: int = Field(default=5, ge=1, le=20)
+    presencia: int = Field(default=5, ge=1, le=20)
 
 class CharacterCapabilities(BaseModel):
     """Núcleo de Capacidades."""

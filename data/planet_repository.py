@@ -15,6 +15,24 @@ def _get_db():
     return get_supabase()
 
 
+# --- CONSULTA DE PLANETAS (TABLA MUNDIAL) ---
+
+def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene información de un planeta de la tabla mundial 'planets'.
+    Útil para obtener datos como nombre, sistema, bioma, etc.
+    """
+    try:
+        response = _get_db().table("planets")\
+            .select("*")\
+            .eq("id", planet_id)\
+            .single()\
+            .execute()
+        return response.data if response.data else None
+    except Exception:
+        return None
+
+
 # --- GESTIÓN DE ACTIVOS PLANETARIOS ---
 
 def get_planet_asset(planet_id: int, player_id: int) -> Optional[Dict[str, Any]]:

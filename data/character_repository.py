@@ -269,4 +269,73 @@ def update_character_level(character_id: int, new_level: int, new_stats_json: Di
     })
 
 def recruit_character(player_id: int, character_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Recluta un personaje con datos ya generados."""
     return create_character(player_id, character_data)
+
+
+def recruit_random_character_with_ai(
+    player_id: int,
+    location_planet_id: Optional[int] = None,
+    predominant_race: Optional[str] = None,
+    min_level: int = 1,
+    max_level: int = 1
+) -> Optional[Dict[str, Any]]:
+    """
+    Genera y recluta un personaje aleatorio usando IA para nombre y biografía.
+
+    Esta función delega al servicio de generación de personajes.
+
+    Args:
+        player_id: ID del jugador que recluta
+        location_planet_id: ID del planeta donde se recluta (para raza predominante)
+        predominant_race: Raza predominante del planeta
+        min_level: Nivel mínimo del recluta
+        max_level: Nivel máximo del recluta
+
+    Returns:
+        Dict con datos del personaje creado, o None si falla
+    """
+    from services.character_generation_service import recruit_character_with_ai
+
+    return recruit_character_with_ai(
+        player_id=player_id,
+        location_planet_id=location_planet_id,
+        predominant_race=predominant_race,
+        min_level=min_level,
+        max_level=max_level
+    )
+
+
+def get_recruitment_candidates(
+    player_id: int,
+    pool_size: int = 3,
+    location_planet_id: Optional[int] = None,
+    predominant_race: Optional[str] = None,
+    min_level: int = 1,
+    max_level: int = 1
+) -> list[Dict[str, Any]]:
+    """
+    Genera un pool de candidatos para reclutamiento.
+    NO los guarda en BD - el jugador debe elegir uno.
+
+    Args:
+        player_id: ID del jugador
+        pool_size: Cantidad de candidatos a generar
+        location_planet_id: ID del planeta
+        predominant_race: Raza predominante
+        min_level: Nivel mínimo
+        max_level: Nivel máximo
+
+    Returns:
+        Lista de candidatos generados (sin ID, no persistidos)
+    """
+    from services.character_generation_service import generate_character_pool
+
+    return generate_character_pool(
+        player_id=player_id,
+        pool_size=pool_size,
+        location_planet_id=location_planet_id,
+        predominant_race=predominant_race,
+        min_level=min_level,
+        max_level=max_level
+    )

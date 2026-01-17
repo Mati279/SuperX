@@ -43,9 +43,29 @@ LOG_LIMIT_DEFAULT = 10            # Cantidad de logs a mostrar por defecto
 WORLD_STATE_SINGLETON_ID = 1      # ID único de la fila world_state
 
 # --- Configuración de Personajes ---
-DEFAULT_RECRUIT_RANK = "Operativo"
+DEFAULT_RECRUIT_RANK = "Iniciado"
 DEFAULT_RECRUIT_STATUS = "Disponible"
 DEFAULT_RECRUIT_LOCATION = "Barracones"
 COMMANDER_RANK = "Comandante"
 COMMANDER_STATUS = "Activo"
 COMMANDER_LOCATION = "Puente de Mando"
+
+# --- Configuración de Reclutamiento ---
+# Rango de edad para personajes generados (distribución aleatoria)
+RECRUIT_AGE_MIN = 16
+RECRUIT_AGE_MAX = 70
+
+# Probabilidad de que el recluta sea de la raza predominante del planeta (50%)
+PREDOMINANT_RACE_PROBABILITY = 0.5
+
+# Nivel mínimo para asignar clase (Novato obligatorio para 1-2)
+CLASS_ASSIGNMENT_MIN_LEVEL = 3
+
+# Cantidad de candidatos por defecto en pool de reclutamiento
+DEFAULT_RECRUITMENT_POOL_SIZE = 3
+
+# Costo base de reclutamiento por nivel
+RECRUITMENT_COST_PER_LEVEL = 200
+
+# Tiempo de reclutamiento en ticks
+RECRUITMENT_TIME_TICKS = 1

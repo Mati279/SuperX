@@ -2,6 +2,11 @@
 """
 Motor de Personajes - Lógica pura de generación, progresión y level up.
 Refactorizado para generar la estructura completa del CharacterSchema V2.
+
+NOTA: Para generación de personajes con IA, usar:
+    services.character_generation_service.generate_random_character_with_ai()
+
+Este módulo provee la lógica base de progresión y la generación sin IA.
 """
 
 import random
@@ -9,6 +14,12 @@ from typing import Dict, Any, List, Tuple, Optional
 from core.constants import RACES, CLASSES, SKILL_MAPPING
 from core.rules import calculate_skills
 from core.models import BiologicalSex, CharacterRole
+from config.app_constants import (
+    RECRUIT_AGE_MIN,
+    RECRUIT_AGE_MAX,
+    CLASS_ASSIGNMENT_MIN_LEVEL,
+    DEFAULT_RECRUIT_RANK
+)
 
 # =============================================================================
 # CONSTANTES DE PROGRESIÓN (Basadas en Módulo 19)
@@ -24,10 +35,14 @@ SKILL_POINTS_PER_LEVEL = 4
 ATTRIBUTE_POINT_LEVELS = [5, 10, 15, 20]
 FEAT_LEVELS = [1, 5, 10, 15, 20]
 
-BASE_ATTRIBUTE_MIN = 8
-BASE_ATTRIBUTE_MAX = 12
+# Atributos base (alineados con SKILL_MAPPING)
+BASE_ATTRIBUTE_MIN = 5
+BASE_ATTRIBUTE_MAX = 10
 MAX_ATTRIBUTE_VALUE = 20
 MIN_ATTRIBUTE_VALUE = 3
+
+# Lista de atributos del sistema (alineados con SKILL_MAPPING en constants.py)
+ATTRIBUTE_NAMES = ["fuerza", "agilidad", "tecnica", "intelecto", "voluntad", "presencia"]
 
 AVAILABLE_FEATS = [
     "Liderazgo Táctico", "Logística Avanzada", "Experto en Combate", "Piloto As",
@@ -53,6 +68,9 @@ def generate_random_character(
 ) -> Dict[str, Any]:
     """
     Genera un personaje completo siguiendo el nuevo CharacterSchema V2.
+
+    NOTA: Esta función genera nombres localmente. Para generación con IA,
+    usar services.character_generation_service.generate_random_character_with_ai()
     """
     existing_names = existing_names or []
 
@@ -63,8 +81,8 @@ def generate_random_character(
     # 2. Selección de Raza
     race_name, race_data = random.choice(list(RACES.items()))
 
-    # 3. Selección de Clase (REGLA: Obligatoria a nivel 3, sino Novato)
-    if level >= 3:
+    # 3. Selección de Clase (REGLA: Obligatoria a nivel CLASS_ASSIGNMENT_MIN_LEVEL, sino Novato)
+    if level >= CLASS_ASSIGNMENT_MIN_LEVEL:
         class_name, class_data = random.choice(list(CLASSES.items()))
     else:
         class_name = "Novato"
@@ -72,7 +90,7 @@ def generate_random_character(
 
     # 4. Generar Bio (Nombre, Apellido, Edad, Sexo)
     name, surname = _generate_full_name(race_name, existing_names)
-    age = random.randint(18, 50)
+    age = random.randint(RECRUIT_AGE_MIN, RECRUIT_AGE_MAX)
     sex = random.choice([BiologicalSex.MALE, BiologicalSex.FEMALE])
     
     # 5. Generar Atributos
@@ -123,7 +141,7 @@ def generate_random_character(
             "clase": class_name,
             "xp": xp,
             "xp_next": get_xp_for_level(level + 1) if level < 20 else xp,
-            "rango": "Recluta" if level < 5 else "Oficial"
+            "rango": DEFAULT_RECRUIT_RANK if level < 5 else "Oficial"
         },
         "capacidades": {
             "atributos": attributes,
@@ -173,14 +191,8 @@ def _generate_full_name(race: str, existing: List[str]) -> Tuple[str, str]:
 
 
 def _generate_base_attributes() -> Dict[str, int]:
-    return {
-        "fuerza": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
-        "destreza": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
-        "constitucion": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
-        "inteligencia": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
-        "sabiduria": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
-        "carisma": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
-    }
+    """Genera atributos base aleatorios usando los nombres del sistema."""
+    return {attr: random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX) for attr in ATTRIBUTE_NAMES}
 
 def _distribute_random_points(attributes: Dict[str, int], points: int) -> None:
     attr_keys = list(attributes.keys())
