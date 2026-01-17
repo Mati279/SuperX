@@ -10,6 +10,9 @@ from google.genai import types
 
 from data.database import get_supabase
 from data.player_repository import get_player_finances
+# IMPORTACIONES NUEVAS PARA UBICACIÓN
+from data.world_repository import get_commander_location_display
+from data.character_repository import get_commander_by_player_id
 
 
 def _get_db():
@@ -24,7 +27,7 @@ TOOL_DECLARATIONS = [
         function_declarations=[
             types.FunctionDeclaration(
                 name="get_player_status",
-                description="Obtiene el estado financiero y recursos actuales del jugador.",
+                description="Obtiene el estado financiero, recursos y UBICACIÓN actual de la base principal.",
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
@@ -38,7 +41,7 @@ TOOL_DECLARATIONS = [
             ),
             types.FunctionDeclaration(
                 name="scan_system_data",
-                description="Busca información astronómica de un sistema estelar por su nombre o ID en la base de datos.",
+                description="Busca información astronómica de un sistema estelar por su nombre o ID.",
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
@@ -77,31 +80,32 @@ TOOL_DECLARATIONS = [
 
 def get_player_status(player_id: int) -> str:
     """
-    Obtiene el estado financiero del jugador.
-
-    Args:
-        player_id: ID del jugador
-
-    Returns:
-        JSON con los recursos del jugador
+    Obtiene el estado financiero Y LA UBICACIÓN del jugador.
     """
     try:
+        # 1. Finanzas
         finances = get_player_finances(player_id)
-        return json.dumps(finances, ensure_ascii=False)
+        
+        # 2. Ubicación (Requiere buscar al comandante primero)
+        commander = get_commander_by_player_id(player_id)
+        location_info = {"system": "Desconocido", "planet": "---", "base": "Sin Base"}
+        
+        if commander:
+             # Usamos la nueva lógica centralizada en world_repository
+             location_info = get_commander_location_display(commander['id'])
+        
+        status_report = {
+            "recursos": finances,
+            "ubicacion_base_principal": location_info
+        }
+        
+        return json.dumps(status_report, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"error": f"Error obteniendo estado: {e}"})
 
 
 def scan_system_data(system_identifier: str) -> str:
-    """
-    Escanea datos de un sistema estelar.
-
-    Args:
-        system_identifier: Nombre o ID del sistema
-
-    Returns:
-        JSON con información del sistema y sus planetas
-    """
+    """Escanea datos de un sistema estelar."""
     try:
         db = _get_db()
         query = db.table("systems").select("*")
@@ -150,16 +154,7 @@ def scan_system_data(system_identifier: str) -> str:
 
 
 def check_route_safety(origin_sys_id: int, target_sys_id: int) -> str:
-    """
-    Verifica la seguridad de una ruta entre dos sistemas.
-
-    Args:
-        origin_sys_id: ID del sistema origen
-        target_sys_id: ID del sistema destino
-
-    Returns:
-        JSON con información de la ruta
-    """
+    """Verifica la seguridad de una ruta."""
     try:
         db = _get_db()
         res = db.table("starlanes")\
@@ -196,16 +191,6 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
 
 
 def execute_tool(function_name: str, arguments: Dict[str, Any]) -> str:
-    """
-    Ejecuta una herramienta por nombre con los argumentos dados.
-
-    Args:
-        function_name: Nombre de la función a ejecutar
-        arguments: Diccionario con argumentos
-
-    Returns:
-        Resultado de la función como JSON string
-    """
     if function_name not in TOOL_FUNCTIONS:
         return json.dumps({"error": f"Función desconocida: {function_name}"})
 

@@ -114,20 +114,29 @@ def _render_step_3_attributes():
         else: st.error(f"⛔ Has gastado demasiados puntos: **{remaining}**")
     
     with c_res2:
-        if st.button("Finalizar Creación", type="primary", disabled=(remaining < 0)):
+        if st.button("Finalizar Creación y Desplegar", type="primary", disabled=(remaining < 0)):
             try:
-                with st.spinner("Forjando leyenda..."):
-                    # Actualizar el comandante existente (creado por genesis_engine en Paso 1)
+                with st.spinner("Estableciendo base de operaciones y protocolos iniciales..."):
+                    # 1. Actualizar el comandante (Perfil y Stats)
                     commander = update_commander_profile(
                         st.session_state.temp_player['id'],
                         st.session_state.temp_char_bio,
                         final_attrs
                     )
+                    
+                    # 2. EJECUTAR PROTOCOLO GÉNESIS (Creación de Base y Ubicación)
+                    from core.genesis_engine import genesis_protocol
+                    genesis_success = genesis_protocol(st.session_state.temp_player['id'])
+                    
+                    if not genesis_success:
+                        st.error("Error crítico estableciendo la base planetaria. El usuario se creó pero no tiene ubicación.")
+                        return
+
                 if commander:
                     st.balloons()
                     login_user(st.session_state.temp_player, commander)
                 else:
-                    # Fallback: obtener comandante existente si update no devolvió data
+                    # Fallback de seguridad
                     commander = get_commander_by_player_id(st.session_state.temp_player['id'])
                     if commander:
                         st.balloons()

@@ -1,17 +1,17 @@
 # core/genesis_engine.py
 """
-Genesis Engine - Protocolo v1.5 "Infiltración Silenciosa"
-Maneja la lógica de inicialización de nuevas facciones bajo reglas estrictas de topología y dotación.
+Genesis Engine - Protocolo v2.0 "Asentamiento Seguro"
+Maneja la lógica de inicialización de nuevas facciones, asegurando una posición 
+segura en la galaxia y estableciendo la primera base planetaria.
 """
 
 import random
 from typing import Dict, Any, List
 from data.database import supabase
 from data.log_repository import log_event
-# CORRECCIÓN: Importación correcta desde constants
 from core.world_constants import STAR_TYPES
 
-# --- CONSTANTES DEL PROTOCOLO 19.2 ---
+# --- CONSTANTES DEL PROTOCOLO ---
 GENESIS_XP = 3265
 GENESIS_ATTR_POINTS = 60
 GENESIS_SKILL_POINTS = 24
@@ -23,113 +23,137 @@ INITIAL_MATERIALS = 500
 INITIAL_COMPONENTS = 200
 INITIAL_ENERGY = 100
 
-# Topología de Seguridad
-MIN_DIST_PLAYER = 50.0  # Aprox 5 saltos (asumiendo ~10u por salto)
-MIN_DIST_FACTION = 20.0 # Aprox 2 saltos
+# Topología de Seguridad (Distancia Euclidiana aprox.)
+MIN_DIST_PLAYER = 50.0  # ~5 Saltos (Asumiendo densidad media)
+MIN_DIST_FACTION = 30.0 # ~3 Saltos
 
-def find_safe_starting_node() -> int:
+# Generador de nombres de bases
+BASE_NAMES_PREFIX = ["Puesto", "Fuerte", "Colonia", "Base", "Estación", "Nexo", "Avanzada", "Ciudadela"]
+BASE_NAMES_SUFFIX = ["Alpha", "Prime", "Zero", "Nova", "Aegis", "Vanguard", "Origin", "Zenith"]
+
+def genesis_protocol(player_id: int) -> bool:
     """
-    19.1. Localización Inicial: Topología de Seguridad.
-    Busca un sistema que cumpla con las distancias de seguridad respecto a otros jugadores.
+    Ejecuta la secuencia completa de inicialización para un nuevo jugador.
+    1. Busca sistema seguro (lejos de otros jugadores).
+    2. Selecciona un planeta válido en ese sistema.
+    3. Crea el Asset (Base Principal) en la DB.
+    4. Asigna recursos iniciales.
+    5. Inicializa Niebla de Guerra.
     """
     try:
-        # 1. Obtener todos los sistemas
-        response_sys = supabase.table("systems").select("id, x, y, z").execute()
-        all_systems = response_sys.data if response_sys.data else []
-        
-        if not all_systems:
-             log_event("❌ CRÍTICO: No se encontraron sistemas. Ejecuta populate_galaxy_db.py primero.", is_error=True)
-             return 1
+        log_event("Iniciando Protocolo Génesis...", player_id)
 
-        # 2. Obtener sistemas ocupados
-        response_assets = supabase.table("planet_assets").select("system_id, player_id").execute()
-        occupied_map = {row['system_id']: row['player_id'] for row in response_assets.data} if response_assets.data else {}
+        # 1. Buscar Sistema Seguro
+        system_id = _find_safe_starting_node()
         
-        candidates = [s for s in all_systems if s['id'] not in occupied_map]
+        # 2. Seleccionar Planeta en ese sistema
+        # Intentamos buscar planetas que no sean gigantes gaseosos si es posible,
+        # pero para asegurar robustez, tomamos cualquiera disponible.
+        response_planets = supabase.table("planets").select("id, name, biome").eq("system_id", system_id).execute()
         
-        # Si no hay nadie, uno al azar
-        if not occupied_map:
-            if candidates:
-                return random.choice(candidates)['id']
-            return all_systems[0]['id']
+        if not response_planets.data:
+            log_event(f"⚠ Sistema {system_id} vacío. Buscando planeta de respaldo...", player_id, is_error=True)
+            # Fallback: buscar cualquier planeta en la galaxia si el sistema falló (caso borde)
+            fallback = supabase.table("planets").select("id, name, system_id").limit(1).single().execute()
+            if not fallback.data:
+                return False
+            target_planet = fallback.data
+            system_id = target_planet['system_id'] # Actualizar sistema al del fallback
+        else:
+            target_planet = random.choice(response_planets.data)
+        
+        # 3. Crear el Asset (La Base)
+        base_name = f"{random.choice(BASE_NAMES_PREFIX)} {random.choice(BASE_NAMES_SUFFIX)}"
+        
+        asset_data = {
+            "player_id": player_id,
+            "system_id": system_id,
+            "planet_id": target_planet['id'],
+            "nombre_asentamiento": base_name,
+            "tipo": "Base Principal",
+            "poblacion": 100, # Población inicial (Colonizadores)
+            "nivel_infraestructura": 1,
+            "defensa_base": 10
+        }
+        
+        supabase.table("planet_assets").insert(asset_data).execute()
+        
+        # 4. Recursos Iniciales
+        apply_genesis_inventory(player_id)
+        
+        # 5. Niebla de Guerra
+        initialize_fog_of_war(player_id, system_id)
+        
+        log_event(f"✅ Protocolo Génesis completado. Base establecida en {target_planet.get('name', 'Planeta')} ({base_name}).", player_id)
+        return True
 
-        # 3. Filtrado por distancia
-        occupied_systems_data = [s for s in all_systems if s['id'] in occupied_map]
-        safe_candidates = []
+    except Exception as e:
+        log_event(f"❌ Error Crítico en Genesis Protocol: {e}", player_id, is_error=True)
+        return False
+
+def _find_safe_starting_node() -> int:
+    """
+    Lógica de topología para encontrar un sistema aislado.
+    Retorna el ID del sistema candidato.
+    """
+    try:
+        # Traer todos los sistemas (coordenadas)
+        all_systems_res = supabase.table("systems").select("id, x, y").execute()
+        all_systems = all_systems_res.data if all_systems_res.data else []
         
-        for cand in candidates:
-            is_safe = True
-            c_pos = (cand['x'], cand['y'], cand['z'])
+        if not all_systems: return 1 # Fallback ID 1
+        
+        # Traer ubicaciones ocupadas (donde ya hay bases)
+        occupied_assets_res = supabase.table("planet_assets").select("system_id").execute()
+        occupied_ids = {row['system_id'] for row in occupied_assets_res.data} if occupied_assets_res.data else set()
+        
+        # Si es el primer jugador de la galaxia
+        if not occupied_ids:
+            return random.choice(all_systems)['id']
+
+        # Filtrar candidatos seguros
+        candidates = []
+        occupied_systems_data = [s for s in all_systems if s['id'] in occupied_ids]
+
+        for sys in all_systems:
+            if sys['id'] in occupied_ids: 
+                continue # No spawnear en sistema ya ocupado
             
+            is_safe = True
+            sys_pos = (sys['x'], sys['y'])
+            
+            # Verificar distancia contra todos los ocupados
             for occ in occupied_systems_data:
-                o_pos = (occ['x'], occ['y'], occ['z'])
-                dist = ((c_pos[0]-o_pos[0])**2 + (c_pos[1]-o_pos[1])**2 + (c_pos[2]-o_pos[2])**2)**0.5
+                occ_pos = (occ['x'], occ['y'])
+                # Distancia Euclidiana 2D
+                dist = ((sys_pos[0]-occ_pos[0])**2 + (sys_pos[1]-occ_pos[1])**2)**0.5
                 
-                if dist < MIN_DIST_PLAYER: 
+                if dist < MIN_DIST_PLAYER:
                     is_safe = False
                     break
             
             if is_safe:
-                safe_candidates.append(cand)
-                
-        if safe_candidates:
-            return random.choice(safe_candidates)['id']
-        elif candidates:
+                candidates.append(sys)
+        
+        if candidates:
             return random.choice(candidates)['id']
         else:
+            # Si la galaxia está muy llena y no hay lugar "seguro" perfecto,
+            # elegimos uno aleatorio que no esté ocupado directamente.
+            available = [s for s in all_systems if s['id'] not in occupied_ids]
+            if available:
+                log_event("⚠ Galaxia saturada (distancias), asignando sistema libre disponible.")
+                return random.choice(available)['id']
+            
+            # Último recurso: compartir sistema (no debería pasar con mapa grande)
             return random.choice(all_systems)['id']
 
     except Exception as e:
-        log_event(f"Error calculando nodo seguro: {e}", is_error=True)
+        print(f"Error calculando nodo seguro: {e}")
         return 1
 
-
-def generate_genesis_commander_stats(name: str) -> Dict[str, Any]:
-    """19.2.A Genera las estadísticas de un Comandante Nivel 6."""
-    base_attrs = {
-        "fuerza": 5, "destreza": 5, "constitucion": 5,
-        "inteligencia": 5, "sabiduria": 5, "carisma": 5
-    }
-    
-    points_left = GENESIS_ATTR_POINTS - 30 
-    weights = ["inteligencia", "carisma", "sabiduria", "destreza", "constitucion", "fuerza"]
-    
-    while points_left > 0:
-        attr = random.choice(weights[:3] if points_left > 15 else weights)
-        if base_attrs[attr] < 18:
-            base_attrs[attr] += 1
-            points_left -= 1
-
-    base_attrs["inteligencia"] += 1
-
-    stats = {
-        "nivel": 6,
-        "xp": GENESIS_XP,
-        "atributos": base_attrs,
-        "habilidades": _generate_skills(GENESIS_SKILL_POINTS),
-        "feats": ["Liderazgo Táctico", "Logística Avanzada"],
-        "clase": "Comandante Operativo"
-    }
-    return stats
-
-def _generate_skills(points: int) -> Dict[str, int]:
-    skills = {"pilotaje": 0, "tactica": 0, "diplomacia": 0, "tecnologia": 0, "gestion": 0}
-    
-    master_skill = random.choice(["tactica", "gestion", "tecnologia"])
-    skills[master_skill] = 10 
-    points -= 10
-    
-    keys = list(skills.keys())
-    while points > 0:
-        k = random.choice(keys)
-        if skills[k] < 8:
-            skills[k] += 1
-            points -= 1
-            
-    return skills
-
 def apply_genesis_inventory(player_id: int):
-    """19.2.B Inventario de Suministros (MMFR)."""
+    """Asigna el inventario inicial de suministros."""
     from data.player_repository import update_player_resources
     
     resources = {
@@ -142,15 +166,19 @@ def apply_genesis_inventory(player_id: int):
     update_player_resources(player_id, resources)
 
 def initialize_fog_of_war(player_id: int, start_system_id: int):
-    """19.3. Conocimiento Inicial (Visión Híbrida)."""
-    # 1. Sistema Natal
+    """
+    Revela el sistema inicial y sus vecinos inmediatos.
+    """
+    # 1. Sistema Natal (Visión Total - Nivel 4)
     _grant_visibility(player_id, start_system_id, level=4)
     
-    # 2. Sistemas Conectados
+    # 2. Sistemas Conectados (Visión Parcial - Nivel 2)
     try:
+        # Buscar conexiones donde A es origen
         response_a = supabase.table("starlanes").select("system_b_id").eq("system_a_id", start_system_id).execute()
         neighbors = [row['system_b_id'] for row in response_a.data] if response_a.data else []
         
+        # Buscar conexiones donde B es origen
         response_b = supabase.table("starlanes").select("system_a_id").eq("system_b_id", start_system_id).execute()
         neighbors += [row['system_a_id'] for row in response_b.data] if response_b.data else []
         
@@ -160,30 +188,21 @@ def initialize_fog_of_war(player_id: int, start_system_id: int):
     except Exception as e:
         log_event(f"Error calculando vecinos FOW: {e}", player_id, is_error=True)
 
-    # 3. Mapa Estelar Antiguo
-    try:
-        response_all = supabase.table("systems").select("id").execute()
-        all_sys = response_all.data if response_all.data else []
-        
-        if not all_sys: return
-
-        total = len(all_sys)
-        ancient_map_count = int(total * 0.20)
-        
-        known = {start_system_id} | set(neighbors)
-        candidates = [s['id'] for s in all_sys if s['id'] not in known]
-        
-        if candidates:
-            selected = random.sample(candidates, k=min(ancient_map_count, len(candidates)))
-            for sid in selected:
-                _grant_visibility(player_id, sid, level=1)
-                
-    except Exception as e:
-        log_event(f"Error generando mapa antiguo: {e}", player_id, is_error=True)
-
 def _grant_visibility(player_id: int, system_id: int, level: int):
     try:
         data = {"player_id": player_id, "system_id": system_id, "scan_level": level}
         supabase.table("player_exploration").upsert(data, on_conflict="player_id, system_id").execute()
     except Exception as e:
         print(f"Error granting visibility: {e}")
+
+# Funciones legacy para generación de stats (mantenidas por compatibilidad si se usan)
+def generate_genesis_commander_stats(name: str) -> Dict[str, Any]:
+    base_attrs = {"fuerza": 5, "destreza": 5, "constitucion": 5, "inteligencia": 5, "sabiduria": 5, "carisma": 5}
+    stats = {
+        "nivel": 6,
+        "xp": GENESIS_XP,
+        "atributos": base_attrs,
+        "habilidades": {"tactica": 10},
+        "clase": "Comandante"
+    }
+    return stats
