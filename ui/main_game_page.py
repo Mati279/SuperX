@@ -66,129 +66,88 @@ def render_main_game_page(cookie_manager):
 def _render_sticky_top_hud(player, commander):
     """
     Renderiza la barra superior STICKY (siempre visible).
-    Layout: Recursos (Izquierda/Centro) + Ubicación (Derecha).
+    Layout: Recursos CENTRADOS.
     """
     finances = get_player_finances(player.id)
-    location_data = get_commander_location_display(commander.id)
 
     # Helper para evitar crash por NoneType
     def safe_val(key):
         val = finances.get(key) if finances else None
         return val if val is not None else 0
 
-    # Preparar valores para el HTML
+    # Preparar valores para el HTML (evita problemas de interpolación)
     creditos = f"{safe_val('creditos'):,}"
     materiales = f"{safe_val('materiales'):,}"
     componentes = f"{safe_val('componentes'):,}"
     celulas = f"{safe_val('celulas_energia'):,}"
     influencia = f"{safe_val('influencia'):,}"
-    
-    # Datos de Ubicación
-    loc_system = location_data.get("system", "Desconocido")
-    loc_planet = location_data.get("planet", "---")
-    loc_base = location_data.get("base", "---")
 
     # CSS separado para mayor claridad
     hud_css = """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700&family=Source+Code+Pro:wght@400;600&display=swap');
-
     .top-hud-sticky {
         position: fixed;
         top: 0;
         left: 0;
         right: 0;
-        height: 60px;
+        height: 50px;
         z-index: 999999;
-        background: linear-gradient(180deg, #1e2129 0%, #262730 100%);
-        border-bottom: 2px solid #444;
+        background-color: #262730;
+        border-bottom: 1px solid #444;
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        padding: 0 30px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.6);
+        justify-content: center;
+        padding: 0 20px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.5);
     }
 
-    /* Recursos */
-    .hud-left-panel {
+    .hud-resource-group {
         display: flex;
-        gap: 30px;
+        gap: 40px;
         align-items: center;
+        height: 100%;
     }
 
     .hud-metric {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
         cursor: help;
-        transition: transform 0.2s;
+        padding: 2px 8px;
+        border-radius: 4px;
     }
 
     .hud-metric:hover {
-        transform: translateY(-2px);
+        background-color: rgba(255,255,255,0.05);
     }
 
     .hud-icon {
-        font-size: 1.2em;
+        font-size: 1.1em;
+        line-height: 1;
+        opacity: 0.8;
     }
 
     .hud-value {
         font-family: 'Source Code Pro', monospace;
         font-weight: 600;
-        color: #e0e0e0;
-        font-size: 1em;
+        color: #e0e0e0 !important;
+        font-size: 0.95em;
+        white-space: nowrap;
     }
 
-    /* Ubicación */
-    .hud-right-panel {
-        display: flex;
-        align-items: center;
-        background: rgba(0, 0, 0, 0.3);
-        padding: 5px 15px;
-        border-radius: 20px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-    }
-
-    .loc-container {
-        font-family: 'Orbitron', sans-serif;
-        font-size: 0.85em;
-        color: #8ab4f8;
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        letter-spacing: 1px;
-    }
-
-    .loc-item {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-
-    .loc-separator {
-        color: #444;
-        font-weight: 300;
-    }
-    
-    .loc-icon-small {
-        font-size: 1.1em;
-        filter: drop-shadow(0 0 2px rgba(138, 180, 248, 0.5));
-    }
-
-    @media (max-width: 900px) {
-        .top-hud-sticky { padding: 0 10px; height: auto; flex-wrap: wrap; justify-content: center; gap: 5px; padding-bottom: 5px; }
-        .hud-left-panel { gap: 15px; margin-bottom: 5px; }
-        .hud-value { font-size: 0.85em; }
-        .hud-icon { font-size: 1em; }
-        .loc-container { font-size: 0.75em; }
+    @media (max-width: 800px) {
+        .hud-value { font-size: 0.8em; }
+        .hud-icon { font-size: 1.0em; }
+        .top-hud-sticky { padding-left: 60px; }
+        .hud-resource-group { gap: 15px; }
     }
     </style>
     """
 
-    # HTML
+    # HTML con valores ya interpolados
     hud_html = f"""
     <div class="top-hud-sticky">
-        <div class="hud-left-panel">
+        <div class="hud-resource-group">
             <div class="hud-metric" title="Créditos Estándar">
                 <span class="hud-icon">💳</span>
                 <span class="hud-value">{creditos}</span>
@@ -210,25 +169,9 @@ def _render_sticky_top_hud(player, commander):
                 <span class="hud-value">{influencia}</span>
             </div>
         </div>
-
-        <div class="hud-right-panel">
-            <div class="loc-container">
-                <div class="loc-item" title="Sistema Actual">
-                    <span class="loc-icon-small">☀</span> {loc_system}
-                </div>
-                <span class="loc-separator">|</span>
-                <div class="loc-item" title="Cuerpo Celeste">
-                    <span class="loc-icon-small">🪐</span> {loc_planet}
-                </div>
-                <span class="loc-separator">|</span>
-                <div class="loc-item" title="Base / Nave Asignada">
-                    <span class="loc-icon-small">🏛</span> {loc_base}
-                </div>
-            </div>
-        </div>
     </div>
 
-    <div style="height: 70px;"></div>
+    <div style="height: 60px;"></div>
     """
 
     st.markdown(hud_css + hud_html, unsafe_allow_html=True)
@@ -237,8 +180,66 @@ def _render_sticky_top_hud(player, commander):
 def _render_navigation_sidebar(player, commander, cookie_manager):
     """Sidebar con reloj galáctico, identidad y menú de navegación."""
     status = get_world_status_display()
+    
+    # Obtener ubicación
+    loc_data = get_commander_location_display(commander.id)
+    loc_system = loc_data.get("system", "Desconocido")
+    loc_planet = loc_data.get("planet", "---")
+    loc_base = loc_data.get("base", "---")
 
     with st.sidebar:
+        
+        # --- PANEL DE UBICACIÓN (NUEVO) ---
+        location_css = """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700&display=swap');
+        .sidebar-loc-panel {
+            background: rgba(30, 33, 40, 0.6);
+            border-left: 3px solid #8ab4f8;
+            padding: 10px;
+            margin-bottom: 15px;
+            font-family: 'Orbitron', sans-serif;
+            color: #e0e0e0;
+        }
+        .loc-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 4px;
+            font-size: 0.85em;
+        }
+        .loc-row:last-child { margin-bottom: 0; }
+        .loc-icon { color: #8ab4f8; width: 20px; text-align: center; }
+        .loc-label { color: #888; font-size: 0.7em; text-transform: uppercase; margin-right: 5px; }
+        </style>
+        """
+        
+        location_html = f"""
+        <div class="sidebar-loc-panel">
+            <div class="loc-row" title="Sistema Estelar">
+                <span class="loc-icon">☀</span>
+                <div>
+                    <div class="loc-label">SISTEMA</div>
+                    {loc_system}
+                </div>
+            </div>
+            <div class="loc-row" title="Cuerpo Celeste">
+                <span class="loc-icon">🪐</span>
+                 <div>
+                    <div class="loc-label">ÓRBITA</div>
+                    {loc_planet}
+                </div>
+            </div>
+            <div class="loc-row" title="Ubicación Actual">
+                <span class="loc-icon">🏛</span>
+                 <div>
+                    <div class="loc-label">ACTIVO</div>
+                    {loc_base}
+                </div>
+            </div>
+        </div>
+        """
+        st.markdown(location_css + location_html, unsafe_allow_html=True)
 
         # --- RELOJ GALÁCTICO + DEBUG ---
         clock_time = str(status.get('time', '00:00'))
@@ -259,7 +260,6 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 
         clock_css = f"""
         <style>
-        @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&display=swap");
         .sidebar-clock-panel {{
             background: linear-gradient(135deg, rgba(20,25,35,0.9) 0%, rgba(30,40,55,0.9) 100%);
             border: 1px solid rgba(86, 213, 159, 0.3);
