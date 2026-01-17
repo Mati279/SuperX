@@ -80,16 +80,17 @@ def _render_step_2_bio():
 def _render_step_3_attributes():
     st.header("Paso 3: Matriz de Atributos")
     st.markdown(f"""
-    - Todos los atributos comienzan en 10 (más bonos).
-    - Tienes **{POINTS_AVAILABLE_FOR_ATTRIBUTES} Puntos** para distribuir.
-    - Subir un atributo por encima de 15 cuesta el doble.
+    - Todos los atributos comienzan en **5** (más bonos de raza y clase).
+    - Tienes **{POINTS_AVAILABLE_FOR_ATTRIBUTES} Puntos** (Nivel 6) para distribuir.
+    - Subir un atributo por encima de **15** cuesta el doble (2:1).
     """)
     
     bio = st.session_state.temp_char_bio
     raza_bonus = RACES[bio['raza']]['bonus']
     clase_bonus_attr = CLASSES[bio['clase']]['bonus_attr']
     
-    base_stats = { "fuerza": 10, "agilidad": 10, "intelecto": 10, "tecnica": 10, "presencia": 10, "voluntad": 10 }
+    # Ajustado a Base 5 según Módulo 19.2
+    base_stats = { "fuerza": 5, "agilidad": 5, "intelecto": 5, "tecnica": 5, "presencia": 5, "voluntad": 5 }
     for attr, val in raza_bonus.items():
         base_stats[attr] += val
     base_stats[clase_bonus_attr] += 1
@@ -118,8 +119,6 @@ def _render_step_3_attributes():
         if st.button("Finalizar Creación y Desplegar", type="primary", disabled=(remaining < 0)):
             try:
                 with st.spinner("Estableciendo base de operaciones y protocolos iniciales..."):
-                    # Actualizar el comandante con sus Stats finales
-                    # (La base planetaria ya fue creada en register_player_account)
                     commander = update_commander_profile(
                         st.session_state.temp_player['id'],
                         st.session_state.temp_char_bio,
@@ -130,7 +129,6 @@ def _render_step_3_attributes():
                     st.balloons()
                     login_user(st.session_state.temp_player, commander)
                 else:
-                    # Fallback por seguridad
                     commander = get_commander_by_player_id(st.session_state.temp_player['id'])
                     if commander:
                         st.balloons()
