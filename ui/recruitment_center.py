@@ -138,10 +138,11 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
 
         with col_btn:
             if can_afford:
-                if st.button(f"CONTRATAR", key=f"recruit_{index}", type="primary"):
+                # FIX: Añadido width='stretch' para mejor UI
+                if st.button(f"CONTRATAR", key=f"recruit_{index}", type="primary", width='stretch'):
                     _process_recruitment(player_id, candidate, player_credits)
             else:
-                st.button("FONDOS INSUFICIENTES", key=f"recruit_{index}", disabled=True)
+                st.button("FONDOS INSUFICIENTES", key=f"recruit_{index}", disabled=True, width='stretch')
 
 
 def _process_recruitment(player_id: int, candidate: Dict[str, Any], player_credits: int):
@@ -199,7 +200,8 @@ def show_recruitment_center():
         st.warning("Error de sesion. Por favor, inicie sesion de nuevo.")
         return
 
-    player_id = player['id']
+    # FIX: Acceder como objeto, no como dict
+    player_id = player.id
 
     # --- Header con creditos ---
     player_credits = get_player_credits(player_id)
@@ -224,10 +226,12 @@ def show_recruitment_center():
         refresh_cost = 50
         can_refresh = player_credits >= refresh_cost
 
+        # FIX: Añadido width='stretch'
         if st.button(
             f"Buscar Nuevos\n({refresh_cost} C)",
             disabled=not can_refresh,
-            type="secondary"
+            type="secondary",
+            width='stretch'
         ):
             if update_player_credits(player_id, player_credits - refresh_cost):
                 if 'recruitment_pool' in st.session_state:
@@ -261,7 +265,14 @@ def show_recruitment_center():
     if 'recruitment_pool' not in st.session_state or not st.session_state.recruitment_pool:
         # Obtener nombres existentes para evitar duplicados
         all_chars = get_all_characters_by_player_id(player_id)
-        existing_names = [c['nombre'] for c in all_chars]
+        
+        # FIX: Manejo seguro de nombres ya sea objeto o dict
+        existing_names = []
+        for c in all_chars:
+            if hasattr(c, 'nombre'): # Es objeto
+                existing_names.append(c.nombre)
+            elif isinstance(c, dict): # Es dict
+                existing_names.append(c.get('nombre'))
 
         # Obtener parametros de nivel
         min_lvl = st.session_state.get('recruit_min_level', 1)
