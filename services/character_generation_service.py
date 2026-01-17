@@ -17,7 +17,7 @@ import random
 import json
 import re  # IMPORTANTE: Para limpieza robusta de JSON
 from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from google.genai import types
 
 from data.database import get_service_container
@@ -88,10 +88,13 @@ FORMATO DE RESPUESTA (JSON estricto):
 {{
   "nombre": "Nombre",
   "apellido": "Apellido",
-  "biografia": "Texto de la evaluación profesional aquí."
+  "biografia": "Texto de la evaluación. IMPORTANTE: NO uses comillas dobles (\") dentro de este texto, usa comillas simples (') si es necesario."
 }}
 
-Responde ÚNICAMENTE con el objeto JSON válido.
+REGLAS TÉCNICAS:
+1. Responde ÚNICAMENTE con el objeto JSON válido.
+2. NO incluyas bloques de código markdown (```json).
+3. Asegúrate de NO dejar comas al final del último elemento (trailing commas).
 """
 
 
@@ -258,9 +261,12 @@ def _clean_json_text(text: str) -> str:
     json_pattern = r"\{.*\}"
     match = re.search(json_pattern, text, re.DOTALL)
     if match:
-        return match.group(0)
+        text = match.group(0)
+    
+    # 3. Limpieza extra: Eliminar trailing commas comunes antes del cierre del objeto
+    # Reemplaza ", }" por "}"
+    text = re.sub(r",\s*\}", "}", text)
         
-    # 3. Fallback: Retornar texto original (confiando en que sea JSON puro)
     return text
 
 
@@ -304,7 +310,7 @@ async def _generate_identity_with_ai(
             model=TEXT_MODEL_NAME,
             contents=prompt,
             config=types.GenerateContentConfig(
-                temperature=0.9,
+                temperature=0.8, # Reducido de 0.9 para más estabilidad
                 max_output_tokens=600,
                 response_mime_type="application/json"  # FORZAR JSON
             )
@@ -313,7 +319,8 @@ async def _generate_identity_with_ai(
         if response and response.text:
             text = _clean_json_text(response.text)
             try:
-                data = json.loads(text)
+                # strict=False ayuda a permitir caracteres de control dentro de strings
+                data = json.loads(text, strict=False)
                 return GeneratedIdentity(
                     nombre=data.get("nombre", "Sin Nombre"),
                     apellido=data.get("apellido", ""),
@@ -369,7 +376,7 @@ def generate_identity_with_ai_sync(
             model=TEXT_MODEL_NAME,
             contents=prompt,
             config=types.GenerateContentConfig(
-                temperature=0.9,
+                temperature=0.8, # Reducido de 0.9 para más estabilidad
                 max_output_tokens=600,
                 response_mime_type="application/json"  # FORZAR JSON
             )
@@ -378,7 +385,8 @@ def generate_identity_with_ai_sync(
         if response and response.text:
             text = _clean_json_text(response.text)
             try:
-                data = json.loads(text)
+                # strict=False ayuda a permitir caracteres de control dentro de strings
+                data = json.loads(text, strict=False)
                 return GeneratedIdentity(
                     nombre=data.get("nombre", "Sin Nombre"),
                     apellido=data.get("apellido", ""),
