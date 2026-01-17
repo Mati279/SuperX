@@ -393,3 +393,23 @@ def add_player_credits(player_id: int, amount: int) -> bool:
     current = get_player_credits(player_id)
     new_amount = max(0, current + amount)  # No permitir negativos
     return update_player_credits(player_id, new_amount)
+
+
+def delete_player_account(player_id: int) -> bool:
+    """
+    Elimina permanentemente la cuenta del jugador y todos sus datos relacionados.
+    Utiliza el CASCADE de la base de datos.
+    
+    Args:
+        player_id: ID del jugador a eliminar
+        
+    Returns:
+        True si la eliminación fue exitosa, False en caso contrario
+    """
+    try:
+        print(f"⚠️ [DEBUG] Iniciando borrado completo de cuenta ID {player_id}")
+        _get_db().table("players").delete().eq("id", player_id).execute()
+        return True
+    except Exception as e:
+        print(f"❌ Error borrando cuenta {player_id}: {e}")
+        return False
