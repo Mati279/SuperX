@@ -6,6 +6,8 @@ import streamlit.components.v1 as components
 from core.galaxy_generator import get_galaxy
 from core.world_models import System, Planet, AsteroidBelt
 from core.world_constants import RESOURCE_STAR_WEIGHTS, METAL_RESOURCES
+from data.planet_repository import get_all_player_planets
+from ui.state import get_player
 
 
 def show_galaxy_map_page():
@@ -237,6 +239,13 @@ def _render_interactive_galaxy_map():
     if st.session_state.preview_system_id:
         highlight_ids.add(st.session_state.preview_system_id)
 
+    player_home_system_ids = set()
+    player = get_player()
+    if player:
+        player_planets = get_all_player_planets(player.id)
+        for p in player_planets:
+            player_home_system_ids.add(p['system_id'])
+
     systems_payload = []
     for system in galaxy.systems:
         x, y = scaled_positions[system.id]
@@ -267,6 +276,7 @@ def _render_interactive_galaxy_map():
     connections_json = json.dumps(connections)
     filtered_json = json.dumps(list(filtered_ids))
     highlight_json = json.dumps(list(highlight_ids))
+    player_home_system_ids_json = json.dumps(list(player_home_system_ids))
 
     # --- HTML DEL MAPA ---
     html_template = f"""
@@ -298,6 +308,11 @@ def _render_interactive_galaxy_map():
         .star.dim {{ opacity: 0.15; pointer-events: none; }}
         .star:hover {{ r: 16; stroke: white; stroke-width: 2px; filter: drop-shadow(0 0 12px rgba(255,255,255,0.8)); }}
         .star.selected {{ stroke: #5b7bff; stroke-width: 3px; r: 16; filter: drop-shadow(0 0 15px rgba(91, 123, 255, 0.8)); }}
+        .star.player-home {{
+            stroke: #4dff88;
+            stroke-width: 3px;
+            filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8));
+        }}
         
         .route {{ stroke: #5b7bff; stroke-opacity: 0.2; stroke-width: 1.5; pointer-events: none; }}
         
@@ -331,6 +346,7 @@ def _render_interactive_galaxy_map():
             const routes = {connections_json};
             const filteredIds = new Set({filtered_json});
             const highlightIds = new Set({highlight_json});
+            const playerHomeSystemIds = new Set({player_home_system_ids_json});
             
             const starsLayer = document.getElementById("stars-layer");
             const routesLayer = document.getElementById("routes-layer");
@@ -355,6 +371,7 @@ def _render_interactive_galaxy_map():
                 
                 if (!filteredIds.has(sys.id)) c.classList.add("dim");
                 if (highlightIds.has(sys.id)) c.classList.add("selected");
+                if (playerHomeSystemIds.has(sys.id)) c.classList.add("player-home");
                 
                 // Hover simple
                 c.addEventListener("mouseenter", () => {{
@@ -398,6 +415,13 @@ def _render_interactive_galaxy_map():
 
 def _render_system_orbits(system: System):
     """Visual del sol y planetas orbitando con click en planeta."""
+    player = get_player()
+    player_planets_ids = set()
+    if player:
+        player_planets = get_all_player_planets(player.id)
+        for p in player_planets:
+            player_planets_ids.add(p['planet_id'])
+
     star_colors = {"G": "#f8f5ff", "O": "#8ec5ff", "M": "#f2b880", "D": "#d7d7d7", "X": "#d6a4ff"}
     star_glow = {"G": 18, "O": 22, "M": 16, "D": 18, "X": 24}
     planet_colors = {
@@ -439,6 +463,7 @@ def _render_system_orbits(system: System):
         })
 
     planets_json = json.dumps(planets)
+    player_planets_ids_json = json.dumps(list(player_planets_ids))
     star_color = star_colors.get(system.star.class_type, "#f8f5ff")
 
     html = f"""
@@ -457,6 +482,11 @@ def _render_system_orbits(system: System):
     .legend {{ position:absolute; top:10px; right:10px; background:rgba(10,14,24,0.8); padding:8px 10px; border:1px solid #1f2a3d; border-radius:8px; color:#cfd8f5; font-size:12px; }}
     .legend h4 {{ margin:0 0 6px 0; font-size:12px; color:#9fb2ff; }}
     .legend-row {{ margin:2px 0; }}
+    .player-home-planet {{
+        stroke: #4dff88 !important;
+        stroke-width: 3px !important;
+        filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9));
+    }}
     </style>
     <div class="sys-wrapper">
         <svg id="system-orbits" class="sys-canvas" viewBox="0 0 {center_x*2} {center_y*2}" preserveAspectRatio="xMidYMid meet">
@@ -482,6 +512,7 @@ def _render_system_orbits(system: System):
     </div>
     <script>
       const planets = {planets_json};
+      const playerPlanets = new Set({player_planets_ids_json});
       const svg = document.getElementById("system-orbits");
       const tooltip = document.getElementById("sys-tooltip");
       const centerX = {center_x};
@@ -509,6 +540,9 @@ def _render_system_orbits(system: System):
         planet.setAttribute("stroke", "#b2d7ff");
         planet.setAttribute("stroke-width", "1");
         planet.style.cursor = "pointer";
+        if (playerPlanets.has(p.id)) {{
+            planet.classList.add("player-home-planet");
+        }}
         planet.addEventListener("mousemove", (evt) => {{
             tooltip.style.display = "block";
             tooltip.style.left = (evt.pageX + 10) + "px";
