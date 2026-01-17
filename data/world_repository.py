@@ -91,3 +91,54 @@ def mark_action_processed(action_id: int, result_status: str) -> None:
         }).eq("id", action_id).execute()
     except Exception as e:
         log_event(f"Error actualizando estado de acción {action_id}: {e}", is_error=True)
+
+def get_commander_location_display(commander_id: int) -> Dict[str, str]:
+    """
+    Recupera los detalles de ubicación del comandante para el HUD.
+    Determina si está en una nave o en un asentamiento y devuelve nombres legibles.
+    """
+    # Valores por defecto si no se encuentra nada
+    loc_data = {
+        "system": "Sector Desconocido", 
+        "planet": "Espacio Profundo", 
+        "base": "Sin Señal"
+    }
+
+    try:
+        # 1. Verificar si el comandante está a bordo de una nave (Capitán)
+        # Nota: En Genesis v1.5, el comandante se asigna como 'capitan_id' de una nave.
+        resp_ship = supabase.table("ships").select("nombre, ubicacion_system_id")\
+            .eq("capitan_id", commander_id).maybe_single().execute()
+        
+        if resp_ship.data:
+            ship = resp_ship.data
+            system_id = ship.get("ubicacion_system_id")
+            
+            # Base es la Nave
+            loc_data["base"] = f"Nave {ship.get('nombre')}"
+            
+            # Obtener nombre del sistema
+            if system_id:
+                loc_data["system"] = f"Sector {system_id}" # Fallback
+                try:
+                    # Intenta obtener el nombre real si la tabla systems tiene columna 'nombre'
+                    resp_sys = supabase.table("systems").select("nombre").eq("id", system_id).maybe_single().execute()
+                    if resp_sys.data and resp_sys.data.get("nombre"):
+                        loc_data["system"] = resp_sys.data.get("nombre")
+                except:
+                    pass
+            
+            # Si está en nave y no aterrizado, el planeta es "Espacio Profundo" u "Orbita"
+            loc_data["planet"] = "Espacio Profundo" 
+            
+            return loc_data
+
+        # 2. TODO: Lógica futura para cuando el comandante esté asignado a un Asset terrestre (Edificio/Base)
+        # Aquí se consultaría la tabla 'planet_assets' o 'characters.ubicacion' si cambia la lógica.
+        
+        return loc_data
+
+    except Exception as e:
+        # Silenciar error en UI, loguear en backend
+        log_event(f"Error HUD Location: {e}", is_error=True)
+        return loc_data
