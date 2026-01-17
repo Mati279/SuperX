@@ -56,7 +56,7 @@ PREDOMINANT_RACE_CHANCE = 0.5
 # Rango por defecto para nuevos reclutas
 DEFAULT_RANK = "Iniciado"
 
-# Prompt para generación de identidad por IA (MEJORADO)
+# Prompt para generación de identidad por IA (MEJORADO - PERFIL PROFESIONAL)
 IDENTITY_GENERATION_PROMPT = """
 Actúa como un Oficial de Reclutamiento Veterano de una facción galáctica en un juego de ciencia ficción serio. Tu trabajo es registrar a un nuevo operativo en la base de datos.
 
@@ -256,6 +256,7 @@ async def _generate_identity_with_ai(
     container = get_service_container()
 
     if not container.is_ai_available():
+        print("⚠️ IA no disponible (check_container). Usando fallback.")
         return _generate_fallback_identity(race, sex)
 
     ai_client = container.ai
@@ -300,6 +301,8 @@ async def _generate_identity_with_ai(
             )
 
     except Exception as e:
+        # 📏Tareas manuales: Revisa la consola para ver este error
+        print(f"🔴 ERROR CRÍTICO GEMINI (Async) [{TEXT_MODEL_NAME}]: {e}")
         log_event(f"Error generando identidad con IA: {e}", is_error=True)
 
     return _generate_fallback_identity(race, sex)
@@ -320,6 +323,7 @@ def generate_identity_with_ai_sync(
     container = get_service_container()
 
     if not container.is_ai_available():
+        print("⚠️ IA no disponible (check_container). Usando fallback.")
         return _generate_fallback_identity(race, sex)
 
     ai_client = container.ai
@@ -362,6 +366,8 @@ def generate_identity_with_ai_sync(
             )
 
     except Exception as e:
+        # 📏Tareas manuales: Revisa la consola para ver este error
+        print(f"🔴 ERROR CRÍTICO GEMINI (Sync) [{TEXT_MODEL_NAME}]: {e}")
         log_event(f"Error generando identidad con IA: {e}", is_error=True)
 
     return _generate_fallback_identity(race, sex)

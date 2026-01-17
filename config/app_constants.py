@@ -34,12 +34,13 @@ UI_COLOR_FROZEN = "#f06464"       # Rojo - Mundo congelado
 LOG_CONTAINER_HEIGHT = 300        # Altura del contenedor de logs en píxeles
 
 # --- Configuración de IA (Gemini) ---
+# MANTENIDO: gemini-2.5-flash según indicación del usuario
 TEXT_MODEL_NAME = "gemini-2.5-flash"
 IMAGE_MODEL_NAME = "imagen-3.0-generate-001"
 
 # --- Configuración de Base de Datos ---
 # Modificado a 500,000 para facilitar el debug de la economía
-DEFAULT_PLAYER_CREDITS = 50000    # Créditos iniciales para nuevos jugadores
+DEFAULT_PLAYER_CREDITS = 500000    # Créditos iniciales para nuevos jugadores
 LOG_LIMIT_DEFAULT = 10            # Cantidad de logs a mostrar por defecto
 WORLD_STATE_SINGLETON_ID = 1      # ID único de la fila world_state
 
