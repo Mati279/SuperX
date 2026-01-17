@@ -46,8 +46,6 @@ def render_main_game_page(cookie_manager):
     _render_navigation_sidebar(player, commander, cookie_manager)
 
     # --- 3. Renderizar la página seleccionada ---
-    # NOTA: Mantenemos "Centro de Reclutamiento" aquí para que sea accesible
-    # aunque no esté en el menú lateral.
     PAGES = {
         "Puente de Mando": _render_war_room_page,
         "Cuadrilla": show_faction_roster,  # Renombrado de Comando de Facción
@@ -305,9 +303,8 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         st.divider()
         
         # Actualizado con "Cuadrilla"
-        # "Centro de Reclutamiento" removido de aquí, ahora accesible desde Cuadrilla
         pages = ["Puente de Mando", "Mapa de la Galaxia", 
-                 "Cuadrilla", "Flota"]
+                 "Cuadrilla", "Centro de Reclutamiento", "Flota"]
         
         for p in pages:
             if st.button(p, use_container_width=True, type="primary" if st.session_state.current_page == p else "secondary"):
@@ -319,11 +316,19 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             logout_user(cookie_manager)
             st.rerun()
 
-        # --- BOTÓN DE DEBUG: HARD RESET ---
+        # --- BOTÓN DE DEBUG: ZONA DE PRUEBAS ---
         st.write("")
         st.write("")
         st.markdown("---")
         st.caption("🛠️ ZONA DE PRUEBAS")
+        
+        if st.button("💰 +5000 Créditos (DEBUG)", use_container_width=True):
+            if add_player_credits(player.id, 5000):
+                st.toast("✅ 5000 Créditos añadidos")
+                st.rerun()
+            else:
+                st.error("Error al añadir créditos.")
+
         if st.button("🔥 ELIMINAR CUENTA (DEBUG)", type="secondary", use_container_width=True, help="Elimina permanentemente al jugador y sus datos."):
             if delete_player_account(player.id):
                 st.success("Cuenta eliminada.")
@@ -340,14 +345,6 @@ def _render_war_room_page():
 
     st.markdown("### 📟 Enlace Neuronal de Mando")
     
-    # Botón de Debug para Créditos
-    col_debug, _ = st.columns([1, 4])
-    with col_debug:
-        if st.button("💰 Debug: +1000 Créditos", type="secondary"):
-             add_player_credits(player.id, 1000)
-             st.success("Créditos añadidos.")
-             st.rerun()
-
     chat_box = st.container(height=500, border=True)
     logs = get_recent_logs(player.id, limit=30) 
 
