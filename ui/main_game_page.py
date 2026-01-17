@@ -4,13 +4,13 @@ from .state import logout_user, get_player, get_commander
 from data.log_repository import get_recent_logs, log_event
 from services.gemini_service import resolve_player_action
 
-# --- Nuevos imports para STRT (Sistema de Tiempo) ---
+# --- Imports para STRT (Sistema de Tiempo) ---
 from core.time_engine import get_world_status_display, check_and_trigger_tick, debug_force_tick
 from data.world_repository import get_pending_actions_count
 from data.player_repository import get_player_finances
 
 # --- Importar las vistas del juego ---
-from .faction_roster import show_faction_roster, render_character_card # Importamos render_character_card
+from .faction_roster import show_faction_roster, render_character_card
 from .recruitment_center import show_recruitment_center
 from .galaxy_map_page import show_galaxy_map_page
 from .ship_status_page import show_ship_status_page
@@ -18,7 +18,7 @@ from .ship_status_page import show_ship_status_page
 
 def render_main_game_page(cookie_manager):
     """
-    Página principal del juego con navegación por sidebar.
+    Página principal del juego con HUD superior y navegación lateral.
     """
     
     # --- STRT: Trigger de Tiempo ---
@@ -36,120 +36,137 @@ def render_main_game_page(cookie_manager):
             logout_user(cookie_manager)
         return
 
-    # --- Renderizar el Sidebar de Navegación ---
+    # --- 1. RENDERIZAR HUD SUPERIOR (Recursos + Reloj) ---
+    _render_top_hud(player, commander)
+
+    # --- 2. Renderizar Sidebar (Solo Navegación e Identidad) ---
     if 'current_page' not in st.session_state:
         st.session_state.current_page = "Puente de Mando"
         
     _render_navigation_sidebar(player, commander, cookie_manager)
 
-    # --- Renderizar la página seleccionada ---
+    # --- 3. Renderizar la página seleccionada ---
     PAGES = {
         "Puente de Mando": _render_war_room_page,
-        "Ficha del Comandante": _render_commander_sheet_page, # Ahora la función existe
+        "Ficha del Comandante": _render_commander_sheet_page,
         "Comando de Facción": show_faction_roster,
         "Centro de Reclutamiento": show_recruitment_center,
         "Mapa de la Galaxia": show_galaxy_map_page,
         "Estado de la Nave": show_ship_status_page,
     }
     
-    render_func = PAGES.get(st.session_state.current_page, _render_war_room_page)
-    render_func()
+    # Contenedor principal para el contenido de la página
+    with st.container():
+        render_func = PAGES.get(st.session_state.current_page, _render_war_room_page)
+        render_func()
+
+
+def _render_top_hud(player, commander):
+    """Renderiza la barra superior de recursos y tiempo (Estilo RTS)."""
+    
+    # Estilos CSS para el HUD
+    st.markdown("""
+        <style>
+        .hud-container {
+            background-color: #0e1117;
+            border-bottom: 2px solid #333;
+            padding: 10px 5px;
+            margin-bottom: 20px;
+        }
+        .metric-box {
+            background-color: #1a1c24;
+            border: 1px solid #444;
+            border-radius: 5px;
+            padding: 5px 10px;
+            text-align: center;
+            color: #fff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .metric-icon { font-size: 1.2em; margin-right: 5px; }
+        .metric-value { font-family: monospace; font-weight: bold; font-size: 1.1em; color: #56d59f; }
+        .hud-time { font-family: monospace; color: #f9ca24; font-weight: bold; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    finances = get_player_finances(player['id'])
+    status = get_world_status_display()
+    
+    # Layout de 7 columnas: 5 Recursos + 1 Espacio + 2 Tiempo/Debug
+    # Usamos st.columns para distribuir horizontalmente
+    c1, c2, c3, c4, c5, c_spacer, c_time, c_debug = st.columns([1, 1, 1, 1, 1, 0.5, 1.5, 0.8])
+
+    # Función helper para renderizar métrica compacta
+    def hud_metric(col, icon, value, help_text):
+        col.markdown(f"""
+            <div class="metric-box" title="{help_text}">
+                <span class="metric-icon">{icon}</span>
+                <span class="metric-value">{value}</span>
+            </div>
+        """, unsafe_allow_html=True)
+
+    hud_metric(c1, "💳", finances.get('creditos', 0), "Créditos")
+    hud_metric(c2, "📦", finances.get('materiales', 0), "Materiales")
+    hud_metric(c3, "🧩", finances.get('componentes', 0), "Componentes")
+    hud_metric(c4, "⚡", finances.get('celulas_energia', 0), "Células de Energía")
+    hud_metric(c5, "👑", finances.get('influencia', 0), "Influencia")
+
+    # Reloj
+    with c_time:
+        st.markdown(f"""
+            <div style="text-align:right; line-height:1.2;">
+                <div class="hud-time">{status['time']}</div>
+                <div style="font-size:0.7em; color:#888;">CICLO {status['tick']}</div>
+            </div>
+        """, unsafe_allow_html=True)
+
+    # Botón Debug (Pequeño)
+    with c_debug:
+        if st.button("🔄", help="DEBUG: Forzar avance de tiempo"):
+            with st.spinner("⏳"):
+                debug_force_tick()
+            st.rerun()
+
+    st.divider()
 
 
 def _render_navigation_sidebar(player, commander, cookie_manager):
-    """Dibuja el sidebar con el RELOJ GALÁCTICO, INVENTARIO y la navegación."""
+    """Sidebar limpia: Solo identidad y menú."""
     with st.sidebar:
-        
-        # --- BOTÓN DEBUG ---
-        if st.button("🚨 DEBUG: FORZAR TICK", width='stretch', type="secondary"):
-            with st.spinner("Forzando salto temporal..."):
-                debug_force_tick()
-            st.rerun()
-        
-        st.write("") 
-        
-        # --- WIDGET DE RELOJ STRT ---
-        status = get_world_status_display()
-        color = "#56d59f"  # Verde (Nominal)
-        status_text = status['status']
-        if status["is_lock_in"]: color = "#f6c45b"
-        if status["is_frozen"]: color = "#f06464"
+        # --- SECCIÓN: IDENTIDAD ---
+        st.header(f"{player['faccion_nombre']}")
+        if player.get('banner_url'):
+            st.image(player['banner_url'], width='stretch')
 
-        st.markdown(f"""
-            <div style="background-color: #0e1117; padding: 15px; border: 1px solid #333; border-radius: 10px; text-align: center; margin-bottom: 20px;">
-                <p style="margin: 0; color: #888; font-size: 0.75em; letter-spacing: 1px;">TIEMPO ESTÁNDAR (GMT-3)</p>
-                <h2 style="margin: 5px 0; color: {color}; font-family: monospace; font-size: 2em;">{status['time']}</h2>
-                <div style="display: flex; justify-content: space-between; font-size: 0.8em; margin-top: 8px; color: #ccc;">
-                    <span>CICLO: <b>{status['tick']}</b></span>
-                    <span style="color: {color}; font-weight: bold;">{status_text}</span>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
+        st.caption(f"Comandante {commander['nombre']}")
         
         pending = get_pending_actions_count(player['id'])
         if pending > 0:
             st.info(f"📩 {pending} orden(es) en cola.")
 
-        # --- SECCIÓN: IDENTIDAD ---
-        st.header(f"Facción: {player['faccion_nombre']}")
-        if player.get('banner_url'):
-            st.image(player['banner_url'], width='stretch')
-
-        st.subheader(f"Cmdt. {commander['nombre']}")
-
-        # --- SECCIÓN: INVENTARIO MMFR ---
-        st.divider()
-        st.subheader("📦 Inventario Logístico")
-        
-        # Obtener recursos frescos de la DB
-        finances = get_player_finances(player['id'])
-        
-        # Usamos CSS Grid simple para mostrar los recursos en 2 columnas
-        c1, c2 = st.columns(2)
-        c1.metric("Créditos", f"{finances.get('creditos',0)} C")
-        c2.metric("Influencia", finances.get('influencia',0), help="Poder político para el Consejo.")
-        
-        c3, c4 = st.columns(2)
-        c3.metric("Materiales", finances.get('materiales',0), help="Reparación y construcción física.")
-        c4.metric("Componentes", finances.get('componentes',0), help="Electrónica y armas avanzadas.")
-        
-        st.metric("Células de Energía", finances.get('celulas_energia',0), help="Combustible para escudos y saltos.")
-
         # --- SECCIÓN: NAVEGACIÓN ---
         st.divider()
-        st.header("Navegación")
+        st.subheader("Sistemas")
 
-        if st.button("Puente de Mando", width='stretch', type="primary" if st.session_state.current_page == "Puente de Mando" else "secondary"):
-            st.session_state.current_page = "Puente de Mando"
-            st.rerun()
+        # Botones de navegación (Estilo menú vertical)
+        nav_options = [
+            ("Puente de Mando", "primary" if st.session_state.current_page == "Puente de Mando" else "secondary"),
+            ("Mapa de la Galaxia", "primary" if st.session_state.current_page == "Mapa de la Galaxia" else "secondary"),
+            ("Estado de la Nave", "primary" if st.session_state.current_page == "Estado de la Nave" else "secondary"),
+            ("Ficha del Comandante", "primary" if st.session_state.current_page == "Ficha del Comandante" else "secondary"),
+            ("Comando de Facción", "primary" if st.session_state.current_page == "Comando de Facción" else "secondary"),
+            ("Centro de Reclutamiento", "primary" if st.session_state.current_page == "Centro de Reclutamiento" else "secondary"),
+        ]
 
-        if st.button("Mapa de la Galaxia", width='stretch', type="primary" if st.session_state.current_page == "Mapa de la Galaxia" else "secondary"):
-            st.session_state.current_page = "Mapa de la Galaxia"
-            st.rerun()
-
-        if st.button("Estado de la Nave", width='stretch', type="primary" if st.session_state.current_page == "Estado de la Nave" else "secondary"):
-            st.session_state.current_page = "Estado de la Nave"
-            st.rerun()
-
-        st.divider()
-        st.header("Gestión de Facción")
-
-        if st.button("Ficha del Comandante", width='stretch', type="primary" if st.session_state.current_page == "Ficha del Comandante" else "secondary"):
-            st.session_state.current_page = "Ficha del Comandante"
-            st.rerun()
-
-        if st.button("Comando de Facción", width='stretch', type="primary" if st.session_state.current_page == "Comando de Facción" else "secondary"):
-            st.session_state.current_page = "Comando de Facción"
-            st.rerun()
-
-        if st.button("Centro de Reclutamiento", width='stretch', type="primary" if st.session_state.current_page == "Centro de Reclutamiento" else "secondary"):
-            st.session_state.current_page = "Centro de Reclutamiento"
-            st.rerun()
+        for label, btn_type in nav_options:
+            if st.button(label, width='stretch', type=btn_type):
+                st.session_state.current_page = label
+                st.rerun()
 
         st.divider()
         if st.button("Cerrar Sesión", width='stretch'):
             logout_user(cookie_manager)
             st.rerun()
+
 
 def _render_commander_sheet_page():
     """Renderiza la ficha específica del Comandante."""
@@ -158,10 +175,10 @@ def _render_commander_sheet_page():
     commander = get_commander()
     
     if player and commander:
-        # Reutilizamos la tarjeta visual de faction_roster
         render_character_card(commander, player['id'], is_commander=True)
     else:
         st.error("Datos del comandante no disponibles.")
+
 
 def _render_war_room_styles():
     """Estilos visuales para el Puente de Mando."""
@@ -170,59 +187,28 @@ def _render_war_room_styles():
         <style>
         @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&display=swap");
 
-        .war-room-header {
-            margin-bottom: 12px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid rgba(90, 190, 255, 0.25);
-            position: relative;
-        }
-        .war-room-header::after {
-            content: "";
-            position: absolute;
-            left: 0;
-            bottom: 0;
-            width: 150px;
-            height: 2px;
-            background: linear-gradient(90deg, rgba(95, 216, 255, 0.95), rgba(95, 216, 255, 0));
-            box-shadow: 0 0 10px rgba(95, 216, 255, 0.5);
-        }
         .war-room-title {
             font-family: "Orbitron", sans-serif;
-            font-size: 32px;
+            font-size: 24px;
             font-weight: 700;
-            letter-spacing: 2px;
-            text-transform: uppercase;
             color: #dff6ff;
-            text-shadow: 0 0 14px rgba(88, 210, 255, 0.4);
-        }
-        .war-room-section {
-            font-family: "Orbitron", sans-serif;
-            font-size: 15px;
-            letter-spacing: 1.6px;
             text-transform: uppercase;
-            color: #b8e7ff;
-            margin: 6px 0 10px 0;
+            margin-bottom: 10px;
         }
 
         /* --- ESTILOS DE CHAT --- */
         div[data-testid="stChatMessage"] {
-            border-radius: 12px;
-            border: 1px solid rgba(80, 170, 220, 0.3);
-            background: linear-gradient(145deg, rgba(10, 20, 32, 0.95), rgba(6, 12, 20, 0.95));
-            box-shadow: inset 0 0 14px rgba(60, 180, 235, 0.08);
-            margin-bottom: 10px;
+            border-radius: 8px;
+            border: 1px solid rgba(80, 170, 220, 0.2);
+            background: rgba(10, 20, 32, 0.6);
+            padding: 10px;
+            margin-bottom: 8px;
         }
-
-        /* Color explícito para asegurar contraste */
+        /* Fuente monoespaciada para mensajes */
         div[data-testid="stChatMessage"] div[data-testid="stChatMessageContent"] {
             font-family: "Share Tech Mono", monospace;
-            color: #ffffff !important; 
+            color: #e0e0e0 !important; 
             font-size: 14px;
-        }
-        
-        div[data-testid="stChatMessage"] span[title] {
-            font-family: "Orbitron", sans-serif;
-            letter-spacing: 1px;
         }
         </style>
         """,
@@ -231,93 +217,66 @@ def _render_war_room_styles():
 
 
 def _render_war_room_page():
-    """Página del Puente de Mando con historial persistente robusto."""
+    """Página del Puente de Mando con CHAT COMPACTO."""
     _render_war_room_styles()
-    st.markdown(
-        """
-        <div class="war-room-header">
-            <div class="war-room-title">Puente de Mando</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    
-    status = get_world_status_display()
-    
-    if status['is_lock_in']:
-        st.warning("⚠️ VENTANA DE BLOQUEO ACTIVA: Las órdenes se ejecutarán al iniciar el próximo ciclo.")
-    if status['is_frozen']:
-        st.error("❄️ ALERTA: El flujo temporal está detenido (FREEZE). Sistemas tácticos en espera.")
-
-    st.markdown(
-        "<div class=\"war-room-section\">Bitacora de Mision</div>",
-        unsafe_allow_html=True,
-    )
     
     player_id = get_player()['id']
     commander_name = get_commander()['nombre']
-    
-    # --- RENDERIZADO DEL CHAT ---
-    # 1. Obtenemos logs. Si falla, logs será [].
-    logs = get_recent_logs(player_id, limit=30)
-    
-    # 2. Contenedor PRINCIPAL (Sin altura fija para evitar bugs de rendering)
-    log_container = st.container()
+    status = get_world_status_display()
 
-    if not logs:
-        st.info(f"ℹ️ Inicializando sistemas de comunicación para el Comandante {commander_name}. Historial vacío.")
+    # Título más compacto
+    st.markdown('<div class="war-room-title">📟 Enlace Neuronal de Mando</div>', unsafe_allow_html=True)
     
-    with log_container:
-        # Nota: logs viene ordenado DESC (nuevo -> viejo), usamos reversed para renderizar viejo -> nuevo (arriba -> abajo)
+    if status['is_lock_in']:
+        st.warning("⚠️ VENTANA DE BLOQUEO ACTIVA")
+    
+    # --- CONTENEDOR DE CHAT (SCROLLABLE) ---
+    # Usamos st.container con altura fija para crear la "caja roja" que pediste
+    chat_box = st.container(height=500, border=True)
+
+    logs = get_recent_logs(player_id, limit=30) # Aumentamos el límite ya que ahora hay scroll
+
+    with chat_box:
+        if not logs:
+            st.info(f"Conexión establecida. Esperando órdenes, Comandante {commander_name}...")
+        
+        # Renderizar logs (invertidos para que el más nuevo esté abajo si usamos scroll, 
+        # pero Streamlit suele renderizar arriba->abajo. 
+        # Para un chat tipo "WhatsApp", lo viejo va arriba, lo nuevo abajo.)
         for log in reversed(logs):
-            # FIX: Usamos 'evento_texto' que es el nombre real en DB, fallback a 'message'
             mensaje = log.get('evento_texto', log.get('message', ''))
             
-            # Filtro básico de basura técnica
-            if "[DEBUG]" in mensaje or "Traceback" in mensaje:
-                continue
+            if "[DEBUG]" in mensaje: continue
 
             if mensaje.startswith("[PLAYER]"):
-                mensaje_limpio = mensaje.replace("[PLAYER] ", "")
+                clean_msg = mensaje.replace("[PLAYER] ", "")
                 with st.chat_message("user", avatar="👤"):
-                    st.write(mensaje_limpio)
+                    st.write(clean_msg)
             else:
                 icon = "🤖"
-                if "VENTANA DE BLOQUEO" in mensaje or "⏱️" in mensaje: icon = "⏳"
-                elif "CONGELADO" in mensaje or "❄️" in mensaje: icon = "❄️"
-                elif "Misión EXITOSA" in mensaje or "✅" in mensaje: icon = "✅"
-                elif "Misión FALLIDA" in mensaje or "❌" in mensaje: icon = "❌"
-
-                # Limpieza de prefijos
-                mensaje_limpio = mensaje
-                for p in ["[GM] ", "🤖 [ASISTENTE] ", "[ASISTENTE] ", "🤖 "]:
-                    if mensaje_limpio.startswith(p):
-                        mensaje_limpio = mensaje_limpio.replace(p, "", 1)
-                        break
+                if "EXITOSA" in mensaje: icon = "✅"
+                elif "FALLIDA" in mensaje: icon = "❌"
+                
+                clean_msg = mensaje
+                for p in ["[GM] ", "🤖 [ASISTENTE] ", "🤖 "]:
+                    clean_msg = clean_msg.replace(p, "")
 
                 with st.chat_message("assistant", avatar=icon):
-                    st.write(mensaje_limpio)
-            
-    # Espaciador para separar el chat del input en pantallas grandes
-    st.write("") 
-    st.write("") 
+                    st.write(clean_msg)
 
-    # --- INPUT DE CHAT (Siempre abajo) ---
-    input_placeholder = f"¿Órdenes, Comandante {commander_name}?"
+    # --- INPUT AREA (Fuera del scroll, siempre visible abajo) ---
+    st.write("") 
+    input_placeholder = f"Escriba sus órdenes, Cmdt. {commander_name}..."
     if status['is_frozen']:
-        input_placeholder = "Sistemas congelados. Entrada deshabilitada."
+        input_placeholder = "SISTEMAS CONGELADOS."
         
     action = st.chat_input(input_placeholder, disabled=status['is_frozen'])
 
     if action:
-        # Registrar el mensaje del usuario inmediatamente
         log_event(f"[PLAYER] {action}", player_id)
-
-        # Spinner mientras procesa
-        with st.spinner("Procesando orden..."):
+        with st.spinner("Transmitiendo..."):
             try:
                 resolve_player_action(action, player_id)
-                # Forzar recarga inmediata para ver el resultado
                 st.rerun()
             except Exception as e:
-                st.error(f"⚠️ Error crítico en enlace neuronal: {e}")
+                st.error(f"Error de transmisión: {e}")
