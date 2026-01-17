@@ -242,9 +242,12 @@ def _render_interactive_galaxy_map():
     player_home_system_ids = set()
     player = get_player()
     if player:
+        home_base_name = f"Base {player.faccion_nombre}"
         player_planets = get_all_player_planets(player.id)
         for p in player_planets:
-            player_home_system_ids.add(p['system_id'])
+            if p['nombre_asentamiento'] == home_base_name:
+                player_home_system_ids.add(p['system_id'])
+                break # Assuming only one home base
 
     systems_payload = []
     for system in galaxy.systems:
@@ -416,11 +419,14 @@ def _render_interactive_galaxy_map():
 def _render_system_orbits(system: System):
     """Visual del sol y planetas orbitando con click en planeta."""
     player = get_player()
-    player_planets_ids = set()
+    player_home_planet_id = None
     if player:
+        home_base_name = f"Base {player.faccion_nombre}"
         player_planets = get_all_player_planets(player.id)
         for p in player_planets:
-            player_planets_ids.add(p['planet_id'])
+            if p['nombre_asentamiento'] == home_base_name:
+                player_home_planet_id = p['planet_id']
+                break
 
     star_colors = {"G": "#f8f5ff", "O": "#8ec5ff", "M": "#f2b880", "D": "#d7d7d7", "X": "#d6a4ff"}
     star_glow = {"G": 18, "O": 22, "M": 16, "D": 18, "X": 24}
@@ -463,7 +469,7 @@ def _render_system_orbits(system: System):
         })
 
     planets_json = json.dumps(planets)
-    player_planets_ids_json = json.dumps(list(player_planets_ids))
+    player_planets_ids_json = json.dumps([player_home_planet_id] if player_home_planet_id else [])
     star_color = star_colors.get(system.star.class_type, "#f8f5ff")
 
     html = f"""
@@ -525,7 +531,7 @@ def _render_system_orbits(system: System):
         orbit.setAttribute("cy", centerY);
         orbit.setAttribute("r", Math.hypot(p.x - centerX, p.y - centerY));
         orbit.setAttribute("fill", "none");
-        orbit.setAttribute("stroke", "rgba(255,255,255,0.08)");
+        orbit.setAttribute("stroke", "rgba(255,255,255,0..08)");
         orbit.setAttribute("stroke-width", "1");
         svg.appendChild(orbit);
       }});
