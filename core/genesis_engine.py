@@ -24,8 +24,9 @@ INITIAL_COMPONENTS = 200
 INITIAL_ENERGY = 100
 
 # Topología de Seguridad (Distancia Euclidiana aprox.)
-MIN_DIST_PLAYER = 50.0  # ~5 Saltos (Asumiendo densidad media)
-MIN_DIST_FACTION = 30.0 # ~3 Saltos
+# Reducido a 45.0 por solicitud de diseño para el inicio de búsqueda estricta
+MIN_DIST_PLAYER = 45.0  
+MIN_DIST_FACTION = 30.0 
 
 # Generador de nombres de bases
 BASE_NAMES_PREFIX = ["Puesto", "Fuerte", "Colonia", "Base", "Estación", "Nexo", "Avanzada", "Ciudadela"]
@@ -47,18 +48,15 @@ def genesis_protocol(player_id: int) -> bool:
         system_id = find_safe_starting_node()
         
         # 2. Seleccionar Planeta en ese sistema
-        # Intentamos buscar planetas que no sean gigantes gaseosos si es posible,
-        # pero para asegurar robustez, tomamos cualquiera disponible.
         response_planets = supabase.table("planets").select("id, name, biome").eq("system_id", system_id).execute()
         
         if not response_planets.data:
             log_event(f"⚠ Sistema {system_id} vacío. Buscando planeta de respaldo...", player_id, is_error=True)
-            # Fallback: buscar cualquier planeta en la galaxia si el sistema falló (caso borde)
             fallback = supabase.table("planets").select("id, name, system_id").limit(1).single().execute()
             if not fallback.data:
                 return False
             target_planet = fallback.data
-            system_id = target_planet['system_id'] # Actualizar sistema al del fallback
+            system_id = target_planet['system_id'] 
         else:
             target_planet = random.choice(response_planets.data)
         
@@ -96,59 +94,62 @@ def genesis_protocol(player_id: int) -> bool:
 def find_safe_starting_node() -> int:
     """
     Lógica de topología para encontrar un sistema aislado.
-    Retorna el ID del sistema candidato.
+    Implementa una búsqueda iterativa por radio de seguridad decreciente.
     """
     try:
         # Traer todos los sistemas (coordenadas)
         all_systems_res = supabase.table("systems").select("id, x, y").execute()
         all_systems = all_systems_res.data if all_systems_res.data else []
         
-        if not all_systems: return 1 # Fallback ID 1
+        if not all_systems: return 1 
         
-        # Traer ubicaciones ocupadas (donde ya hay bases)
+        # Traer ubicaciones ocupadas
         occupied_assets_res = supabase.table("planet_assets").select("system_id").execute()
         occupied_ids = {row['system_id'] for row in occupied_assets_res.data} if occupied_assets_res.data else set()
         
-        # Si es el primer jugador de la galaxia
+        # Si es el primer jugador
         if not occupied_ids:
             return random.choice(all_systems)['id']
 
-        # Filtrar candidatos seguros
-        candidates = []
         occupied_systems_data = [s for s in all_systems if s['id'] in occupied_ids]
 
-        for sys in all_systems:
-            if sys['id'] in occupied_ids: 
-                continue # No spawnear en sistema ya ocupado
-            
-            is_safe = True
-            sys_pos = (sys['x'], sys['y'])
-            
-            # Verificar distancia contra todos los ocupados
-            for occ in occupied_systems_data:
-                occ_pos = (occ['x'], occ['y'])
-                # Distancia Euclidiana 2D
-                dist = ((sys_pos[0]-occ_pos[0])**2 + (sys_pos[1]-occ_pos[1])**2)**0.5
-                
-                if dist < MIN_DIST_PLAYER:
-                    is_safe = False
-                    break
-            
-            if is_safe:
-                candidates.append(sys)
+        # --- BÚSQUEDA ESCALONADA (Debug / Seguridad) ---
+        # Definimos los umbrales de búsqueda. Arrancamos en 45 como solicitado.
+        thresholds = [45.0, 35.0, 25.0, 15.0, 5.0]
         
-        if candidates:
-            return random.choice(candidates)['id']
-        else:
-            # Si la galaxia está muy llena y no hay lugar "seguro" perfecto,
-            # elegimos uno aleatorio que no esté ocupado directamente.
-            available = [s for s in all_systems if s['id'] not in occupied_ids]
-            if available:
-                log_event("⚠ Galaxia saturada (distancias), asignando sistema libre disponible.")
-                return random.choice(available)['id']
+        for current_threshold in thresholds:
+            candidates = []
+            for sys in all_systems:
+                if sys['id'] in occupied_ids: 
+                    continue 
+                
+                is_safe = True
+                sys_pos = (sys['x'], sys['y'])
+                
+                for occ in occupied_systems_data:
+                    occ_pos = (occ['x'], occ['y'])
+                    dist = ((sys_pos[0]-occ_pos[0])**2 + (sys_pos[1]-occ_pos[1])**2)**0.5
+                    
+                    if dist < current_threshold:
+                        is_safe = False
+                        break
+                
+                if is_safe:
+                    candidates.append(sys)
             
-            # Último recurso: compartir sistema (no debería pasar con mapa grande)
-            return random.choice(all_systems)['id']
+            # Si encontramos candidatos con el umbral actual, seleccionamos uno
+            if candidates:
+                if current_threshold < 45.0:
+                    log_event(f"⚠ Sistema asignado con radio de seguridad reducido: {current_threshold} unidades.")
+                return random.choice(candidates)['id']
+
+        # Fallback final: Si la galaxia está totalmente saturada incluso a 5 unidades
+        available = [s for s in all_systems if s['id'] not in occupied_ids]
+        if available:
+            log_event("⚠ Galaxia saturada al máximo, asignando sistema libre disponible sin radio de seguridad.")
+            return random.choice(available)['id']
+        
+        return random.choice(all_systems)['id']
 
     except Exception as e:
         print(f"Error calculando nodo seguro: {e}")
@@ -168,19 +169,13 @@ def apply_genesis_inventory(player_id: int):
     update_player_resources(player_id, resources)
 
 def initialize_fog_of_war(player_id: int, start_system_id: int):
-    """
-    Revela el sistema inicial y sus vecinos inmediatos.
-    """
-    # 1. Sistema Natal (Visión Total - Nivel 4)
+    """Revela el sistema inicial y sus vecinos inmediatos."""
     _grant_visibility(player_id, start_system_id, level=4)
     
-    # 2. Sistemas Conectados (Visión Parcial - Nivel 2)
     try:
-        # Buscar conexiones donde A es origen
         response_a = supabase.table("starlanes").select("system_b_id").eq("system_a_id", start_system_id).execute()
         neighbors = [row['system_b_id'] for row in response_a.data] if response_a.data else []
         
-        # Buscar conexiones donde B es origen
         response_b = supabase.table("starlanes").select("system_a_id").eq("system_b_id", start_system_id).execute()
         neighbors += [row['system_a_id'] for row in response_b.data] if response_b.data else []
         
@@ -197,7 +192,6 @@ def _grant_visibility(player_id: int, system_id: int, level: int):
     except Exception as e:
         print(f"Error granting visibility: {e}")
 
-# Funciones legacy para generación de stats (mantenidas por compatibilidad si se usan)
 def generate_genesis_commander_stats(name: str) -> Dict[str, Any]:
     base_attrs = {"fuerza": 5, "destreza": 5, "constitucion": 5, "inteligencia": 5, "sabiduria": 5, "carisma": 5}
     stats = {
