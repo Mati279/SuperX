@@ -41,14 +41,19 @@ def _generate_recruitment_pool(pool_size: int, existing_names: List[str], min_le
         # Calcular costo de reclutamiento
         costo = calculate_recruitment_cost(char)
 
+        # Extraer datos de la estructura V2 (stats_json)
+        stats = char.get("stats_json", {})
+        progresion = stats.get("progresion", {})
+        taxonomia = stats.get("taxonomia", {})
+
         # Preparar candidato para la UI
         candidate = {
             "nombre": char["nombre"],
-            "nivel": char["nivel"],
-            "raza": char["raza"],
-            "clase": char["clase"],
+            "nivel": progresion.get("nivel", 1),
+            "raza": taxonomia.get("raza", "Desconocida"),
+            "clase": progresion.get("clase", "Novato"),
             "costo": costo,
-            "stats_json": char["stats_json"]
+            "stats_json": stats
         }
 
         candidates.append(candidate)
@@ -62,9 +67,10 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
 
     stats = candidate.get("stats_json", {})
     bio = stats.get("bio", {})
-    atributos = stats.get("atributos", {})
-    habilidades = stats.get("habilidades", {})
-    feats = stats.get("feats", [])
+    capacidades = stats.get("capacidades", {})
+    atributos = capacidades.get("atributos", {})
+    habilidades = capacidades.get("habilidades", {})
+    feats = capacidades.get("feats", [])
 
     can_afford = player_credits >= candidate["costo"]
     border_color = "#26de81" if can_afford else "#ff6b6b"
