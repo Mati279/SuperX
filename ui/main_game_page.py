@@ -66,154 +66,153 @@ def render_main_game_page(cookie_manager):
 def _render_sticky_top_hud(player, commander):
     """
     Renderiza la barra superior STICKY (siempre visible).
-    FIX: Recursos centrados, fuente más chica y reloj posicionado a la derecha.
+    Layout: Recursos CENTRADOS, Reloj posicionado ABSOLUTO a la derecha.
     """
-    
     finances = get_player_finances(player.id)
     status = get_world_status_display()
 
-    # Función helper para evitar crash por NoneType
+    # Helper para evitar crash por NoneType
     def safe_val(key):
-        val = finances.get(key)
+        val = finances.get(key) if finances else None
         return val if val is not None else 0
 
-    # Colores de estado para el reloj
-    time_color = "#56d59f"  # Verde nominal
-    if status["is_lock_in"]: time_color = "#f9ca24" 
-    if status["is_frozen"]: time_color = "#ff6b6b" 
+    # Preparar valores para el HTML (evita problemas de interpolación)
+    creditos = f"{safe_val('creditos'):,}"
+    materiales = f"{safe_val('materiales'):,}"
+    componentes = f"{safe_val('componentes'):,}"
+    celulas = f"{safe_val('celulas_energia'):,}"
+    influencia = f"{safe_val('influencia'):,}"
 
-    # Convertimos el tiempo a string explícitamente para evitar errores
     clock_time = str(status.get('time', '00:00'))
     clock_tick = str(status.get('tick', 0))
 
-    st.markdown(f"""
-        <style>
-        @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&display=swap");
+    # Color del reloj según estado
+    time_color = "#56d59f"  # Verde nominal
+    if status.get("is_lock_in"):
+        time_color = "#f9ca24"  # Amarillo bloqueo
+    if status.get("is_frozen"):
+        time_color = "#ff6b6b"  # Rojo congelado
 
-        /* Contenedor principal Sticky */
-        .top-hud-sticky {{
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 50px;
-            z-index: 999999;
-            background-color: #262730;
-            border-bottom: 1px solid #444;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 20px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-        }}
+    # CSS separado para mayor claridad
+    hud_css = """
+    <style>
+    @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&display=swap");
 
-        /* Espaciador izquierdo para balancear el flexbox */
-        .hud-spacer {{
-            width: 120px;
-        }}
+    .top-hud-sticky {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 50px;
+        z-index: 999999;
+        background-color: #262730;
+        border-bottom: 1px solid #444;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 20px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    }
 
-        /* Grupo de Recursos (Centrado) */
-        .hud-resource-group {{
-            display: flex;
-            gap: 25px; /* Más espacio entre items */
-            align-items: center;
-            height: 100%;
-        }}
-        
-        /* Métrica individual */
-        .hud-metric {{
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            cursor: help;
-            padding: 2px 8px;
-            border-radius: 4px;
-        }}
-        
-        .hud-metric:hover {{
-            background-color: rgba(255,255,255,0.05);
-        }}
+    .hud-resource-group {
+        display: flex;
+        gap: 40px;
+        align-items: center;
+        height: 100%;
+    }
 
-        .hud-icon {{ 
-            font-size: 1.1em; /* Iconos más chicos */
-            line-height: 1;
-            opacity: 0.8;
-        }}
-        
-        .hud-value {{ 
-            font-family: 'Source Code Pro', monospace; 
-            font-weight: 600; 
-            color: #e0e0e0 !important;
-            font-size: 0.95em; /* Fuente numérica más chica */
-            white-space: nowrap;
-        }}
+    .hud-metric {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: help;
+        padding: 2px 8px;
+        border-radius: 4px;
+    }
 
-        /* Contenedor del Reloj (a la derecha con flexbox) */
-        .hud-clock-container {{
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            min-width: 120px;
-            justify-content: flex-end;
-        }}
+    .hud-metric:hover {
+        background-color: rgba(255,255,255,0.05);
+    }
 
-        /* Reloj Digital */
-        .hud-clock {{
-            font-family: 'Orbitron', monospace;
-            color: {time_color} !important;
-            font-weight: bold;
-            font-size: 1.1em; /* Reloj legible pero no gigante */
-            letter-spacing: 1px;
-            background: rgba(0,0,0,0.3);
-            padding: 4px 12px;
-            border-radius: 4px;
-            border: 1px solid #444;
-            white-space: nowrap;
-        }}
-        
-        /* Ajuste para móviles */
-        @media (max-width: 800px) {{
-            .hud-value {{ font-size: 0.8em; }}
-            .hud-icon {{ font-size: 1.0em; }}
-            .top-hud-sticky {{ padding-left: 60px; }}
-            .hud-spacer {{ display: none; }}
-            .hud-clock-container {{ min-width: auto; }}
-        }}
-        </style>
+    .hud-icon {
+        font-size: 1.1em;
+        line-height: 1;
+        opacity: 0.8;
+    }
 
-        <div class="top-hud-sticky">
-            <div class="hud-spacer"></div>
+    .hud-value {
+        font-family: 'Source Code Pro', monospace;
+        font-weight: 600;
+        color: #e0e0e0 !important;
+        font-size: 0.95em;
+        white-space: nowrap;
+    }
 
-            <div class="hud-resource-group">
-                <div class="hud-metric" title="Créditos Estándar">
-                    <span class="hud-icon">💳</span>
-                    <span class="hud-value">{safe_val('creditos'):,}</span>
-                </div>
-                <div class="hud-metric" title="Materiales de Construcción">
-                    <span class="hud-icon">📦</span>
-                    <span class="hud-value">{safe_val('materiales'):,}</span>
-                </div>
-                <div class="hud-metric" title="Componentes Tecnológicos">
-                    <span class="hud-icon">🧩</span>
-                    <span class="hud-value">{safe_val('componentes'):,}</span>
-                </div>
-                <div class="hud-metric" title="Células de Energía">
-                    <span class="hud-icon">⚡</span>
-                    <span class="hud-value">{safe_val('celulas_energia'):,}</span>
-                </div>
-                <div class="hud-metric" title="Influencia Política">
-                    <span class="hud-icon">👑</span>
-                    <span class="hud-value">{safe_val('influencia'):,}</span>
-                </div>
+    .hud-clock-container {
+        position: absolute;
+        right: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .hud-clock {
+        font-family: 'Orbitron', monospace;
+        font-weight: bold;
+        font-size: 1.1em;
+        letter-spacing: 1px;
+        background: rgba(0,0,0,0.3);
+        padding: 4px 12px;
+        border-radius: 4px;
+        border: 1px solid #444;
+        white-space: nowrap;
+    }
+
+    @media (max-width: 800px) {
+        .hud-value { font-size: 0.8em; }
+        .hud-icon { font-size: 1.0em; }
+        .top-hud-sticky { padding-left: 60px; }
+        .hud-clock-container { position: static; }
+        .hud-resource-group { gap: 15px; }
+    }
+    </style>
+    """
+
+    # HTML con valores ya interpolados
+    hud_html = f"""
+    <div class="top-hud-sticky">
+        <div class="hud-resource-group">
+            <div class="hud-metric" title="Créditos Estándar">
+                <span class="hud-icon">💳</span>
+                <span class="hud-value">{creditos}</span>
             </div>
-
-            <div class="hud-clock-container" title="Ciclo Galáctico Actual: {clock_tick}">
-                <span class="hud-clock">🕐 {clock_time}</span>
+            <div class="hud-metric" title="Materiales de Construcción">
+                <span class="hud-icon">📦</span>
+                <span class="hud-value">{materiales}</span>
+            </div>
+            <div class="hud-metric" title="Componentes Tecnológicos">
+                <span class="hud-icon">🧩</span>
+                <span class="hud-value">{componentes}</span>
+            </div>
+            <div class="hud-metric" title="Células de Energía">
+                <span class="hud-icon">⚡</span>
+                <span class="hud-value">{celulas}</span>
+            </div>
+            <div class="hud-metric" title="Influencia Política">
+                <span class="hud-icon">👑</span>
+                <span class="hud-value">{influencia}</span>
             </div>
         </div>
-        
-        <div style="height: 60px;"></div>
-    """, unsafe_allow_html=True)
+
+        <div class="hud-clock-container" title="Ciclo Galáctico: {clock_tick}">
+            <span class="hud-clock" style="color: {time_color} !important;">⏱ {clock_time}</span>
+        </div>
+    </div>
+
+    <div style="height: 60px;"></div>
+    """
+
+    st.markdown(hud_css + hud_html, unsafe_allow_html=True)
 
 
 def _render_navigation_sidebar(player, commander, cookie_manager):
