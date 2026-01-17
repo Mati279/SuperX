@@ -315,8 +315,21 @@ def _render_interactive_galaxy_map():
             stroke: #4dff88;
             stroke-width: 3px;
             filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8));
+            animation: pulse 2s infinite;
         }}
         
+        @keyframes pulse {{
+            0% {{
+                filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8));
+            }}
+            50% {{
+                filter: drop-shadow(0 0 25px rgba(77, 255, 136, 1));
+            }}
+            100% {{
+                filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8));
+            }}
+        }}
+
         .route {{ stroke: #5b7bff; stroke-opacity: 0.2; stroke-width: 1.5; pointer-events: none; }}
         
         #tooltip {{
@@ -492,6 +505,7 @@ def _render_system_orbits(system: System):
         stroke: #4dff88 !important;
         stroke-width: 3px !important;
         filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9));
+        animation: pulse 2s infinite;
     }}
     </style>
     <div class="sys-wrapper">
