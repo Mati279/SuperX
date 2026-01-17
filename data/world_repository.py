@@ -94,13 +94,13 @@ def mark_action_processed(action_id: int, result_status: str) -> None:
 
 def get_commander_location_display(commander_id: int) -> Dict[str, str]:
     """
-    Recupera los detalles de ubicación del comandante basándose en su BASE PRINCIPAL.
-    Consulta planet_assets, systems y planets para dar datos reales.
+    Recupera los detalles de ubicación del comandante basándose ÚNICAMENTE
+    en su BASE PLANETARIA. Ignora naves.
     """
     loc_data = {
         "system": "Sector Desconocido", 
-        "planet": "Espacio Profundo", 
-        "base": "Sin Señal"
+        "planet": "Planeta Desconocido", 
+        "base": "Sin Base"
     }
 
     try:
@@ -112,7 +112,7 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
         player_id = char_res.data.get("player_id")
 
         # 2. Buscar el ASENTAMIENTO PRINCIPAL (Base) en planet_assets
-        # Se toma el de mayor población o el primero encontrado como "Base Principal"
+        # Se toma el de mayor población o el primero encontrado.
         asset_res = supabase.table("planet_assets")\
             .select("system_id, planet_id, nombre_asentamiento")\
             .eq("player_id", player_id)\
@@ -126,8 +126,7 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
             system_id = asset.get("system_id")
             planet_id = asset.get("planet_id")
             
-            # Etiqueta fija solicitada
-            loc_data["base"] = "Base Principal"
+            loc_data["base"] = asset.get("nombre_asentamiento", "Base Principal")
             
             # 3. Obtener Nombre Real del Sistema
             if system_id:
@@ -150,6 +149,5 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
         return loc_data
 
     except Exception as e:
-        # En caso de error, devolvemos los valores por defecto sin romper la UI
         log_event(f"Error obteniendo ubicación HUD: {e}", is_error=True)
         return loc_data

@@ -185,7 +185,11 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
     loc_data = get_commander_location_display(commander.id)
     loc_system = loc_data.get("system", "Desconocido")
     loc_planet = loc_data.get("planet", "---")
-    loc_base = loc_data.get("base", "Base Principal")
+    
+    # El label de "Base" aquí lo uso como título de la sección o nombre del activo,
+    # según tu requerimiento de "El sistema y el planeta en donde está a planet asset".
+    # Incluyo el nombre de la base también para contexto completo.
+    loc_base_name = loc_data.get("base", "Base Principal")
 
     with st.sidebar:
         
@@ -230,11 +234,11 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
                     {loc_planet}
                 </div>
             </div>
-            <div class="loc-row" title="Ubicación Actual">
+            <div class="loc-row" title="Asentamiento">
                 <span class="loc-icon">🏛</span>
                  <div>
                     <div class="loc-label">BASE</div>
-                    {loc_base}
+                    {loc_base_name}
                 </div>
             </div>
         </div>

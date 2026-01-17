@@ -188,8 +188,7 @@ def register_player_account(
         find_safe_starting_node,
         generate_genesis_commander_stats,
         apply_genesis_inventory,
-        initialize_fog_of_war,
-        grant_genesis_ship
+        initialize_fog_of_war
     )
 
     if get_player_by_name(user_name):
@@ -262,13 +261,8 @@ def register_player_account(
             else:
                 raise e
 
-        # 4. Inventario y Nave (Idempotente)
+        # 4. Inventario
         apply_genesis_inventory(player_id)
-
-        if char_id:
-            ships = db.table("ships").select("id").eq("player_id", player_id).execute()
-            if not ships.data:
-                grant_genesis_ship(player_id, start_system_id, char_id)
 
         # 5. Niebla de Guerra
         initialize_fog_of_war(player_id, start_system_id)
@@ -376,7 +370,7 @@ def update_player_credits(player_id: int, new_credits: int) -> bool:
     Returns:
         True si la actualización fue exitosa
     """
-    return update_player_resources(player_id, {"creditos": new_credits})
+    return update_player_credits(player_id, {"creditos": new_credits})
 
 
 def add_player_credits(player_id: int, amount: int) -> bool:

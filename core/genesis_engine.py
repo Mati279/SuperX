@@ -187,22 +187,3 @@ def _grant_visibility(player_id: int, system_id: int, level: int):
         supabase.table("player_exploration").upsert(data, on_conflict="player_id, system_id").execute()
     except Exception as e:
         print(f"Error granting visibility: {e}")
-
-def grant_genesis_ship(player_id: int, system_id: int, character_id: int):
-    """19.2.C Activo Aeroespacial: Nave Exploradora Tier II."""
-    ship_data = {
-        "player_id": player_id,
-        "nombre": "Génesis-01",
-        "clase": "Exploradora Tier II",
-        "tipo_casco": "Corbeta Ligera",
-        "ubicacion_system_id": system_id,
-        "capitan_id": character_id,
-        "estado": "Operativa",
-        "integridad": 100,
-        "modulos": {
-            "motor": "Impulso Iónico Mk2 (Starlanes Only)", 
-            "sensores": "Matriz Fase II",
-            "bodega": "Compacta"
-        }
-    }
-    supabase.table("ships").insert(ship_data).execute()
