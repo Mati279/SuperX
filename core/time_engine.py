@@ -4,17 +4,18 @@ import pytz
 import random
 # Imports del repositorio de mundo
 from data.world_repository import (
-    get_world_state, 
-    try_trigger_db_tick, 
+    get_world_state,
+    try_trigger_db_tick,
     force_db_tick,
-    get_all_pending_actions, 
+    get_all_pending_actions,
     mark_action_processed
 )
+from data.player_repository import get_all_players
 # Imports para la lógica del MRG (Misiones)
 from data.database import supabase
 from data.character_repository import update_character
 from data.player_repository import get_player_credits, update_player_credits
-from data.log_repository import log_event
+from data.log_repository import log_event, clear_player_logs
 
 # IMPORT NUEVO: Servicio de Eventos Narrativos
 from services.event_service import generate_tick_event
@@ -66,6 +67,12 @@ def _execute_game_logic_tick(execution_time: datetime):
     Sigue un flujo lineal estricto para garantizar consistencia de datos.
     """
     tick_start = datetime.now()
+
+    # FASE PREVIA: Limpiar logs de todos los jugadores antes del tick
+    all_players = get_all_players()
+    for p in all_players:
+        clear_player_logs(p['id'])
+
     log_event(f"🔄 INICIANDO PROCESAMIENTO DE TICK: {execution_time.isoformat()}")
 
     # Obtener número de tick actual para referencias

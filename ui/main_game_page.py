@@ -1,7 +1,7 @@
 # ui/main_game_page.py
 import streamlit as st
 from .state import logout_user, get_player, get_commander
-from data.log_repository import get_recent_logs, log_event
+from data.log_repository import get_recent_logs, log_event, clear_player_logs
 from services.gemini_service import resolve_player_action
 
 # --- Imports para STRT (Sistema de Tiempo) ---
@@ -88,21 +88,28 @@ def _render_sticky_top_hud(player, commander):
 
     st.markdown(f"""
         <style>
+        @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&display=swap");
+
         /* Contenedor principal Sticky */
         .top-hud-sticky {{
             position: fixed;
             top: 0;
             left: 0;
             right: 0;
-            height: 50px; /* Un poco más delgada */
+            height: 50px;
             z-index: 999999;
             background-color: #262730;
             border-bottom: 1px solid #444;
             display: flex;
             align-items: center;
-            justify-content: center; /* CENTRAR LOS RECURSOS */
+            justify-content: space-between;
             padding: 0 20px;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        }}
+
+        /* Espaciador izquierdo para balancear el flexbox */
+        .hud-spacer {{
+            width: 120px;
         }}
 
         /* Grupo de Recursos (Centrado) */
@@ -141,13 +148,13 @@ def _render_sticky_top_hud(player, commander):
             white-space: nowrap;
         }}
 
-        /* Contenedor del Reloj (Posicionado Absolutamente a la derecha) */
+        /* Contenedor del Reloj (a la derecha con flexbox) */
         .hud-clock-container {{
-            position: absolute;
-            right: 20px;
             display: flex;
             align-items: center;
             gap: 10px;
+            min-width: 120px;
+            justify-content: flex-end;
         }}
 
         /* Reloj Digital */
@@ -168,12 +175,15 @@ def _render_sticky_top_hud(player, commander):
         @media (max-width: 800px) {{
             .hud-value {{ font-size: 0.8em; }}
             .hud-icon {{ font-size: 1.0em; }}
-            .top-hud-sticky {{ justify-content: space-between; padding-left: 60px; }}
-            .hud-clock-container {{ position: static; }} /* En móvil, vuelve al flujo normal */
+            .top-hud-sticky {{ padding-left: 60px; }}
+            .hud-spacer {{ display: none; }}
+            .hud-clock-container {{ min-width: auto; }}
         }}
         </style>
 
         <div class="top-hud-sticky">
+            <div class="hud-spacer"></div>
+
             <div class="hud-resource-group">
                 <div class="hud-metric" title="Créditos Estándar">
                     <span class="hud-icon">💳</span>
@@ -198,7 +208,7 @@ def _render_sticky_top_hud(player, commander):
             </div>
 
             <div class="hud-clock-container" title="Ciclo Galáctico Actual: {clock_tick}">
-                <span class="hud-clock">{clock_time}</span>
+                <span class="hud-clock">🕐 {clock_time}</span>
             </div>
         </div>
         
@@ -319,9 +329,15 @@ def _render_war_room_page():
     commander_name = commander.nombre
     status = get_world_status_display()
 
-    # Título más compacto
-    st.markdown('<div class="war-room-title">📟 Enlace Neuronal de Mando</div>', unsafe_allow_html=True)
-    
+    # Título más compacto con botón de limpiar
+    col_title, col_clear = st.columns([4, 1])
+    with col_title:
+        st.markdown('<div class="war-room-title">📟 Enlace Neuronal de Mando</div>', unsafe_allow_html=True)
+    with col_clear:
+        if st.button("🗑️ Limpiar", help="Borrar historial del chat"):
+            clear_player_logs(player_id)
+            st.rerun()
+
     if status['is_lock_in']:
         st.warning("⚠️ VENTANA DE BLOQUEO ACTIVA")
     
