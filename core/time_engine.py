@@ -17,6 +17,8 @@ from data.character_repository import update_character
 from data.player_repository import get_player_credits, update_player_credits
 from data.log_repository import log_event, clear_player_logs
 
+from core.mrg_engine import resolve_action, ResultType, MalusType
+
 # IMPORT NUEVO: Servicio de Eventos Narrativos
 from services.event_service import generate_tick_event
 
@@ -201,86 +203,98 @@ def _phase_social_logistics():
 
 def _phase_mission_resolution():
     """
-    Fase 6: Resolución de Misiones (MRG).
-    Busca personajes en estado 'En Misión', resuelve el resultado (d100 + Atributo) 
-    y actualiza estados/recompensas.
+    Fase 6: Resolución de Misiones (MRG v2.0).
+    Utiliza el motor de 2d50 con márgenes de éxito/fracaso.
     """
-    log_event("running phase 6: Resolución de Misiones (MRG)...")
+    log_event("running phase 6: Resolución de Misiones (MRG 2d50)...")
     
     try:
-        # 1. Obtener todos los personajes que están actualmente en misión
-        # Usamos supabase directo para iterar sobre todas las facciones
+        # 1. Obtener operativos en misión
         response = supabase.table("characters").select("*").eq("estado", "En Misión").execute()
         active_operatives = response.data if response.data else []
         
         if not active_operatives:
-            # log_event("No hay operativos en misión activa.")
             return
 
         for char in active_operatives:
             player_id = char['player_id']
-            
-            # Recuperar datos de la misión del JSON o usar valores por defecto
-            # Se asume que al asignar la misión guardamos un objeto 'active_mission' en stats_json
             stats = char.get('stats_json', {})
             mission_data = stats.get('active_mission', {})
             
-            difficulty = mission_data.get('difficulty', 50)  # Dificultad estándar
-            reward = mission_data.get('reward', 200)         # Recompensa estándar
-            risk_attr = mission_data.get('attribute', 'fuerza').lower() # Atributo puesto a prueba
+            # Datos de Misión
+            difficulty = mission_data.get('difficulty', 50)
+            base_reward = mission_data.get('reward', 200)
+            risk_attr_name = mission_data.get('attribute', 'fuerza').lower()
             
-            # Obtener valor del atributo del personaje
-            attr_value = stats.get('atributos', {}).get(risk_attr, 10)
+            # Obtener Puntos de Mérito (Atributo + Habilidad si existiera)
+            # Por ahora usamos el atributo raw como base de mérito
+            attr_value = stats.get('atributos', {}).get(risk_attr_name, 10)
             
-            # --- Mecánica de Resolución (RNG) ---
-            # Tirada d100. Éxito si (Tirada + Atributo) > Dificultad
-            roll = random.randint(1, 100)
-            total_score = roll + attr_value
+            # --- RESOLUCIÓN MRG ---
+            result = resolve_action(
+                merit_points=attr_value,
+                difficulty=difficulty,
+                action_description=f"Misión de {char['nombre']}"
+            )
             
+            # --- INTERPRETACIÓN DE RESULTADOS ---
             narrative = ""
             new_status = "Disponible"
+            current_credits = get_player_credits(player_id)
             
-            if total_score >= difficulty:
-                # ÉXITO
-                # 1. Dar Créditos al jugador
-                current_credits = get_player_credits(player_id)
+            # 1. ÉXITOS (Total o Parcial)
+            if result.result_type in [ResultType.CRITICAL_SUCCESS, ResultType.TOTAL_SUCCESS, ResultType.PARTIAL_SUCCESS]:
+                
+                # Recompensa base
+                reward = base_reward
+                
+                if result.result_type == ResultType.PARTIAL_SUCCESS:
+                    # Éxito Parcial: "Complicación menor" -> Reducción de recompensa o fatiga leve
+                    # Implementación: 75% de la recompensa
+                    reward = int(base_reward * 0.75)
+                    narrative = f"⚠️ ÉXITO PARCIAL: {char['nombre']} cumplió el objetivo con complicaciones. (Margen {result.margin}). Ganancia: {reward} C."
+                
+                else:
+                    # Éxito Total / Crítico
+                    # BONUS AUTOMÁTICO (Por ser tick nocturno): Eficiencia (+10% extra créditos por ahora)
+                    bonus_cr = int(base_reward * 0.10)
+                    reward += bonus_cr
+                    prefix = "🌟 CRÍTICO" if result.result_type == ResultType.CRITICAL_SUCCESS else "✅ ÉXITO TOTAL"
+                    narrative = f"{prefix}: {char['nombre']} triunfó magistralmente. (Roll {result.roll.total}). Ganancia: {reward} C."
+
+                # Aplicar recompensa
                 update_player_credits(player_id, current_credits + reward)
                 
-                narrative = f"✅ Misión EXITOSA: {char['nombre']} completó su objetivo. (Roll: {roll}+{attr_value} vs DC{difficulty}). Recompensa: {reward} C."
-                
-                # Limpiar datos de misión activa
-                if 'active_mission' in stats:
-                    del stats['active_mission']
-                
-                # 2. Actualizar personaje
+                # Actualizar personaje (Limpio)
+                if 'active_mission' in stats: del stats['active_mission']
                 update_character(char['id'], {
                     "estado": "Disponible", 
                     "ubicacion": "Barracones",
                     "stats_json": stats
                 })
-                
-            else:
-                # FALLO
-                margin = difficulty - total_score
-                
-                # Si falla por mucho (>20), sale Herido. Si no, solo Descansando (Fatiga).
-                if margin > 20:
-                    new_status = "Herido"
-                    narrative = f"❌ Misión CRÍTICA: {char['nombre']} falló y resultó herido. (Roll: {roll}+{attr_value} vs DC{difficulty})."
-                else:
-                    new_status = "Descansando"
-                    narrative = f"⚠️ Misión FALLIDA: {char['nombre']} abortó la misión. (Roll: {roll}+{attr_value} vs DC{difficulty})."
-                
-                if 'active_mission' in stats:
-                    del stats['active_mission']
 
+            # 2. FRACASOS (Total o Parcial)
+            else:
+                if result.result_type == ResultType.PARTIAL_FAILURE:
+                    # Fracaso Parcial: "Objetivo no se cumple, se pierden recursos, posición segura"
+                    new_status = "Disponible" # Vuelve, pero con las manos vacías
+                    narrative = f"🔸 FRACASO PARCIAL: {char['nombre']} no logró el objetivo y tuvo que abortar. (Margen {result.margin})."
+                
+                else:
+                    # Fracaso Total / Crítico (Pifia)
+                    # CONSECUENCIA AUTOMÁTICA: Baja Operativa (Herido)
+                    new_status = "Herido"
+                    prefix = "💀 PIFIA" if result.result_type == ResultType.CRITICAL_FAILURE else "❌ FRACASO TOTAL"
+                    narrative = f"{prefix}: {char['nombre']} sufrió un accidente grave durante la misión. (Roll {result.roll.total}). Pasa a Enfermería."
+
+                if 'active_mission' in stats: del stats['active_mission']
                 update_character(char['id'], {
                     "estado": new_status, 
                     "ubicacion": "Enfermería" if new_status == "Herido" else "Barracones",
                     "stats_json": stats
                 })
 
-            # Registrar el resultado en los logs
+            # Log final
             log_event(narrative, player_id)
 
     except Exception as e:
