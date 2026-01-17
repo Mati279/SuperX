@@ -9,7 +9,7 @@ from core.time_engine import get_world_status_display, check_and_trigger_tick, d
 from data.world_repository import get_pending_actions_count
 from data.player_repository import get_player_finances
 
-# --- Importar las vistas del juego ---
+# --- Importar las vistas del juego --- 
 from .faction_roster import show_faction_roster
 from .recruitment_center import show_recruitment_center
 from .galaxy_map_page import show_galaxy_map_page
@@ -248,9 +248,99 @@ def _render_war_room_styles():
     )
 
 
+def _render_chat_interface(chat_container, commander_name: str, player_id: int, is_frozen: bool):
+    """
+    Renderiza la interfaz de chat Neural Link.
+    CRÍTICO: Itera sobre st.session_state.messages ANTES de st.chat_input()
+    para garantizar persistencia entre reruns de Streamlit.
+    """
+    # --- PASO 1: Renderizar historial de mensajes desde session_state ---
+    # Esto DEBE ocurrir ANTES del chat_input para que los mensajes persistan
+    with chat_container:
+        for message in st.session_state.messages:
+            role = message.get("role", "assistant")
+            content = message.get("content")
+
+            # Manejar mensajes que tienen tool_calls en lugar de content
+            if content is None:
+                tool_calls = message.get("tool_calls")
+                if tool_calls:
+                    # Mostrar indicador de tool call
+                    content = "[Ejecutando acción del sistema...]"
+                else:
+                    # Saltar mensajes vacíos
+                    continue
+
+            # Determinar avatar e icono según el rol y contenido
+            if role == "user":
+                with st.chat_message("user", avatar="👤"):
+                    st.write(content)
+                    st.markdown('<div class="user-marker" style="display:none;"></div>', unsafe_allow_html=True)
+            else:
+                # Mensaje de assistant/sistema
+                icon = "🤖"
+                if "VENTANA DE BLOQUEO" in str(content) or "⏱️" in str(content):
+                    icon = "⏳"
+                elif "CONGELADO" in str(content) or "❄️" in str(content):
+                    icon = "❄️"
+                elif "Misión EXITOSA" in str(content) or "✅" in str(content):
+                    icon = "✅"
+                elif "Misión FALLIDA" in str(content) or "❌" in str(content):
+                    icon = "❌"
+
+                st.chat_message("assistant", avatar=icon).write(content)
+
+    # --- PASO 2: Input del chat (DESPUÉS de renderizar mensajes) ---
+    input_placeholder = f"¿Órdenes, Comandante {commander_name}?"
+    if is_frozen:
+        input_placeholder = "Sistemas congelados. Entrada deshabilitada."
+
+    action = st.chat_input(input_placeholder, disabled=is_frozen)
+
+    # --- PASO 3: Procesar nuevo mensaje ---
+    if action:
+        # Agregar mensaje del usuario al estado de sesión
+        st.session_state.messages.append({
+            "role": "user",
+            "content": action
+        })
+
+        # Registrar en la bitácora persistente (DB)
+        log_event(f"[PLAYER] {action}", player_id)
+
+        # Procesar con IA
+        with st.spinner("Transmitiendo órdenes..."):
+            try:
+                result = resolve_player_action(action, player_id)
+
+                # Agregar respuesta de la IA al estado de sesión
+                if result:
+                    # Manejar diferentes formatos de respuesta
+                    if isinstance(result, dict):
+                        response_content = result.get("content") or result.get("message") or str(result)
+                    else:
+                        response_content = str(result)
+
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": response_content
+                    })
+
+                st.rerun()
+            except Exception as e:
+                error_msg = f"Error de comunicación: {e}"
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": error_msg
+                })
+                st.error(f"⚠️ {error_msg}")
+
+
 def _render_war_room_page():
-    """Página del Puente de Mando con integración STRT."""
+    """Página del Puente de Mando con integración STRT y layout de columnas."""
     _render_war_room_styles()
+
+    # --- Header del Puente de Mando ---
     st.markdown(
         """
         <div class="war-room-header">
@@ -259,83 +349,81 @@ def _render_war_room_page():
         """,
         unsafe_allow_html=True,
     )
-    
+
     status = get_world_status_display()
-    
+
     if status['is_lock_in']:
         st.warning("⚠️ VENTANA DE BLOQUEO ACTIVA: Las órdenes se ejecutarán al iniciar el próximo ciclo.")
     if status['is_frozen']:
         st.error("❄️ ALERTA: El flujo temporal está detenido (FREEZE). Sistemas tácticos en espera.")
 
-    st.markdown(
-        "<div class=\"war-room-section\">Bitacora de Mision</div>",
-        unsafe_allow_html=True,
-    )
-    
-    player_id = get_player()['id']
-    commander_name = get_commander()['nombre']
-    
-    log_container = st.container(height=520)
-    logs = get_recent_logs(player_id, limit=20)
-    
-    for log in reversed(logs):
-        mensaje = log.get('message', '')
-        if "ERROR" not in mensaje:
-            # Detectar si es un mensaje del jugador o de la IA
-            if mensaje.startswith("[PLAYER]"):
-                # Mensaje del usuario
-                mensaje_limpio = mensaje.replace("[PLAYER] ", "")
+    player = get_player()
+    commander = get_commander()
 
-                # Renderizar mensaje de usuario e inyectar MARCADOR INVISIBLE
-                with log_container.chat_message("user", avatar="👤"):
-                    st.write(mensaje_limpio)
-                    st.markdown('<div class="user-marker" style="display:none;"></div>', unsafe_allow_html=True)
-            else:
-                # Mensaje de la IA/sistema
-                icon = "🤖"
+    if not player or not commander:
+        st.error("No se pudieron cargar los datos. Por favor, reinicia la sesión.")
+        return
 
-                # Detectar tipo de mensaje para icono apropiado
-                if "VENTANA DE BLOQUEO" in mensaje or "⏱️" in mensaje:
-                    icon = "⏳"
-                elif "CONGELADO" in mensaje or "❄️" in mensaje:
-                    icon = "❄️"
-                elif "DEBUG" in mensaje:
-                    icon = "🛠️"
-                elif "Misión EXITOSA" in mensaje or "✅" in mensaje:
-                    icon = "✅"
-                elif "Misión FALLIDA" in mensaje or "❌" in mensaje:
-                    icon = "❌"
-                elif "[ASISTENTE]" in mensaje or "🤖" in mensaje:
+    player_id = player['id']
+    commander_name = commander['nombre']
+
+    # --- LAYOUT: Mapa (Izquierda) | Chat Neural Link (Derecha) ---
+    col_map, col_chat = st.columns([7, 3])
+
+    # === COLUMNA IZQUIERDA: Bitácora de Misión ===
+    with col_map:
+        st.markdown(
+            "<div class=\"war-room-section\">Bitacora de Mision</div>",
+            unsafe_allow_html=True,
+        )
+
+        log_container = st.container(height=520)
+        logs = get_recent_logs(player_id, limit=20)
+
+        for log in reversed(logs):
+            mensaje = log.get('message', '')
+            if "ERROR" not in mensaje:
+                if mensaje.startswith("[PLAYER]"):
+                    mensaje_limpio = mensaje.replace("[PLAYER] ", "")
+                    with log_container.chat_message("user", avatar="👤"):
+                        st.write(mensaje_limpio)
+                        st.markdown('<div class="user-marker" style="display:none;"></div>', unsafe_allow_html=True)
+                else:
                     icon = "🤖"
+                    if "VENTANA DE BLOQUEO" in mensaje or "⏱️" in mensaje:
+                        icon = "⏳"
+                    elif "CONGELADO" in mensaje or "❄️" in mensaje:
+                        icon = "❄️"
+                    elif "DEBUG" in mensaje:
+                        icon = "🛠️"
+                    elif "Misión EXITOSA" in mensaje or "✅" in mensaje:
+                        icon = "✅"
+                    elif "Misión FALLIDA" in mensaje or "❌" in mensaje:
+                        icon = "❌"
+                    elif "[ASISTENTE]" in mensaje or "🤖" in mensaje:
+                        icon = "🤖"
 
-                # Limpiar prefijos conocidos para mostrar mensaje limpio
-                mensaje_limpio = mensaje
-                prefijos_a_limpiar = ["[GM] ", "🤖 [ASISTENTE] ", "[ASISTENTE] ", "🤖 "]
-                for prefijo in prefijos_a_limpiar:
-                    if mensaje_limpio.startswith(prefijo):
-                        mensaje_limpio = mensaje_limpio.replace(prefijo, "", 1)
-                        break
+                    mensaje_limpio = mensaje
+                    prefijos_a_limpiar = ["[GM] ", "🤖 [ASISTENTE] ", "[ASISTENTE] ", "🤖 "]
+                    for prefijo in prefijos_a_limpiar:
+                        if mensaje_limpio.startswith(prefijo):
+                            mensaje_limpio = mensaje_limpio.replace(prefijo, "", 1)
+                            break
 
-                log_container.chat_message("assistant", avatar=icon).write(mensaje_limpio)
-            
-    input_placeholder = f"¿Órdenes, Comandante {commander_name}?"
-    if status['is_frozen']:
-        input_placeholder = "Sistemas congelados. Entrada deshabilitada."
-        
-    action = st.chat_input(input_placeholder, disabled=status['is_frozen'])
+                    log_container.chat_message("assistant", avatar=icon).write(mensaje_limpio)
 
-    if action:
-        # Registrar el mensaje del usuario
-        log_event(f"[PLAYER] {action}", player_id)
+    # === COLUMNA DERECHA: Chat Neural Link ===
+    with col_chat:
+        st.markdown(
+            "<div class=\"war-room-section\">Neural Link</div>",
+            unsafe_allow_html=True,
+        )
 
-        # Usar spinner mientras la IA procesa
-        with st.spinner("Transmitiendo órdenes..."):
-            try:
-                # Corregimos la llamada a solo 2 argumentos como pide el servicio actual
-                result = resolve_player_action(action, player_id)
-                st.rerun()
-            except Exception as e:
-                st.error(f"⚠️ Error: {e}")
+        # Crear contenedor con altura fija para scroll
+        chat_container = st.container(height=600)
+
+        # Renderizar interfaz de chat (mensajes + input)
+        _render_chat_interface(chat_container, commander_name, player_id, status['is_frozen'])
 
 
 def _render_commander_sheet_page():

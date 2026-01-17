@@ -6,7 +6,8 @@ from data.player_repository import clear_session_token
 from config.app_constants import SESSION_COOKIE_NAME
 
 def initialize_session_state() -> None:
-    # ... (Igual que antes) ...
+    """Inicializa todas las variables de estado de sesión necesarias."""
+    # --- Estado de Autenticación ---
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
     if 'player_data' not in st.session_state:
@@ -14,13 +15,22 @@ def initialize_session_state() -> None:
     if 'commander_data' not in st.session_state:
         st.session_state.commander_data = None
     if 'is_registering' not in st.session_state:
-        st.session_state.is_registering = False 
+        st.session_state.is_registering = False
     if 'registration_step' not in st.session_state:
         st.session_state.registration_step = 0
     if 'temp_player' not in st.session_state:
-        st.session_state.temp_player = None 
+        st.session_state.temp_player = None
     if 'temp_char_bio' not in st.session_state:
-        st.session_state.temp_char_bio = {} 
+        st.session_state.temp_char_bio = {}
+
+    # --- Estado del Chat Neural Link ---
+    # CRÍTICO: Inicializar messages como lista vacía para persistir historial entre reruns
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []
+
+    # --- Servicio Gemini (preservar instancia entre reruns) ---
+    if 'gemini_service' not in st.session_state:
+        st.session_state.gemini_service = None 
 
 def login_user(player_data: Dict[str, Any], commander_data: Dict[str, Any]) -> None:
     """Loguea al usuario en el estado de sesión."""
