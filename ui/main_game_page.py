@@ -66,13 +66,13 @@ def render_main_game_page(cookie_manager):
 def _render_sticky_top_hud(player, commander):
     """
     Renderiza la barra superior STICKY (siempre visible).
-    Versión Robustecida: Manejo de nulos y Z-Index extremo.
+    FIX: Recursos centrados, fuente más chica y reloj posicionado a la derecha.
     """
     
     finances = get_player_finances(player.id)
     status = get_world_status_display()
 
-    # Función helper para evitar crash por NoneType en f-strings
+    # Función helper para evitar crash por NoneType
     def safe_val(key):
         val = finances.get(key)
         return val if val is not None else 0
@@ -82,6 +82,10 @@ def _render_sticky_top_hud(player, commander):
     if status["is_lock_in"]: time_color = "#f9ca24" 
     if status["is_frozen"]: time_color = "#ff6b6b" 
 
+    # Convertimos el tiempo a string explícitamente para evitar errores
+    clock_time = str(status.get('time', '00:00'))
+    clock_tick = str(status.get('tick', 0))
+
     st.markdown(f"""
         <style>
         /* Contenedor principal Sticky */
@@ -90,21 +94,21 @@ def _render_sticky_top_hud(player, commander):
             top: 0;
             left: 0;
             right: 0;
-            height: 60px;
-            z-index: 999999; /* Z-Index extremo para asegurar visibilidad */
-            background-color: #262730; /* COLOR DE LA SIDEBAR */
+            height: 50px; /* Un poco más delgada */
+            z-index: 999999;
+            background-color: #262730;
             border-bottom: 1px solid #444;
             display: flex;
             align-items: center;
-            justify-content: space-between;
-            padding: 0 20px 0 80px; /* Padding izquierdo para no tapar menú hamburguesa */
+            justify-content: center; /* CENTRAR LOS RECURSOS */
+            padding: 0 20px;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
         }}
 
-        /* Grupo de Recursos */
+        /* Grupo de Recursos (Centrado) */
         .hud-resource-group {{
             display: flex;
-            gap: 20px;
+            gap: 25px; /* Más espacio entre items */
             align-items: center;
             height: 100%;
         }}
@@ -113,39 +117,48 @@ def _render_sticky_top_hud(player, commander):
         .hud-metric {{
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
             cursor: help;
-            padding: 5px 10px;
-            border-radius: 5px;
-            height: 40px; /* Altura fija para evitar colapso */
+            padding: 2px 8px;
+            border-radius: 4px;
         }}
         
         .hud-metric:hover {{
-            background-color: rgba(255,255,255,0.1);
+            background-color: rgba(255,255,255,0.05);
         }}
 
         .hud-icon {{ 
-            font-size: 1.4em; 
+            font-size: 1.1em; /* Iconos más chicos */
             line-height: 1;
+            opacity: 0.8;
         }}
         
         .hud-value {{ 
             font-family: 'Source Code Pro', monospace; 
-            font-weight: bold; 
-            color: #ffffff !important; /* Color forzado */
-            font-size: 1.1em;
+            font-weight: 600; 
+            color: #e0e0e0 !important;
+            font-size: 0.95em; /* Fuente numérica más chica */
             white-space: nowrap;
         }}
 
-        /* Reloj */
+        /* Contenedor del Reloj (Posicionado Absolutamente a la derecha) */
+        .hud-clock-container {{
+            position: absolute;
+            right: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+
+        /* Reloj Digital */
         .hud-clock {{
             font-family: 'Orbitron', monospace;
             color: {time_color} !important;
             font-weight: bold;
-            font-size: 1.2em;
+            font-size: 1.1em; /* Reloj legible pero no gigante */
             letter-spacing: 1px;
             background: rgba(0,0,0,0.3);
-            padding: 5px 15px;
+            padding: 4px 12px;
             border-radius: 4px;
             border: 1px solid #444;
             white-space: nowrap;
@@ -153,10 +166,10 @@ def _render_sticky_top_hud(player, commander):
         
         /* Ajuste para móviles */
         @media (max-width: 800px) {{
-            .hud-value {{ font-size: 0.9em; }}
-            .hud-icon {{ font-size: 1.1em; }}
-            .top-hud-sticky {{ padding-left: 60px; padding-right: 10px; gap: 10px; }}
-            .hud-resource-group {{ gap: 10px; }}
+            .hud-value {{ font-size: 0.8em; }}
+            .hud-icon {{ font-size: 1.0em; }}
+            .top-hud-sticky {{ justify-content: space-between; padding-left: 60px; }}
+            .hud-clock-container {{ position: static; }} /* En móvil, vuelve al flujo normal */
         }}
         </style>
 
@@ -184,8 +197,8 @@ def _render_sticky_top_hud(player, commander):
                 </div>
             </div>
 
-            <div title="Ciclo Galáctico Actual: {status.get('tick', 0)}">
-                <span class="hud-clock">{status.get('time', '00:00')}</span>
+            <div class="hud-clock-container" title="Ciclo Galáctico Actual: {clock_tick}">
+                <span class="hud-clock">{clock_time}</span>
             </div>
         </div>
         
