@@ -69,7 +69,7 @@ def _render_sticky_top_hud(player, commander):
     Versión Robustecida: Manejo de nulos y Z-Index extremo.
     """
     
-    finances = get_player_finances(player['id'])
+    finances = get_player_finances(player.id)
     status = get_world_status_display()
 
     # Función helper para evitar crash por NoneType en f-strings
@@ -210,13 +210,13 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         st.divider()
 
         # --- SECCIÓN: IDENTIDAD ---
-        st.header(f"{player['faccion_nombre']}")
-        if player.get('banner_url'):
-            st.image(player['banner_url'], width='stretch')
+        st.header(f"{player.faccion_nombre}")
+        if player.banner_url:
+            st.image(player.banner_url, use_container_width=True)
 
-        st.caption(f"Comandante {commander['nombre']}")
-        
-        pending = get_pending_actions_count(player['id'])
+        st.caption(f"Comandante {commander.nombre}")
+
+        pending = get_pending_actions_count(player.id)
         if pending > 0:
             st.info(f"📩 {pending} orden(es) en cola.")
 
@@ -252,7 +252,7 @@ def _render_commander_sheet_page():
     commander = get_commander()
     
     if player and commander:
-        render_character_card(commander, player['id'], is_commander=True)
+        render_character_card(commander, player.id, is_commander=True)
     else:
         st.error("Datos del comandante no disponibles.")
 
@@ -297,8 +297,13 @@ def _render_war_room_page():
     """Página del Puente de Mando con CHAT COMPACTO."""
     _render_war_room_styles()
     
-    player_id = get_player()['id']
-    commander_name = get_commander()['nombre']
+    player = get_player()
+    commander = get_commander()
+    if not player or not commander:
+        st.error("Datos no disponibles.")
+        return
+    player_id = player.id
+    commander_name = commander.nombre
     status = get_world_status_display()
 
     # Título más compacto
