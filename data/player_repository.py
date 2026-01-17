@@ -24,9 +24,7 @@ def _get_db():
 def get_all_players() -> List[Dict[str, Any]]:
     """
     Obtiene todos los jugadores registrados.
-
-    Returns:
-        Lista de jugadores
+    Returns: Lista de jugadores
     """
     try:
         response = _get_db().table("players").select("id, nombre").execute()
@@ -37,15 +35,7 @@ def get_all_players() -> List[Dict[str, Any]]:
 
 
 def get_player_by_id(player_id: int) -> Optional[Dict[str, Any]]:
-    """
-    Obtiene un jugador por su ID.
-
-    Args:
-        player_id: ID del jugador
-
-    Returns:
-        Datos del jugador o None
-    """
+    """Obtiene un jugador por su ID."""
     try:
         response = _get_db().table("players")\
             .select("*")\
@@ -58,15 +48,7 @@ def get_player_by_id(player_id: int) -> Optional[Dict[str, Any]]:
 
 
 def get_player_by_name(name: str) -> Optional[Dict[str, Any]]:
-    """
-    Obtiene un jugador por su nombre.
-
-    Args:
-        name: Nombre del jugador
-
-    Returns:
-        Datos del jugador o None
-    """
+    """Obtiene un jugador por su nombre."""
     try:
         response = _get_db().table("players")\
             .select("*")\
@@ -79,15 +61,7 @@ def get_player_by_name(name: str) -> Optional[Dict[str, Any]]:
 
 
 def get_player_by_session_token(token: str) -> Optional[Dict[str, Any]]:
-    """
-    Obtiene un jugador por su token de sesión.
-
-    Args:
-        token: Token de sesión
-
-    Returns:
-        Datos del jugador o None
-    """
+    """Obtiene un jugador por su token de sesión."""
     if not token:
         return None
     try:
@@ -104,15 +78,6 @@ def get_player_by_session_token(token: str) -> Optional[Dict[str, Any]]:
 # --- GESTIÓN DE SESIONES ---
 
 def create_session_token(player_id: int) -> str:
-    """
-    Crea un nuevo token de sesión para el jugador.
-
-    Args:
-        player_id: ID del jugador
-
-    Returns:
-        Token generado o cadena vacía si falla
-    """
     new_token = str(uuid.uuid4())
     try:
         _get_db().table("players")\
@@ -125,12 +90,6 @@ def create_session_token(player_id: int) -> str:
 
 
 def clear_session_token(player_id: int) -> None:
-    """
-    Limpia el token de sesión del jugador.
-
-    Args:
-        player_id: ID del jugador
-    """
     try:
         _get_db().table("players")\
             .update({"session_token": None})\
@@ -143,16 +102,6 @@ def clear_session_token(player_id: int) -> None:
 # --- AUTENTICACIÓN ---
 
 def authenticate_player(name: str, pin: str) -> Optional[Dict[str, Any]]:
-    """
-    Autentica un jugador por nombre y PIN.
-
-    Args:
-        name: Nombre del jugador
-        pin: PIN en texto plano
-
-    Returns:
-        Datos del jugador si la autenticación es exitosa, None si falla
-    """
     player = get_player_by_name(name)
     if player and verify_password(player['pin'], pin):
         return player
@@ -169,20 +118,6 @@ def register_player_account(
 ) -> Optional[Dict[str, Any]]:
     """
     Crea una nueva cuenta y ejecuta el PROTOCOLO DE GÉNESIS v1.5.
-    Versión: TITAN (Blindaje contra duplicados y FKs)
-
-    Args:
-        user_name: Nombre del comandante
-        pin: PIN de acceso
-        faction_name: Nombre de la facción
-        banner_file: Archivo de banner (opcional)
-
-    Returns:
-        Datos del jugador creado
-
-    Raises:
-        ValueError: Si el nombre ya está en uso
-        Exception: Si falla el registro
     """
     from core.genesis_engine import (
         find_safe_starting_node,
@@ -228,7 +163,7 @@ def register_player_account(
         from data.planet_repository import create_planet_asset
         create_planet_asset(planet_id_val, start_system_id, player_id, f"Base {faction_name}", 1000)
 
-        # 3. Comandante (Punto Crítico de Duplicados)
+        # 3. Comandante
         stats = generate_genesis_commander_stats(user_name)
         char_data = {
             "player_id": player_id,
@@ -245,57 +180,34 @@ def register_player_account(
 
         try:
             char_res = db.table("characters").insert(char_data).execute()
-            char_id = char_res.data[0]['id'] if char_res.data else None
         except Exception as e:
             err = str(e)
-            # Si el error es duplicado, recuperar el existente
             if "duplicate key" in err or "23505" in err:
                 print(f"⚠️ Comandante ya existente para ID {player_id}. Recuperando...")
-                existing = db.table("characters")\
-                    .select("id")\
-                    .eq("player_id", player_id)\
-                    .eq("es_comandante", True)\
-                    .single()\
-                    .execute()
-                char_id = existing.data['id'] if existing.data else None
             else:
                 raise e
 
-        # 4. Inventario
+        # 4. Inventario y Niebla
         apply_genesis_inventory(player_id)
-
-        # 5. Niebla de Guerra
         initialize_fog_of_war(player_id, start_system_id)
 
         log_event("✅ Protocolo Génesis completado exitosamente.", player_id)
         return player
 
     except Exception as e:
-        # --- ROLLBACK ATÓMICO ---
         print(f"🔥 FALLO CRÍTICO GENESIS: {e}")
-
         if player_id:
-            print(f"🧹 Ejecutando limpieza para ID {player_id}...")
             try:
                 db.table("players").delete().eq("id", player_id).execute()
-            except Exception as del_err:
-                print(f"❌ Falló la limpieza DB: {del_err}")
-
+            except Exception:
+                pass
         raise Exception(f"Registro fallido: {e}")
 
 
 # --- GESTIÓN DE RECURSOS ---
 
 def get_player_finances(player_id: int) -> Dict[str, Any]:
-    """
-    Obtiene los recursos financieros del jugador.
-
-    Args:
-        player_id: ID del jugador
-
-    Returns:
-        Diccionario con recursos (creditos, materiales, componentes, etc.)
-    """
+    """Obtiene los recursos financieros del jugador."""
     try:
         response = _get_db().table("players")\
             .select("creditos, materiales, componentes, celulas_energia, influencia, recursos_lujo")\
@@ -310,9 +222,13 @@ def get_player_finances(player_id: int) -> Dict[str, Any]:
     except Exception:
         return _default_finances()
 
+# ALIAS para compatibilidad con UI
+def get_player_resources(player_id: int) -> Dict[str, Any]:
+    """Alias para get_player_finances."""
+    return get_player_finances(player_id)
+
 
 def _default_finances() -> Dict[str, Any]:
-    """Retorna valores por defecto de finanzas."""
     return {
         "creditos": 0,
         "materiales": 0,
@@ -324,30 +240,12 @@ def _default_finances() -> Dict[str, Any]:
 
 
 def get_player_credits(player_id: int) -> int:
-    """
-    Obtiene los créditos del jugador.
-
-    Args:
-        player_id: ID del jugador
-
-    Returns:
-        Cantidad de créditos
-    """
     finances = get_player_finances(player_id)
     return finances.get("creditos", 0)
 
 
 def update_player_resources(player_id: int, updates: Dict[str, Any]) -> bool:
-    """
-    Actualiza los recursos del jugador.
-
-    Args:
-        player_id: ID del jugador
-        updates: Diccionario con recursos a actualizar
-
-    Returns:
-        True si la actualización fue exitosa
-    """
+    """Actualiza los recursos del jugador."""
     try:
         _get_db().table("players")\
             .update(updates)\
@@ -360,50 +258,18 @@ def update_player_resources(player_id: int, updates: Dict[str, Any]) -> bool:
 
 
 def update_player_credits(player_id: int, new_credits: int) -> bool:
-    """
-    Actualiza los créditos del jugador.
-
-    Args:
-        player_id: ID del jugador
-        new_credits: Nueva cantidad de créditos
-
-    Returns:
-        True si la actualización fue exitosa
-    """
-    return update_player_credits(player_id, {"creditos": new_credits})
+    return update_player_resources(player_id, {"creditos": new_credits})
 
 
 def add_player_credits(player_id: int, amount: int) -> bool:
-    """
-    Añade créditos al jugador.
-
-    Args:
-        player_id: ID del jugador
-        amount: Cantidad a añadir (puede ser negativo)
-
-    Returns:
-        True si la operación fue exitosa
-    """
     current = get_player_credits(player_id)
-    new_amount = max(0, current + amount)  # No permitir negativos
+    new_amount = max(0, current + amount)
     return update_player_credits(player_id, new_amount)
 
 
 def delete_player_account(player_id: int) -> bool:
-    """
-    Elimina permanentemente la cuenta del jugador y todos sus datos relacionados.
-    Utiliza el CASCADE de la base de datos.
-    
-    Args:
-        player_id: ID del jugador a eliminar
-        
-    Returns:
-        True si la eliminación fue exitosa, False en caso contrario
-    """
     try:
-        print(f"⚠️ [DEBUG] Iniciando borrado completo de cuenta ID {player_id}")
         _get_db().table("players").delete().eq("id", player_id).execute()
         return True
-    except Exception as e:
-        print(f"❌ Error borrando cuenta {player_id}: {e}")
+    except Exception:
         return False
