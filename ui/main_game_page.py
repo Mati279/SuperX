@@ -292,18 +292,31 @@ def _render_war_room_page():
                     st.markdown('<div class="user-marker" style="display:none;"></div>', unsafe_allow_html=True)
             else:
                 # Mensaje de la IA/sistema
-                icon = "📜"
-                if "VENTANA DE BLOQUEO" in mensaje: icon = "⏳"
-                if "CONGELADO" in mensaje: icon = "❄️"
-                if "DEBUG" in mensaje: icon = "🛠️"
-                if "Misión EXITOSA" in mensaje: icon = "✅"
-                if "Misión FALLIDA" in mensaje: icon = "❌"
+                icon = "🤖"
 
-                if mensaje.startswith("[GM]"):
-                    mensaje_limpio = mensaje.replace("[GM] ", "")
-                    log_container.chat_message("assistant", avatar=icon).write(mensaje_limpio)
-                else:
-                    log_container.chat_message("assistant", avatar=icon).write(mensaje)
+                # Detectar tipo de mensaje para icono apropiado
+                if "VENTANA DE BLOQUEO" in mensaje or "⏱️" in mensaje:
+                    icon = "⏳"
+                elif "CONGELADO" in mensaje or "❄️" in mensaje:
+                    icon = "❄️"
+                elif "DEBUG" in mensaje:
+                    icon = "🛠️"
+                elif "Misión EXITOSA" in mensaje or "✅" in mensaje:
+                    icon = "✅"
+                elif "Misión FALLIDA" in mensaje or "❌" in mensaje:
+                    icon = "❌"
+                elif "[ASISTENTE]" in mensaje or "🤖" in mensaje:
+                    icon = "🤖"
+
+                # Limpiar prefijos conocidos para mostrar mensaje limpio
+                mensaje_limpio = mensaje
+                prefijos_a_limpiar = ["[GM] ", "🤖 [ASISTENTE] ", "[ASISTENTE] ", "🤖 "]
+                for prefijo in prefijos_a_limpiar:
+                    if mensaje_limpio.startswith(prefijo):
+                        mensaje_limpio = mensaje_limpio.replace(prefijo, "", 1)
+                        break
+
+                log_container.chat_message("assistant", avatar=icon).write(mensaje_limpio)
             
     input_placeholder = f"¿Órdenes, Comandante {commander_name}?"
     if status['is_frozen']:
@@ -328,20 +341,72 @@ def _render_war_room_page():
 def _render_commander_sheet_page():
     """Página de la Ficha del Comandante."""
     st.title("Ficha de Servicio del Comandante")
-    
+
     commander = get_commander()
     stats = commander.get('stats_json', {})
-    
+    bio = stats.get('bio', {})
+    atributos = stats.get('atributos', {})
+    habilidades = stats.get('habilidades', {})
+
     st.header(f"Informe de {commander['nombre']}")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Biografía")
-        st.write(stats.get('bio', {}))
 
-    with col2:
-        st.subheader("Atributos")
-        st.json(stats.get('atributos', {}))
+    # Biografía
+    st.subheader("Biografía")
+    col_bio1, col_bio2 = st.columns(2)
+    with col_bio1:
+        st.markdown(f"**Raza:** {bio.get('raza', 'N/A')}")
+        st.markdown(f"**Clase:** {bio.get('clase', 'N/A')}")
+    with col_bio2:
+        if bio.get('descripcion_raza'):
+            st.caption(f"*{bio.get('descripcion_raza')}*")
+        if bio.get('descripcion_clase'):
+            st.caption(f"*{bio.get('descripcion_clase')}*")
 
+    st.markdown("---")
+
+    # Atributos con barras visuales
+    st.subheader("Atributos")
+    attr_colors = {
+        "fuerza": "#ff6b6b", "agilidad": "#4ecdc4", "intelecto": "#45b7d1",
+        "tecnica": "#f9ca24", "presencia": "#a55eea", "voluntad": "#26de81"
+    }
+    cols = st.columns(2)
+    for i, (attr, value) in enumerate(atributos.items()):
+        with cols[i % 2]:
+            color = attr_colors.get(attr.lower(), "#888")
+            percentage = min(100, (value / 20) * 100)
+            st.markdown(f"""
+                <div style="margin-bottom: 8px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                        <span style="font-size: 0.85em; color: #ccc;">{attr.upper()}</span>
+                        <span style="font-size: 0.85em; font-weight: bold; color: {color};">{value}</span>
+                    </div>
+                    <div style="background: #1a1a2e; border-radius: 4px; height: 8px; overflow: hidden;">
+                        <div style="background: {color}; width: {percentage}%; height: 100%; border-radius: 4px;"></div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # Habilidades con chips visuales
     st.subheader("Habilidades")
-    st.json(stats.get('habilidades', {}))
+    if habilidades:
+        skills_html = ""
+        for skill, val in sorted(habilidades.items(), key=lambda x: -x[1]):
+            if val >= 30:
+                color, border = "#ffd700", "#ffd700"  # Dorado - Maestro
+            elif val >= 20:
+                color, border = "#45b7d1", "#45b7d1"  # Azul - Experto
+            else:
+                color, border = "#888", "#444"  # Gris - Normal
+            skills_html += f"""
+                <span style="
+                    display: inline-block; padding: 4px 10px; margin: 2px 4px 2px 0;
+                    background: rgba(0,0,0,0.3); border: 1px solid {border};
+                    border-radius: 12px; font-size: 0.75em; color: {color};
+                ">{skill}: <b>{val}</b></span>
+            """
+        st.markdown(f'<div style="margin-top: 8px;">{skills_html}</div>', unsafe_allow_html=True)
+    else:
+        st.info("No hay habilidades calculadas.")

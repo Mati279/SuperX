@@ -92,13 +92,159 @@ def _render_xp_progress_bar(progress: Dict[str, Any]) -> None:
         <div style="margin: 10px 0;">
             <div style="display: flex; justify-content: space-between; font-size: 0.8em; color: #888;">
                 <span>XP: {current} / {needed}</span>
-                <span>Nivel {progress['current_level']} -> {progress['next_level']}</span>
+                <span>Nivel {progress['current_level']} → {progress['next_level']}</span>
             </div>
             <div style="background: #1a1a2e; border-radius: 6px; height: 12px; overflow: hidden; margin-top: 4px;">
                 <div style="background: linear-gradient(90deg, {color}, {color}aa); width: {pct}%; height: 100%; border-radius: 6px; transition: width 0.3s;"></div>
             </div>
         </div>
     """, unsafe_allow_html=True)
+
+
+@st.dialog("⬆️ ASCENSO DE RANGO", width="large")
+def _show_level_up_dialog(char: Dict[str, Any], player_id: int, progress: Dict[str, Any]):
+    """Popup modal para el ascenso de nivel."""
+    stats = char.get('stats_json', {})
+    bio = stats.get('bio', {})
+    atributos = stats.get('atributos', {})
+    nivel_actual = stats.get('nivel', 1)
+    nivel_nuevo = progress['next_level']
+
+    # Header con animación visual
+    st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, #1a1a2e 0%, #2d1f4e 50%, #1a1a2e 100%);
+            border: 2px solid #ffd700;
+            border-radius: 16px;
+            padding: 24px;
+            text-align: center;
+            margin-bottom: 20px;
+            box-shadow: 0 0 30px rgba(255, 215, 0, 0.3);
+        ">
+            <div style="font-size: 3em; margin-bottom: 10px;">⬆️</div>
+            <h2 style="
+                color: #ffd700;
+                font-size: 1.8em;
+                margin: 0;
+                text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+            ">{char['nombre']}</h2>
+            <p style="color: #a55eea; margin: 8px 0;">
+                {bio.get('raza', 'N/A')} • {bio.get('clase', 'N/A')}
+            </p>
+            <div style="
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                gap: 20px;
+                margin-top: 16px;
+            ">
+                <span style="
+                    font-size: 2.5em;
+                    color: #888;
+                ">Nv. {nivel_actual}</span>
+                <span style="
+                    font-size: 2em;
+                    color: #ffd700;
+                    animation: pulse 1s infinite;
+                ">➡️</span>
+                <span style="
+                    font-size: 2.5em;
+                    color: #ffd700;
+                    font-weight: bold;
+                    text-shadow: 0 0 15px rgba(255, 215, 0, 0.7);
+                ">Nv. {nivel_nuevo}</span>
+            </div>
+        </div>
+        <style>
+            @keyframes pulse {{
+                0%, 100% {{ opacity: 1; transform: scale(1); }}
+                50% {{ opacity: 0.7; transform: scale(1.1); }}
+            }}
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Bonificaciones esperadas
+    st.markdown("### 🎁 Bonificaciones del Ascenso")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+            <div style="
+                background: rgba(38, 222, 129, 0.1);
+                border: 1px solid #26de81;
+                border-radius: 8px;
+                padding: 12px;
+                text-align: center;
+            ">
+                <div style="color: #26de81; font-size: 0.85em;">PUNTOS DE ATRIBUTO</div>
+                <div style="color: #fff; font-size: 1.5em; font-weight: bold;">+2</div>
+            </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown("""
+            <div style="
+                background: rgba(69, 183, 209, 0.1);
+                border: 1px solid #45b7d1;
+                border-radius: 8px;
+                padding: 12px;
+                text-align: center;
+            ">
+                <div style="color: #45b7d1; font-size: 0.85em;">PUNTOS DE HABILIDAD</div>
+                <div style="color: #fff; font-size: 1.5em; font-weight: bold;">+5</div>
+            </div>
+        """, unsafe_allow_html=True)
+
+    # Posible nuevo rasgo
+    if nivel_nuevo % 3 == 0:
+        st.markdown("""
+            <div style="
+                background: rgba(165, 94, 234, 0.1);
+                border: 1px solid #a55eea;
+                border-radius: 8px;
+                padding: 12px;
+                text-align: center;
+                margin-top: 12px;
+            ">
+                <div style="color: #a55eea; font-size: 0.85em;">🌟 NUEVO RASGO DISPONIBLE</div>
+                <div style="color: #fff; font-size: 1em;">¡Nivel múltiplo de 3!</div>
+            </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # Atributos actuales
+    with st.expander("📊 Atributos Actuales", expanded=False):
+        attr_colors = {
+            "fuerza": "#ff6b6b", "agilidad": "#4ecdc4", "intelecto": "#45b7d1",
+            "tecnica": "#f9ca24", "presencia": "#a55eea", "voluntad": "#26de81"
+        }
+        for attr, value in atributos.items():
+            color = attr_colors.get(attr.lower(), "#888")
+            st.markdown(f"<span style='color:{color};'>{attr.upper()}: **{value}**</span>", unsafe_allow_html=True)
+
+    st.markdown("")
+
+    # Botones de acción
+    col_cancel, col_confirm = st.columns([1, 2])
+
+    with col_cancel:
+        if st.button("Cancelar", use_container_width=True):
+            st.rerun()
+
+    with col_confirm:
+        if st.button("⬆️ CONFIRMAR ASCENSO", type="primary", use_container_width=True):
+            try:
+                new_stats, changes = apply_level_up(char)
+                result = update_character_level(char['id'], changes['nivel_nuevo'], new_stats, player_id)
+                if result:
+                    st.balloons()
+                    st.success(f"🎉 ¡{char['nombre']} ha ascendido a Nivel {changes['nivel_nuevo']}!")
+                    for bonus in changes['bonificaciones']:
+                        st.info(f"✨ {bonus}")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Error al ascender: {e}")
 
 
 def render_character_card(char: Dict[str, Any], player_id: int, is_commander: bool = False):
@@ -157,37 +303,45 @@ def render_character_card(char: Dict[str, Any], player_id: int, is_commander: bo
 
     # Boton de ASCENDER si puede subir de nivel
     if progress["can_level_up"]:
-        st.markdown("""
-            <div style="
-                background: linear-gradient(90deg, #ffd700, #ff6b6b);
-                padding: 2px;
-                border-radius: 8px;
-                margin: 10px 0;
-            ">
-                <div style="
-                    background: #1a1a2e;
-                    padding: 8px;
-                    border-radius: 6px;
-                    text-align: center;
-                    color: #ffd700;
-                    font-weight: bold;
-                ">
-                    XP SUFICIENTE PARA ASCENDER
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
+        col_msg, col_btn = st.columns([3, 1])
 
-        if st.button(f"ASCENDER A NIVEL {progress['next_level']}", key=f"levelup_{char['id']}", type="primary"):
-            try:
-                new_stats, changes = apply_level_up(char)
-                result = update_character_level(char['id'], changes['nivel_nuevo'], new_stats, player_id)
-                if result:
-                    st.success(f"🎉 {char['nombre']} ha ascendido a Nivel {changes['nivel_nuevo']}!")
-                    for bonus in changes['bonificaciones']:
-                        st.info(f"  - {bonus}")
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Error al ascender: {e}")
+        with col_msg:
+            st.markdown("""
+                <div style="
+                    background: linear-gradient(90deg, #ffd700, #ff6b6b);
+                    padding: 2px;
+                    border-radius: 8px;
+                    margin: 10px 0;
+                ">
+                    <div style="
+                        background: #1a1a2e;
+                        padding: 8px;
+                        border-radius: 6px;
+                        text-align: center;
+                        color: #ffd700;
+                        font-weight: bold;
+                    ">
+                        ⚡ XP SUFICIENTE PARA ASCENDER
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+
+        with col_btn:
+            # Botón con flecha amarilla hacia arriba
+            st.markdown("""
+                <style>
+                    div[data-testid="stButton"] button[kind="primary"] {
+                        background: linear-gradient(135deg, #ffd700 0%, #ffaa00 100%);
+                        color: #1a1a2e;
+                        font-weight: bold;
+                        border: none;
+                        font-size: 1.5em;
+                    }
+                </style>
+            """, unsafe_allow_html=True)
+
+            if st.button("⬆️", key=f"levelup_{char['id']}", type="primary", help=f"Ascender a Nivel {progress['next_level']}"):
+                _show_level_up_dialog(char, player_id, progress)
 
     # Tabs para organizar la informacion
     tab_attrs, tab_skills, tab_manage = st.tabs(["Atributos", "Habilidades", "Gestionar"])

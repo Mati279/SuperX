@@ -219,14 +219,19 @@ Usa este resultado para narrar el éxito o fracaso.
                 break
 
         # 6. Narrativa Final y Persistencia
-        narrative = "..."
-        if response.candidates and response.candidates[0].content.parts:
-            text_parts = [p.text for p in response.candidates[0].content.parts if p.text]
-            narrative = "".join(text_parts).strip()
+        narrative = ""
+        if response and response.candidates and len(response.candidates) > 0:
+            candidate = response.candidates[0]
+            if candidate.content and candidate.content.parts:
+                text_parts = [p.text for p in candidate.content.parts if hasattr(p, 'text') and p.text]
+                narrative = "".join(text_parts).strip()
+
+        # Si no hay narrativa, dar respuesta por defecto
+        if not narrative:
+            narrative = "Orden recibida, Comandante. Procesando datos tácticos..."
 
         # --- CORRECCIÓN CRÍTICA ---
         # Guardamos la narrativa REAL en los logs, prefijada para que se vea bonita en la UI.
-        # Esto reemplaza al mensaje genérico que causaba el problema.
         log_display_text = f"🤖 [ASISTENTE] {narrative}"
         log_event(log_display_text, player_id)
 
@@ -237,5 +242,6 @@ Usa este resultado para narrar el éxito o fracaso.
         }
 
     except Exception as e:
-        log_event(f"Error AI: {e}", player_id, is_error=True)
-        return {"narrative": f"⚠️ Error de sistema: {str(e)}", "mrg_result": None}
+        error_msg = f"⚠️ Error de enlace táctico: {str(e)}"
+        log_event(f"🤖 [ASISTENTE] {error_msg}", player_id)
+        return {"narrative": error_msg, "mrg_result": None}
