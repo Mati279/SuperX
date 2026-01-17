@@ -150,8 +150,6 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             st.rerun()
 
 
-# --- Vistas Internas ---
-
 def _render_war_room_styles():
     """Estilos visuales para el Puente de Mando con corrección para mensajes de usuario."""
     st.markdown(
@@ -159,7 +157,6 @@ def _render_war_room_styles():
         <style>
         @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&display=swap");
 
-        /* Header del Puente */
         .war-room-header {
             margin-bottom: 12px;
             padding-bottom: 12px;
@@ -195,8 +192,6 @@ def _render_war_room_styles():
         }
 
         /* --- ESTILOS DE CHAT --- */
-
-        /* 1. Mensajes por defecto (IA/Assistant) - Azul Tecnológico */
         div[data-testid="stChatMessage"] {
             border-radius: 12px;
             border: 1px solid rgba(80, 170, 220, 0.3);
@@ -205,15 +200,12 @@ def _render_war_room_styles():
             margin-bottom: 10px;
         }
 
-        /* 2. Mensajes del Usuario (Player) - GRIS OSCURO 
-           Detectamos el mensaje usando el marcador invisible .user-marker */
         div[data-testid="stChatMessage"]:has(.user-marker) {
             background: linear-gradient(145deg, #161b22, #0d1117) !important;
             border: 1px solid rgba(160, 160, 160, 0.3) !important;
             box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.2) !important;
         }
 
-        /* Texto de los mensajes */
         div[data-testid="stChatMessage"] div[data-testid="stChatMessageContent"] {
             font-family: "Share Tech Mono", monospace;
             color: #d5f3ff;
@@ -225,7 +217,6 @@ def _render_war_room_styles():
             letter-spacing: 1px;
         }
 
-        /* Input de Chat */
         div[data-testid="stChatInput"] {
             border-radius: 16px;
             border: 1px solid rgba(90, 200, 255, 0.5);
@@ -249,7 +240,7 @@ def _render_war_room_styles():
 
 
 def _render_war_room_page():
-    """Página del Puente de Mando con integración STRT."""
+    """Página del Puente de Mando con historial persistente."""
     _render_war_room_styles()
     st.markdown(
         """
@@ -275,48 +266,39 @@ def _render_war_room_page():
     player_id = get_player()['id']
     commander_name = get_commander()['nombre']
     
+    # Renderizado del Historial
     log_container = st.container(height=520)
     logs = get_recent_logs(player_id, limit=20)
     
     for log in reversed(logs):
         mensaje = log.get('message', '')
-        if "ERROR" not in mensaje:
-            # Detectar si es un mensaje del jugador o de la IA
-            if mensaje.startswith("[PLAYER]"):
-                # Mensaje del usuario
-                mensaje_limpio = mensaje.replace("[PLAYER] ", "")
+        
+        # FIX: Eliminado filtro agresivo de "ERROR" que ocultaba respuestas válidas.
+        # Solo ocultamos basura técnica si es estrictamente necesario.
+        if "[DEBUG]" in mensaje or "Traceback" in mensaje:
+            continue
 
-                # Renderizar mensaje de usuario e inyectar MARCADOR INVISIBLE
-                with log_container.chat_message("user", avatar="👤"):
-                    st.write(mensaje_limpio)
-                    st.markdown('<div class="user-marker" style="display:none;"></div>', unsafe_allow_html=True)
-            else:
-                # Mensaje de la IA/sistema
-                icon = "🤖"
+        if mensaje.startswith("[PLAYER]"):
+            mensaje_limpio = mensaje.replace("[PLAYER] ", "")
+            with log_container.chat_message("user", avatar="👤"):
+                st.write(mensaje_limpio)
+                st.markdown('<div class="user-marker" style="display:none;"></div>', unsafe_allow_html=True)
+        else:
+            icon = "🤖"
+            if "VENTANA DE BLOQUEO" in mensaje or "⏱️" in mensaje: icon = "⏳"
+            elif "CONGELADO" in mensaje or "❄️" in mensaje: icon = "❄️"
+            elif "Misión EXITOSA" in mensaje or "✅" in mensaje: icon = "✅"
+            elif "Misión FALLIDA" in mensaje or "❌" in mensaje: icon = "❌"
 
-                # Detectar tipo de mensaje para icono apropiado
-                if "VENTANA DE BLOQUEO" in mensaje or "⏱️" in mensaje:
-                    icon = "⏳"
-                elif "CONGELADO" in mensaje or "❄️" in mensaje:
-                    icon = "❄️"
-                elif "DEBUG" in mensaje:
-                    icon = "🛠️"
-                elif "Misión EXITOSA" in mensaje or "✅" in mensaje:
-                    icon = "✅"
-                elif "Misión FALLIDA" in mensaje or "❌" in mensaje:
-                    icon = "❌"
-                elif "[ASISTENTE]" in mensaje or "🤖" in mensaje:
-                    icon = "🤖"
+            # Limpiar prefijos de la bitácora para la UI
+            mensaje_limpio = mensaje
+            for p in ["[GM] ", "🤖 [ASISTENTE] ", "[ASISTENTE] ", "🤖 "]:
+                if mensaje_limpio.startswith(p):
+                    mensaje_limpio = mensaje_limpio.replace(p, "", 1)
+                    break
 
-                # Limpiar prefijos conocidos para mostrar mensaje limpio
-                mensaje_limpio = mensaje
-                prefijos_a_limpiar = ["[GM] ", "🤖 [ASISTENTE] ", "[ASISTENTE] ", "🤖 "]
-                for prefijo in prefijos_a_limpiar:
-                    if mensaje_limpio.startswith(prefijo):
-                        mensaje_limpio = mensaje_limpio.replace(prefijo, "", 1)
-                        break
-
-                log_container.chat_message("assistant", avatar=icon).write(mensaje_limpio)
+            with log_container.chat_message("assistant", avatar=icon):
+                st.write(mensaje_limpio)
             
     input_placeholder = f"¿Órdenes, Comandante {commander_name}?"
     if status['is_frozen']:
@@ -325,17 +307,16 @@ def _render_war_room_page():
     action = st.chat_input(input_placeholder, disabled=status['is_frozen'])
 
     if action:
-        # Registrar el mensaje del usuario
+        # Registrar el mensaje del usuario inmediatamente
         log_event(f"[PLAYER] {action}", player_id)
 
-        # Usar spinner mientras la IA procesa
         with st.spinner("Transmitiendo órdenes..."):
             try:
-                # Corregimos la llamada a solo 2 argumentos como pide el servicio actual
-                result = resolve_player_action(action, player_id)
-                st.rerun()
+                # El servicio ya se encarga de loguear la respuesta de la IA
+                resolve_player_action(action, player_id)
+                st.rerun() # Forzar recarga para mostrar nuevos mensajes
             except Exception as e:
-                st.error(f"⚠️ Error: {e}")
+                st.error(f"⚠️ Error de enlace: {e}")
 
 
 def _render_commander_sheet_page():

@@ -1,8 +1,8 @@
 # services/gemini_service.py
 """
-Gemini Service - Asistente Táctico IA (Implementation v2.1)
+Gemini Service - Asistente Táctico IA (Implementation v2.2)
 Personalidad: Asistente Táctico (Estilo Jarvis/Cortana).
-Fix: Guarda la narrativa en los logs para persistencia en UI.
+Fix: Persistencia de logs de sistema y limpieza de flujo.
 """
 
 import json
@@ -95,11 +95,15 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
 
     world_state = get_world_state()
     if world_state.get("is_frozen", False):
-        return {"narrative": "❄️ SISTEMA: Cronología congelada por administración.", "mrg_result": None}
+        msg = "❄️ SISTEMA: Cronología congelada por administración."
+        log_event(msg, player_id) # FIX: Persistencia
+        return {"narrative": msg, "mrg_result": None}
 
     if is_lock_in_window():
         queue_player_action(player_id, action_text)
-        return {"narrative": "⏱️ SISTEMA: Ventana de Salto Temporal activa. Orden encolada.", "mrg_result": None}
+        msg = "⏱️ SISTEMA: Ventana de Salto Temporal activa. Orden encolada."
+        log_event(msg, player_id) # FIX: Persistencia
+        return {"narrative": msg, "mrg_result": None}
 
     # 1. Configuración
     if not ai_client:
@@ -195,8 +199,6 @@ Usa este resultado para narrar el éxito o fracaso.
                         fname = fc.name
                         fargs = fc.args
 
-                        # Log técnico (interno)
-                        # log_event(f"[AI Ops] Ejecutando: {fname}", player_id) 
                         function_calls_made.append({"function": fname, "args": fargs})
 
                         result_str = ""
@@ -226,12 +228,10 @@ Usa este resultado para narrar el éxito o fracaso.
                 text_parts = [p.text for p in candidate.content.parts if hasattr(p, 'text') and p.text]
                 narrative = "".join(text_parts).strip()
 
-        # Si no hay narrativa, dar respuesta por defecto
         if not narrative:
             narrative = "Orden recibida, Comandante. Procesando datos tácticos..."
 
-        # --- CORRECCIÓN CRÍTICA ---
-        # Guardamos la narrativa REAL en los logs, prefijada para que se vea bonita en la UI.
+        # Guardamos la narrativa REAL en los logs
         log_display_text = f"🤖 [ASISTENTE] {narrative}"
         log_event(log_display_text, player_id)
 
