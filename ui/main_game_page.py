@@ -55,9 +55,9 @@ def render_main_game_page(cookie_manager):
         "Estado de la Nave": show_ship_status_page,
     }
     
-    # Contenedor principal
+    # Contenedor principal con margen superior para no quedar bajo el HUD
     with st.container():
-        # Añadimos un pequeño espacio arriba para que el HUD no tape el título
+        st.write("") # Espaciador
         st.write("") 
         render_func = PAGES.get(st.session_state.current_page, _render_war_room_page)
         render_func()
@@ -66,151 +66,137 @@ def render_main_game_page(cookie_manager):
 def _render_sticky_top_hud(player, commander):
     """
     Renderiza la barra superior STICKY (siempre visible).
-    Usa CSS para fijarla arriba y tooltips para los nombres.
+    Usa el color de la Sidebar (#262730) y tooltips nativos.
     """
     
     finances = get_player_finances(player['id'])
     status = get_world_status_display()
 
-    # Definir colores de estado
-    time_color = "#56d59f"  # Verde
-    if status["is_lock_in"]: time_color = "#f9ca24" # Amarillo
-    if status["is_frozen"]: time_color = "#ff6b6b" # Rojo
+    # Colores de estado para el reloj
+    time_color = "#56d59f"  # Verde nominal
+    if status["is_lock_in"]: time_color = "#f9ca24" 
+    if status["is_frozen"]: time_color = "#ff6b6b" 
 
-    # CSS para hacer la barra Sticky y estilizada
     st.markdown(f"""
         <style>
-        /* Contenedor principal de la barra superior */
+        /* Contenedor principal Sticky */
         .top-hud-sticky {{
-            position: sticky;
+            position: fixed;
             top: 0;
-            z-index: 9999;
-            background-color: #0e1117; /* Mismo color de fondo que la app */
-            border-bottom: 2px solid #333;
-            padding: 10px 0;
-            margin-top: -60px; /* Hack para subirlo lo más posible en Streamlit */
-            margin-left: -20px;
-            margin-right: -20px;
-            padding-left: 20px;
-            padding-right: 20px;
+            left: 0;
+            right: 0;
+            height: 60px;
+            z-index: 100000;
+            background-color: #262730; /* COLOR DE LA SIDEBAR */
+            border-bottom: 1px solid #444;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            padding: 0 20px 0 80px; /* Padding izquierdo extra para no tapar el menú hamburguesa */
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
         }}
 
-        /* Cajas de recursos */
+        /* Grupo de Recursos */
         .hud-resource-group {{
             display: flex;
-            gap: 15px;
+            gap: 20px;
+            align-items: center;
         }}
         
+        /* Métrica individual */
         .hud-metric {{
-            background: #1a1c24;
-            border: 1px solid #444;
-            border-radius: 6px;
-            padding: 4px 12px;
             display: flex;
             align-items: center;
             gap: 8px;
-            cursor: help; /* Indica que hay info extra */
-            transition: all 0.2s;
+            cursor: help; /* Cursor de ayuda para indicar tooltip */
+            padding: 5px 10px;
+            border-radius: 5px;
+            transition: background 0.2s;
         }}
         
         .hud-metric:hover {{
-            border-color: #666;
-            background: #252836;
-            transform: translateY(-1px);
+            background-color: rgba(255,255,255,0.1);
         }}
 
-        .hud-icon {{ font-size: 1.2em; }}
+        .hud-icon {{ font-size: 1.4em; }}
         .hud-value {{ 
             font-family: 'Source Code Pro', monospace; 
             font-weight: bold; 
             color: #eee;
-        }}
-
-        /* Sección del Reloj */
-        .hud-clock-group {{
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            background: rgba(0,0,0,0.2);
-            padding: 4px 12px;
-            border-radius: 6px;
-            border: 1px solid #333;
-        }}
-
-        .hud-time {{ 
-            font-family: 'Orbitron', monospace; 
-            color: {time_color}; 
-            font-weight: bold; 
             font-size: 1.1em;
+        }}
+
+        /* Reloj */
+        .hud-clock {{
+            font-family: 'Orbitron', monospace;
+            color: {time_color};
+            font-weight: bold;
+            font-size: 1.2em;
             letter-spacing: 1px;
+            background: rgba(0,0,0,0.3);
+            padding: 5px 15px;
+            border-radius: 4px;
+            border: 1px solid #444;
         }}
         
-        .hud-tick {{ font-size: 0.8em; color: #888; }}
+        /* Ajuste para móviles o pantallas chicas */
+        @media (max-width: 800px) {{
+            .hud-value {{ font-size: 0.9em; }}
+            .hud-icon {{ font-size: 1.1em; }}
+            .top-hud-sticky {{ padding-left: 60px; }}
+        }}
         </style>
-    """, unsafe_allow_html=True)
 
-    # Construir el HTML de los recursos (Izquierda)
-    # title="..." es lo que muestra el nombre on hover
-    resources_html = f"""
-        <div class="hud-resource-group">
-            <div class="hud-metric" title="Créditos (Moneda estándar)">
-                <span class="hud-icon">💳</span>
-                <span class="hud-value">{finances.get('creditos', 0):,}</span>
-            </div>
-            <div class="hud-metric" title="Materiales (Construcción y Reparación)">
-                <span class="hud-icon">📦</span>
-                <span class="hud-value">{finances.get('materiales', 0):,}</span>
-            </div>
-            <div class="hud-metric" title="Componentes (Tecnología y Armas)">
-                <span class="hud-icon">🧩</span>
-                <span class="hud-value">{finances.get('componentes', 0):,}</span>
-            </div>
-            <div class="hud-metric" title="Células de Energía (Combustible)">
-                <span class="hud-icon">⚡</span>
-                <span class="hud-value">{finances.get('celulas_energia', 0):,}</span>
-            </div>
-            <div class="hud-metric" title="Influencia (Poder Político)">
-                <span class="hud-icon">👑</span>
-                <span class="hud-value">{finances.get('influencia', 0):,}</span>
-            </div>
-        </div>
-    """
-
-    # Construir HTML del Reloj (Derecha)
-    clock_html = f"""
-        <div class="hud-clock-group">
-            <div style="text-align: right; line-height: 1.1;">
-                <div class="hud-time">{status['time']}</div>
-                <div class="hud-tick">CICLO {status['tick']}</div>
-            </div>
-        </div>
-    """
-
-    # Renderizar todo en una sola estructura HTML/Markdown para asegurar el layout sticky
-    # Nota: El botón de debug de Streamlit no se puede meter dentro del HTML puro fácilmente,
-    # así que usamos columnas de Streamlit dentro del contenedor sticky si fuera posible, 
-    # pero para 'sticky' puro es mejor HTML. 
-    # Haremos un híbrido: HTML para recursos/reloj, y el botón debug lo ponemos abajo o flotante.
-    
-    st.markdown(f"""
         <div class="top-hud-sticky">
-            {resources_html}
-            {clock_html}
+            <div class="hud-resource-group">
+                <div class="hud-metric" title="Créditos Estándar">
+                    <span class="hud-icon">💳</span>
+                    <span class="hud-value">{finances.get('creditos', 0):,}</span>
+                </div>
+                <div class="hud-metric" title="Materiales de Construcción">
+                    <span class="hud-icon">📦</span>
+                    <span class="hud-value">{finances.get('materiales', 0):,}</span>
+                </div>
+                <div class="hud-metric" title="Componentes Tecnológicos">
+                    <span class="hud-icon">🧩</span>
+                    <span class="hud-value">{finances.get('componentes', 0):,}</span>
+                </div>
+                <div class="hud-metric" title="Células de Energía">
+                    <span class="hud-icon">⚡</span>
+                    <span class="hud-value">{finances.get('celulas_energia', 0):,}</span>
+                </div>
+                <div class="hud-metric" title="Influencia Política">
+                    <span class="hud-icon">👑</span>
+                    <span class="hud-value">{finances.get('influencia', 0):,}</span>
+                </div>
+            </div>
+
+            <div title="Ciclo Galáctico Actual: {status['tick']}">
+                <span class="hud-clock">{status['time']}</span>
+            </div>
         </div>
+        
+        <div style="height: 50px;"></div>
     """, unsafe_allow_html=True)
-    
-    # Botón de Debug: Lo ponemos justo después, flotando sutilmente o integrado.
-    # Para simplicidad y robustez, lo dejamos en un expander colapsado o esquina.
-    # O, lo inyectamos visualmente.
 
 
 def _render_navigation_sidebar(player, commander, cookie_manager):
     """Sidebar limpia: Solo identidad y menú."""
     with st.sidebar:
+        
+        # --- BOTÓN DEBUG (Restaurado aquí para funcionalidad) ---
+        # Lo ponemos arriba para que sea fácil de encontrar
+        col_dbg_txt, col_dbg_btn = st.columns([2, 1])
+        with col_dbg_txt:
+            st.caption("🛠️ SISTEMA")
+        with col_dbg_btn:
+            if st.button("🔄 Tick", help="Forzar avance del tiempo (Debug)"):
+                with st.spinner("⏳"):
+                    debug_force_tick()
+                st.rerun()
+
+        st.divider()
+
         # --- SECCIÓN: IDENTIDAD ---
         st.header(f"{player['faccion_nombre']}")
         if player.get('banner_url'):
@@ -224,9 +210,9 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 
         # --- SECCIÓN: NAVEGACIÓN ---
         st.divider()
-        st.subheader("Sistemas")
+        st.subheader("Navegación")
 
-        # Botones de navegación (Estilo menú vertical)
+        # Botones de menú
         nav_options = [
             ("Puente de Mando", "primary" if st.session_state.current_page == "Puente de Mando" else "secondary"),
             ("Mapa de la Galaxia", "primary" if st.session_state.current_page == "Mapa de la Galaxia" else "secondary"),
@@ -242,14 +228,6 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
                 st.rerun()
 
         st.divider()
-        
-        # Botón Debug (Ahora en el sidebar, abajo de todo, para no romper el CSS del topbar)
-        with st.expander("🛠️ Debug Tools"):
-            if st.button("🚨 FORZAR TICK"):
-                with st.spinner("⏳ Saltando tiempo..."):
-                    debug_force_tick()
-                st.rerun()
-
         if st.button("Cerrar Sesión", width='stretch'):
             logout_user(cookie_manager)
             st.rerun()
@@ -318,7 +296,7 @@ def _render_war_room_page():
         st.warning("⚠️ VENTANA DE BLOQUEO ACTIVA")
     
     # --- CONTENEDOR DE CHAT (SCROLLABLE) ---
-    # Usamos st.container con altura fija para crear la "caja roja" que pediste
+    # Usamos st.container con altura fija para crear la "caja" contenida
     chat_box = st.container(height=500, border=True)
 
     logs = get_recent_logs(player_id, limit=30) 
@@ -327,6 +305,7 @@ def _render_war_room_page():
         if not logs:
             st.info(f"Conexión establecida. Esperando órdenes, Comandante {commander_name}...")
         
+        # Logs en orden cronológico inverso visual (Chat Style)
         for log in reversed(logs):
             mensaje = log.get('evento_texto', log.get('message', ''))
             
