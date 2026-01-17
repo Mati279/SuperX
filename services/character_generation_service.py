@@ -15,6 +15,7 @@ El flujo es:
 
 import random
 import json
+import re  # Agregado para limpieza robusta de JSON
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from google.genai import types
@@ -236,6 +237,29 @@ def _generate_fallback_identity(race: str, sex: BiologicalSex) -> GeneratedIdent
     )
 
 
+def _clean_json_text(text: str) -> str:
+    """
+    Intenta extraer JSON válido de una respuesta de texto.
+    Maneja bloques de código markdown y texto conversacional.
+    """
+    text = text.strip()
+    
+    # 1. Intentar encontrar bloque de código JSON
+    code_block_pattern = r"```(?:json)?\s*(\{.*?\})\s*```"
+    match = re.search(code_block_pattern, text, re.DOTALL)
+    if match:
+        return match.group(1)
+        
+    # 2. Intentar encontrar objeto JSON crudo (entre llaves)
+    json_pattern = r"\{.*\}"
+    match = re.search(json_pattern, text, re.DOTALL)
+    if match:
+        return match.group(0)
+        
+    # 3. Retornar texto original si no hay patrón claro (intentar parsear directo)
+    return text
+
+
 # =============================================================================
 # GENERACIÓN DE IDENTIDAD CON IA
 # =============================================================================
@@ -277,28 +301,22 @@ async def _generate_identity_with_ai(
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.9,
-                max_output_tokens=600  # Aumentado para permitir bios más largas
+                max_output_tokens=600,
+                response_mime_type="application/json"  # Forzar JSON
             )
         )
 
         if response and response.text:
-            # Parsear JSON de la respuesta
-            text = response.text.strip()
-            # Limpiar posibles marcadores de código
-            if text.startswith("```json"):
-                text = text[7:]
-            if text.startswith("```"):
-                text = text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-            text = text.strip()
-
+            text = _clean_json_text(response.text)
             data = json.loads(text)
+            
             return GeneratedIdentity(
                 nombre=data.get("nombre", "Sin Nombre"),
                 apellido=data.get("apellido", ""),
                 biografia=data.get("biografia", f"{race} {char_class}.")
             )
+        else:
+            log_event(f"IA respondió vacío o bloqueado (Safety?)", is_error=True)
 
     except Exception as e:
         # 📏Tareas manuales: Revisa la consola para ver este error
@@ -344,26 +362,23 @@ def generate_identity_with_ai_sync(
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.9,
-                max_output_tokens=600  # Aumentado para permitir bios más largas
+                max_output_tokens=600,
+                response_mime_type="application/json"  # Forzar JSON
             )
         )
 
         if response and response.text:
-            text = response.text.strip()
-            if text.startswith("```json"):
-                text = text[7:]
-            if text.startswith("```"):
-                text = text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-            text = text.strip()
-
-            data = json.loads(text)
-            return GeneratedIdentity(
-                nombre=data.get("nombre", "Sin Nombre"),
-                apellido=data.get("apellido", ""),
-                biografia=data.get("biografia", f"{race} {char_class}.")
-            )
+            text = _clean_json_text(response.text)
+            try:
+                data = json.loads(text)
+                return GeneratedIdentity(
+                    nombre=data.get("nombre", "Sin Nombre"),
+                    apellido=data.get("apellido", ""),
+                    biografia=data.get("biografia", f"{race} {char_class}.")
+                )
+            except json.JSONDecodeError as json_err:
+                log_event(f"Error parseando JSON de IA: {json_err}. Texto: {text[:100]}...", is_error=True)
+                raise json_err
 
     except Exception as e:
         # 📏Tareas manuales: Revisa la consola para ver este error
