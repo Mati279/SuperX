@@ -18,7 +18,7 @@ from .ship_status_page import show_ship_status_page
 
 def render_main_game_page(cookie_manager):
     """
-    Página principal del juego con HUD superior FIXED y navegación lateral.
+    Página principal del juego con HUD superior optimizado y navegación lateral.
     """
     
     # --- STRT: Trigger de Tiempo ---
@@ -36,8 +36,8 @@ def render_main_game_page(cookie_manager):
             logout_user(cookie_manager)
         return
 
-    # --- 1. RENDERIZAR HUD SUPERIOR (Siempre visible) ---
-    _render_sticky_top_hud(player, commander)
+    # --- 1. RENDERIZAR HUD SUPERIOR (Estilo Táctico) ---
+    _render_tactical_hud(player, commander)
 
     # --- 2. Renderizar Sidebar (Solo Navegación e Identidad) ---
     if 'current_page' not in st.session_state:
@@ -55,149 +55,108 @@ def render_main_game_page(cookie_manager):
         "Estado de la Nave": show_ship_status_page,
     }
     
-    # Contenedor principal con margen superior para no quedar bajo el HUD
+    # Contenedor principal
     with st.container():
-        st.write("") # Espaciador
-        st.write("") 
         render_func = PAGES.get(st.session_state.current_page, _render_war_room_page)
         render_func()
 
 
-def _render_sticky_top_hud(player, commander):
+def _render_tactical_hud(player, commander):
     """
-    Renderiza la barra superior STICKY (siempre visible).
-    Versión Robustecida: Manejo de nulos y Z-Index extremo.
+    Renderiza la barra superior usando métricas nativas de Streamlit con CSS inyectado.
+    Soluciona el problema del reloj y centra los recursos.
     """
     
     finances = get_player_finances(player.id)
-    status = get_world_status_display()
+    status = get_world_status_display() # Retorna dict con 'time' como string
 
-    # Función helper para evitar crash por NoneType en f-strings
-    def safe_val(key):
-        val = finances.get(key)
-        return val if val is not None else 0
-
-    # Colores de estado para el reloj
-    time_color = "#56d59f"  # Verde nominal
-    if status["is_lock_in"]: time_color = "#f9ca24" 
-    if status["is_frozen"]: time_color = "#ff6b6b" 
-
-    st.markdown(f"""
+    # Inyección de CSS para forzar el estilo "Centro de Mando"
+    st.markdown("""
         <style>
-        /* Contenedor principal Sticky */
-        .top-hud-sticky {{
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 60px;
-            z-index: 999999; /* Z-Index extremo para asegurar visibilidad */
-            background-color: #262730; /* COLOR DE LA SIDEBAR */
-            border-bottom: 1px solid #444;
+        /* Estilo para reducir y centrar las métricas de la barra superior */
+        div[data-testid="metric-container"] {
             display: flex;
+            flex-direction: column;
             align-items: center;
-            justify-content: space-between;
-            padding: 0 20px 0 80px; /* Padding izquierdo para no tapar menú hamburguesa */
-            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-        }}
-
-        /* Grupo de Recursos */
-        .hud-resource-group {{
-            display: flex;
-            gap: 20px;
-            align-items: center;
-            height: 100%;
-        }}
-        
-        /* Métrica individual */
-        .hud-metric {{
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            cursor: help;
-            padding: 5px 10px;
+            justify-content: center;
+            background-color: #1E1E1E; /* Fondo oscuro sutil */
+            padding: 5px;
             border-radius: 5px;
-            height: 40px; /* Altura fija para evitar colapso */
-        }}
+            border: 1px solid #333;
+            min-height: 80px; /* Altura uniforme */
+        }
         
-        .hud-metric:hover {{
-            background-color: rgba(255,255,255,0.1);
-        }}
-
-        .hud-icon {{ 
-            font-size: 1.4em; 
-            line-height: 1;
-        }}
+        /* Etiqueta (Nombre del recurso) */
+        div[data-testid="metric-container"] label[data-testid="stMetricLabel"] {
+            font-size: 0.8rem !important;
+            color: #AAAAAA !important;
+            width: 100%;
+            text-align: center;
+        }
         
-        .hud-value {{ 
-            font-family: 'Source Code Pro', monospace; 
-            font-weight: bold; 
-            color: #ffffff !important; /* Color forzado */
-            font-size: 1.1em;
-            white-space: nowrap;
-        }}
-
-        /* Reloj */
-        .hud-clock {{
-            font-family: 'Orbitron', monospace;
-            color: {time_color} !important;
+        /* Valor (Cantidad) */
+        div[data-testid="metric-container"] div[data-testid="stMetricValue"] {
+            font-size: 1.1rem !important; /* Más pequeño y controlado */
+            font-weight: 600;
+            color: #FFFFFF !important;
+            text-align: center;
+        }
+        
+        /* Reloj Digital Estilo Sci-Fi */
+        .clock-display {
+            font-family: 'Courier New', monospace;
+            font-size: 1.5rem;
+            color: #56d59f; /* Verde Terminal */
+            text-align: center;
+            padding: 10px;
             font-weight: bold;
-            font-size: 1.2em;
-            letter-spacing: 1px;
-            background: rgba(0,0,0,0.3);
-            padding: 5px 15px;
-            border-radius: 4px;
-            border: 1px solid #444;
-            white-space: nowrap;
-        }}
-        
-        /* Ajuste para móviles */
-        @media (max-width: 800px) {{
-            .hud-value {{ font-size: 0.9em; }}
-            .hud-icon {{ font-size: 1.1em; }}
-            .top-hud-sticky {{ padding-left: 60px; padding-right: 10px; gap: 10px; }}
-            .hud-resource-group {{ gap: 10px; }}
-        }}
+            border: 1px solid #56d59f;
+            border-radius: 5px;
+            background: rgba(0, 20, 0, 0.5);
+        }
+        .clock-label {
+            font-size: 0.7rem;
+            color: #56d59f;
+            text-transform: uppercase;
+            text-align: center;
+            display: block;
+        }
         </style>
-
-        <div class="top-hud-sticky">
-            <div class="hud-resource-group">
-                <div class="hud-metric" title="Créditos Estándar">
-                    <span class="hud-icon">💳</span>
-                    <span class="hud-value">{safe_val('creditos'):,}</span>
-                </div>
-                <div class="hud-metric" title="Materiales de Construcción">
-                    <span class="hud-icon">📦</span>
-                    <span class="hud-value">{safe_val('materiales'):,}</span>
-                </div>
-                <div class="hud-metric" title="Componentes Tecnológicos">
-                    <span class="hud-icon">🧩</span>
-                    <span class="hud-value">{safe_val('componentes'):,}</span>
-                </div>
-                <div class="hud-metric" title="Células de Energía">
-                    <span class="hud-icon">⚡</span>
-                    <span class="hud-value">{safe_val('celulas_energia'):,}</span>
-                </div>
-                <div class="hud-metric" title="Influencia Política">
-                    <span class="hud-icon">👑</span>
-                    <span class="hud-value">{safe_val('influencia'):,}</span>
-                </div>
-            </div>
-
-            <div title="Ciclo Galáctico Actual: {status.get('tick', 0)}">
-                <span class="hud-clock">{status.get('time', '00:00')}</span>
-            </div>
-        </div>
-        
-        <div style="height: 60px;"></div>
     """, unsafe_allow_html=True)
+
+    # Layout: Recursos (Izquierda) - Reloj (Derecha)
+    col_res, col_clock = st.columns([5, 1])
+
+    with col_res:
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Créditos", f"₡ {finances.get('creditos', 0):,}")
+        with c2:
+            st.metric("Materiales", f"{finances.get('materiales', 0):,}")
+        with c3:
+            st.metric("Energía", f"⚡ {finances.get('celulas_energia', 0):,}")
+        with c4:
+            st.metric("Influencia", f"♛ {finances.get('influencia', 0):,}")
+
+    with col_clock:
+        # Renderizado seguro del reloj como HTML puro
+        current_time = status.get('time', 'ERR')
+        current_tick = status.get('tick', 0)
+        st.markdown(f"""
+            <div class="clock-display">
+                {current_time}
+                <span class="clock-label">CICLO {current_tick}</span>
+            </div>
+        """, unsafe_allow_html=True)
+    
+    st.divider()
 
 
 def _render_navigation_sidebar(player, commander, cookie_manager):
     """Sidebar limpia: Solo identidad y menú."""
     with st.sidebar:
         
-        # --- BOTÓN DEBUG (Restaurado) ---
+        # --- BOTÓN DEBUG ---
         col_dbg_txt, col_dbg_btn = st.columns([2, 1])
         with col_dbg_txt:
             st.caption("🛠️ SISTEMA")
@@ -306,14 +265,13 @@ def _render_war_room_page():
     commander_name = commander.nombre
     status = get_world_status_display()
 
-    # Título más compacto
+    # Título
     st.markdown('<div class="war-room-title">📟 Enlace Neuronal de Mando</div>', unsafe_allow_html=True)
     
     if status['is_lock_in']:
-        st.warning("⚠️ VENTANA DE BLOQUEO ACTIVA")
+        st.warning("⚠️ VENTANA DE BLOQUEO ACTIVA: Las órdenes se ejecutarán en el siguiente Tick.")
     
     # --- CONTENEDOR DE CHAT (SCROLLABLE) ---
-    # Usamos st.container con altura fija para crear la "caja" contenida
     chat_box = st.container(height=500, border=True)
 
     logs = get_recent_logs(player_id, limit=30) 
@@ -322,7 +280,7 @@ def _render_war_room_page():
         if not logs:
             st.info(f"Conexión establecida. Esperando órdenes, Comandante {commander_name}...")
         
-        # Logs en orden cronológico inverso visual (Chat Style)
+        # Logs en orden cronológico inverso visual
         for log in reversed(logs):
             mensaje = log.get('evento_texto', log.get('message', ''))
             
@@ -344,7 +302,7 @@ def _render_war_room_page():
                 with st.chat_message("assistant", avatar=icon):
                     st.write(clean_msg)
 
-    # --- INPUT AREA (Fuera del scroll, siempre visible abajo) ---
+    # --- INPUT AREA ---
     st.write("") 
     input_placeholder = f"Escriba sus órdenes, Cmdt. {commander_name}..."
     if status['is_frozen']:
