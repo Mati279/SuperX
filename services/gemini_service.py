@@ -20,6 +20,7 @@ from data.log_repository import log_event
 from data.character_repository import get_commander_by_player_id
 from data.player_repository import get_player_finances
 from data.planet_repository import get_all_player_planets
+from data.world_repository import get_commander_location_display
 from data.world_repository import queue_player_action, get_world_state
 
 from core.time_engine import check_and_trigger_tick, is_lock_in_window
@@ -98,6 +99,7 @@ class TacticalContext:
     attributes: Dict[str, int]
     resources: Dict[str, Any]
     known_planets: List[str]
+    location_details: Dict[str, str] = field(default_factory=dict)
     system_alert: str = "Sensores nominales. Datos externos limitados a sectores explorados."
 
     def to_json(self) -> str:
@@ -107,6 +109,11 @@ class TacticalContext:
                 "nombre": self.commander_name,
                 "ubicacion_actual": self.commander_location,
                 "atributos": self.attributes
+            },
+            "ubicacion_base_principal": {
+                "sistema": self.location_details.get("system", "Desconocido"),
+                "planeta": self.location_details.get("planet", "---"),
+                "base": self.location_details.get("base", "Sin Base")
             },
             "recursos_logisticos": self.resources,
             "dominios_conocidos": self.known_planets,
@@ -139,12 +146,16 @@ def _build_tactical_context(player_id: int, commander_data: Dict) -> TacticalCon
         stats = commander_data.get('stats_json', {})
         attributes = stats.get('atributos', {})
 
+        # Obtener ubicación detallada (sistema, planeta, base)
+        location_details = get_commander_location_display(commander_data['id'])
+
         return TacticalContext(
             commander_name=commander_data['nombre'],
             commander_location=commander_data.get('ubicacion', 'Desconocida'),
             attributes=attributes,
             resources=finances,
-            known_planets=planet_summary
+            known_planets=planet_summary,
+            location_details=location_details
         )
 
     except Exception as e:
@@ -154,6 +165,7 @@ def _build_tactical_context(player_id: int, commander_data: Dict) -> TacticalCon
             attributes={},
             resources={},
             known_planets=[],
+            location_details={},
             system_alert=f"Error de contexto: {e}"
         )
 
