@@ -279,14 +279,13 @@ def _render_war_room_page():
     logs = get_recent_logs(player_id, limit=20)
     
     for log in reversed(logs):
-        if "ERROR" not in log['evento_texto']:
-            evento_texto = log['evento_texto']
-
+        mensaje = log.get('message', '')
+        if "ERROR" not in mensaje:
             # Detectar si es un mensaje del jugador o de la IA
-            if evento_texto.startswith("[PLAYER]"):
+            if mensaje.startswith("[PLAYER]"):
                 # Mensaje del usuario
-                mensaje_limpio = evento_texto.replace("[PLAYER] ", "")
-                
+                mensaje_limpio = mensaje.replace("[PLAYER] ", "")
+
                 # Renderizar mensaje de usuario e inyectar MARCADOR INVISIBLE
                 with log_container.chat_message("user", avatar="👤"):
                     st.write(mensaje_limpio)
@@ -294,17 +293,17 @@ def _render_war_room_page():
             else:
                 # Mensaje de la IA/sistema
                 icon = "📜"
-                if "VENTANA DE BLOQUEO" in evento_texto: icon = "⏳"
-                if "CONGELADO" in evento_texto: icon = "❄️"
-                if "DEBUG" in evento_texto: icon = "🛠️"
-                if "Misión EXITOSA" in evento_texto: icon = "✅"
-                if "Misión FALLIDA" in evento_texto: icon = "❌"
-                
-                if evento_texto.startswith("[GM]"):
-                    mensaje_limpio = evento_texto.replace("[GM] ", "")
+                if "VENTANA DE BLOQUEO" in mensaje: icon = "⏳"
+                if "CONGELADO" in mensaje: icon = "❄️"
+                if "DEBUG" in mensaje: icon = "🛠️"
+                if "Misión EXITOSA" in mensaje: icon = "✅"
+                if "Misión FALLIDA" in mensaje: icon = "❌"
+
+                if mensaje.startswith("[GM]"):
+                    mensaje_limpio = mensaje.replace("[GM] ", "")
                     log_container.chat_message("assistant", avatar=icon).write(mensaje_limpio)
                 else:
-                    log_container.chat_message("assistant", avatar=icon).write(evento_texto)
+                    log_container.chat_message("assistant", avatar=icon).write(mensaje)
             
     input_placeholder = f"¿Órdenes, Comandante {commander_name}?"
     if status['is_frozen']:

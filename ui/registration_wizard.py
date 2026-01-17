@@ -2,7 +2,7 @@
 import streamlit as st
 from .state import cancel_registration, next_registration_step, login_user
 from data.player_repository import register_player_account
-from data.character_repository import create_commander
+from data.character_repository import update_commander_profile, get_commander_by_player_id
 from core.constants import RACES, CLASSES, POINTS_AVAILABLE_FOR_ATTRIBUTES
 from core.rules import calculate_attribute_cost
 
@@ -117,14 +117,22 @@ def _render_step_3_attributes():
         if st.button("Finalizar Creación", type="primary", disabled=(remaining < 0)):
             try:
                 with st.spinner("Forjando leyenda..."):
-                    commander = create_commander(
+                    # Actualizar el comandante existente (creado por genesis_engine en Paso 1)
+                    commander = update_commander_profile(
                         st.session_state.temp_player['id'],
-                        st.session_state.temp_player['nombre'],
                         st.session_state.temp_char_bio,
                         final_attrs
                     )
                 if commander:
                     st.balloons()
                     login_user(st.session_state.temp_player, commander)
+                else:
+                    # Fallback: obtener comandante existente si update no devolvió data
+                    commander = get_commander_by_player_id(st.session_state.temp_player['id'])
+                    if commander:
+                        st.balloons()
+                        login_user(st.session_state.temp_player, commander)
+                    else:
+                        st.error("No se encontró el comandante. Contacta soporte.")
             except Exception as e:
                 st.error(f"Error al guardar: {e}")

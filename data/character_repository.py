@@ -28,8 +28,8 @@ def get_commander_by_player_id(player_id: int) -> Optional[Dict[str, Any]]:
 
 def create_commander(
     player_id: int,
-    name: str, 
-    bio_data: Dict[str, Any], 
+    name: str,
+    bio_data: Dict[str, Any],
     attributes: Dict[str, int]
 ) -> Optional[Dict[str, Any]]:
     """
@@ -47,7 +47,7 @@ def create_commander(
     try:
         # La lógica de negocio (cálculo de habilidades) se llama antes de la inserción.
         habilidades = calculate_skills(attributes)
-        
+
         stats_json = {
             "bio": bio_data,
             "atributos": attributes,
@@ -63,16 +63,59 @@ def create_commander(
             "estado": COMMANDER_STATUS,
             "ubicacion": COMMANDER_LOCATION
         }
-        
+
         response = supabase.table("characters").insert(new_char_data).execute()
         if response.data:
             log_event(f"Nuevo comandante '{name}' creado para el jugador ID {player_id}.", player_id)
             return response.data[0]
         return None
-        
+
     except Exception as e:
         log_event(f"Error creando comandante para el jugador ID {player_id}: {e}", player_id, is_error=True)
         raise Exception("Error del sistema al guardar el comandante.")
+
+
+def update_commander_profile(
+    player_id: int,
+    bio_data: Dict[str, Any],
+    attributes: Dict[str, int]
+) -> Optional[Dict[str, Any]]:
+    """
+    Actualiza el perfil del comandante existente con bio y atributos personalizados.
+    Usado en el Paso 3 del wizard de registro, después de que genesis_engine
+    ya creó el comandante base en Paso 1.
+
+    Args:
+        player_id: El ID del jugador dueño del comandante.
+        bio_data: Diccionario con la biografía (raza, clase, edad, etc.).
+        attributes: Diccionario con los atributos finales elegidos por el usuario.
+
+    Returns:
+        El objeto del comandante actualizado o None si falla.
+    """
+    try:
+        habilidades = calculate_skills(attributes)
+
+        stats_json = {
+            "bio": bio_data,
+            "atributos": attributes,
+            "habilidades": habilidades
+        }
+
+        response = supabase.table("characters")\
+            .update({"stats_json": stats_json})\
+            .eq("player_id", player_id)\
+            .eq("es_comandante", True)\
+            .execute()
+
+        if response.data:
+            log_event(f"Perfil del comandante actualizado para jugador ID {player_id}.", player_id)
+            return response.data[0]
+        return None
+
+    except Exception as e:
+        log_event(f"Error actualizando comandante para jugador ID {player_id}: {e}", player_id, is_error=True)
+        raise Exception("Error del sistema al actualizar el comandante.")
 
 def create_character(player_id: int, character_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
