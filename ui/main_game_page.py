@@ -66,10 +66,9 @@ def render_main_game_page(cookie_manager):
 def _render_sticky_top_hud(player, commander):
     """
     Renderiza la barra superior STICKY (siempre visible).
-    Layout: Recursos CENTRADOS, Reloj posicionado ABSOLUTO a la derecha.
+    Layout: Recursos CENTRADOS.
     """
     finances = get_player_finances(player.id)
-    status = get_world_status_display()
 
     # Helper para evitar crash por NoneType
     def safe_val(key):
@@ -82,16 +81,6 @@ def _render_sticky_top_hud(player, commander):
     componentes = f"{safe_val('componentes'):,}"
     celulas = f"{safe_val('celulas_energia'):,}"
     influencia = f"{safe_val('influencia'):,}"
-
-    clock_time = str(status.get('time', '00:00'))
-    clock_tick = str(status.get('tick', 0))
-
-    # Color del reloj según estado
-    time_color = "#56d59f"  # Verde nominal
-    if status.get("is_lock_in"):
-        time_color = "#f9ca24"  # Amarillo bloqueo
-    if status.get("is_frozen"):
-        time_color = "#ff6b6b"  # Rojo congelado
 
     # CSS separado para mayor claridad
     hud_css = """
@@ -148,31 +137,10 @@ def _render_sticky_top_hud(player, commander):
         white-space: nowrap;
     }
 
-    .hud-clock-container {
-        position: absolute;
-        right: 20px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-
-    .hud-clock {
-        font-family: 'Orbitron', monospace;
-        font-weight: bold;
-        font-size: 1.1em;
-        letter-spacing: 1px;
-        background: rgba(0,0,0,0.3);
-        padding: 4px 12px;
-        border-radius: 4px;
-        border: 1px solid #444;
-        white-space: nowrap;
-    }
-
     @media (max-width: 800px) {
         .hud-value { font-size: 0.8em; }
         .hud-icon { font-size: 1.0em; }
         .top-hud-sticky { padding-left: 60px; }
-        .hud-clock-container { position: static; }
         .hud-resource-group { gap: 15px; }
     }
     </style>
@@ -203,10 +171,6 @@ def _render_sticky_top_hud(player, commander):
                 <span class="hud-value">{influencia}</span>
             </div>
         </div>
-
-        <div class="hud-clock-container" title="Ciclo Galáctico: {clock_tick}">
-            <span class="hud-clock" style="color: {time_color} !important;">⏱ {clock_time}</span>
-        </div>
     </div>
 
     <div style="height: 60px;"></div>
@@ -216,18 +180,102 @@ def _render_sticky_top_hud(player, commander):
 
 
 def _render_navigation_sidebar(player, commander, cookie_manager):
-    """Sidebar limpia: Solo identidad y menú."""
+    """Sidebar con reloj galáctico, identidad y menú de navegación."""
+    status = get_world_status_display()
+
     with st.sidebar:
-        
-        # --- BOTÓN DEBUG (Restaurado) ---
-        col_dbg_txt, col_dbg_btn = st.columns([2, 1])
-        with col_dbg_txt:
-            st.caption("🛠️ SISTEMA")
-        with col_dbg_btn:
-            if st.button("🔄 Tick", help="Forzar avance del tiempo (Debug)"):
-                with st.spinner("⏳"):
-                    debug_force_tick()
-                st.rerun()
+
+        # --- RELOJ GALÁCTICO + DEBUG ---
+        clock_time = str(status.get('time', '00:00'))
+        clock_tick = str(status.get('tick', 0))
+
+        # Color según estado del sistema
+        if status.get("is_frozen"):
+            time_color = "#ff6b6b"  # Rojo congelado
+            status_icon = "❄️"
+            status_text = "CONGELADO"
+        elif status.get("is_lock_in"):
+            time_color = "#f9ca24"  # Amarillo bloqueo
+            status_icon = "⚠️"
+            status_text = "BLOQUEO"
+        else:
+            time_color = "#56d59f"  # Verde nominal
+            status_icon = "🟢"
+            status_text = "NOMINAL"
+
+        # CSS para el reloj elegante
+        clock_css = f"""
+        <style>
+        @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&display=swap");
+
+        .sidebar-clock-panel {{
+            background: linear-gradient(135deg, rgba(20,25,35,0.9) 0%, rgba(30,40,55,0.9) 100%);
+            border: 1px solid rgba(86, 213, 159, 0.3);
+            border-radius: 10px;
+            padding: 12px 15px;
+            margin-bottom: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05);
+        }}
+
+        .clock-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }}
+
+        .clock-label {{
+            font-family: 'Orbitron', monospace;
+            font-size: 0.7em;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }}
+
+        .clock-status {{
+            font-size: 0.65em;
+            color: {time_color};
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }}
+
+        .clock-time {{
+            font-family: 'Orbitron', monospace;
+            font-size: 1.8em;
+            font-weight: 700;
+            color: {time_color};
+            text-align: center;
+            letter-spacing: 3px;
+            text-shadow: 0 0 10px {time_color}40;
+            margin: 5px 0;
+        }}
+
+        .clock-tick {{
+            font-family: 'Orbitron', monospace;
+            font-size: 0.7em;
+            color: #666;
+            text-align: center;
+            letter-spacing: 1px;
+        }}
+        </style>
+
+        <div class="sidebar-clock-panel">
+            <div class="clock-header">
+                <span class="clock-label">Ciclo Galáctico</span>
+                <span class="clock-status">{status_icon} {status_text}</span>
+            </div>
+            <div class="clock-time">{clock_time}</div>
+            <div class="clock-tick">TICK #{clock_tick}</div>
+        </div>
+        """
+        st.markdown(clock_css, unsafe_allow_html=True)
+
+        # Botón de debug debajo del reloj
+        if st.button("🔄 Forzar Tick", help="Avanzar tiempo manualmente (Debug)", use_container_width=True):
+            with st.spinner("⏳ Procesando tick..."):
+                debug_force_tick()
+            st.rerun()
 
         st.divider()
 
