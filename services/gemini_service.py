@@ -365,9 +365,7 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
         mrg_result = resolve_action(
             merit_points=merit_points,
             difficulty=DIFFICULTY_NORMAL,
-            action_description=action_text,
-            entity_id=commander['id'],
-            entity_name=commander['nombre']
+            action_description=action_text
         )
 
         # Aplicar complicaciones si es éxito parcial
