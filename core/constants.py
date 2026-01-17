@@ -73,7 +73,6 @@ SKILL_MAPPING: Dict[str, Tuple[str, str]] = {
     "Orientación y exploración": ("intelecto", "agilidad")
 }
 
-# Unificado con Módulo 19.2: Pool de 60 puntos para un personaje Nivel 6 de inicio
-POINTS_AVAILABLE_FOR_ATTRIBUTES: int = 60
+POINTS_AVAILABLE_FOR_ATTRIBUTES: int = 15
 ATTRIBUTE_SOFT_CAP: int = 15
 ATTRIBUTE_COST_MULTIPLIER: int = 2
