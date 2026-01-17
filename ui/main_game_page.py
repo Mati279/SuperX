@@ -66,11 +66,16 @@ def render_main_game_page(cookie_manager):
 def _render_sticky_top_hud(player, commander):
     """
     Renderiza la barra superior STICKY (siempre visible).
-    Usa el color de la Sidebar (#262730) y tooltips nativos.
+    Versión Robustecida: Manejo de nulos y Z-Index extremo.
     """
     
     finances = get_player_finances(player['id'])
     status = get_world_status_display()
+
+    # Función helper para evitar crash por NoneType en f-strings
+    def safe_val(key):
+        val = finances.get(key)
+        return val if val is not None else 0
 
     # Colores de estado para el reloj
     time_color = "#56d59f"  # Verde nominal
@@ -86,13 +91,13 @@ def _render_sticky_top_hud(player, commander):
             left: 0;
             right: 0;
             height: 60px;
-            z-index: 100000;
+            z-index: 999999; /* Z-Index extremo para asegurar visibilidad */
             background-color: #262730; /* COLOR DE LA SIDEBAR */
             border-bottom: 1px solid #444;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 20px 0 80px; /* Padding izquierdo extra para no tapar el menú hamburguesa */
+            padding: 0 20px 0 80px; /* Padding izquierdo para no tapar menú hamburguesa */
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
         }}
 
@@ -101,6 +106,7 @@ def _render_sticky_top_hud(player, commander):
             display: flex;
             gap: 20px;
             align-items: center;
+            height: 100%;
         }}
         
         /* Métrica individual */
@@ -108,28 +114,33 @@ def _render_sticky_top_hud(player, commander):
             display: flex;
             align-items: center;
             gap: 8px;
-            cursor: help; /* Cursor de ayuda para indicar tooltip */
+            cursor: help;
             padding: 5px 10px;
             border-radius: 5px;
-            transition: background 0.2s;
+            height: 40px; /* Altura fija para evitar colapso */
         }}
         
         .hud-metric:hover {{
             background-color: rgba(255,255,255,0.1);
         }}
 
-        .hud-icon {{ font-size: 1.4em; }}
+        .hud-icon {{ 
+            font-size: 1.4em; 
+            line-height: 1;
+        }}
+        
         .hud-value {{ 
             font-family: 'Source Code Pro', monospace; 
             font-weight: bold; 
-            color: #eee;
+            color: #ffffff !important; /* Color forzado */
             font-size: 1.1em;
+            white-space: nowrap;
         }}
 
         /* Reloj */
         .hud-clock {{
             font-family: 'Orbitron', monospace;
-            color: {time_color};
+            color: {time_color} !important;
             font-weight: bold;
             font-size: 1.2em;
             letter-spacing: 1px;
@@ -137,13 +148,15 @@ def _render_sticky_top_hud(player, commander):
             padding: 5px 15px;
             border-radius: 4px;
             border: 1px solid #444;
+            white-space: nowrap;
         }}
         
-        /* Ajuste para móviles o pantallas chicas */
+        /* Ajuste para móviles */
         @media (max-width: 800px) {{
             .hud-value {{ font-size: 0.9em; }}
             .hud-icon {{ font-size: 1.1em; }}
-            .top-hud-sticky {{ padding-left: 60px; }}
+            .top-hud-sticky {{ padding-left: 60px; padding-right: 10px; gap: 10px; }}
+            .hud-resource-group {{ gap: 10px; }}
         }}
         </style>
 
@@ -151,32 +164,32 @@ def _render_sticky_top_hud(player, commander):
             <div class="hud-resource-group">
                 <div class="hud-metric" title="Créditos Estándar">
                     <span class="hud-icon">💳</span>
-                    <span class="hud-value">{finances.get('creditos', 0):,}</span>
+                    <span class="hud-value">{safe_val('creditos'):,}</span>
                 </div>
                 <div class="hud-metric" title="Materiales de Construcción">
                     <span class="hud-icon">📦</span>
-                    <span class="hud-value">{finances.get('materiales', 0):,}</span>
+                    <span class="hud-value">{safe_val('materiales'):,}</span>
                 </div>
                 <div class="hud-metric" title="Componentes Tecnológicos">
                     <span class="hud-icon">🧩</span>
-                    <span class="hud-value">{finances.get('componentes', 0):,}</span>
+                    <span class="hud-value">{safe_val('componentes'):,}</span>
                 </div>
                 <div class="hud-metric" title="Células de Energía">
                     <span class="hud-icon">⚡</span>
-                    <span class="hud-value">{finances.get('celulas_energia', 0):,}</span>
+                    <span class="hud-value">{safe_val('celulas_energia'):,}</span>
                 </div>
                 <div class="hud-metric" title="Influencia Política">
                     <span class="hud-icon">👑</span>
-                    <span class="hud-value">{finances.get('influencia', 0):,}</span>
+                    <span class="hud-value">{safe_val('influencia'):,}</span>
                 </div>
             </div>
 
-            <div title="Ciclo Galáctico Actual: {status['tick']}">
-                <span class="hud-clock">{status['time']}</span>
+            <div title="Ciclo Galáctico Actual: {status.get('tick', 0)}">
+                <span class="hud-clock">{status.get('time', '00:00')}</span>
             </div>
         </div>
         
-        <div style="height: 50px;"></div>
+        <div style="height: 60px;"></div>
     """, unsafe_allow_html=True)
 
 
@@ -184,8 +197,7 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
     """Sidebar limpia: Solo identidad y menú."""
     with st.sidebar:
         
-        # --- BOTÓN DEBUG (Restaurado aquí para funcionalidad) ---
-        # Lo ponemos arriba para que sea fácil de encontrar
+        # --- BOTÓN DEBUG (Restaurado) ---
         col_dbg_txt, col_dbg_btn = st.columns([2, 1])
         with col_dbg_txt:
             st.caption("🛠️ SISTEMA")
