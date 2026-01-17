@@ -15,9 +15,6 @@ def calculate_skills(attributes: Dict[str, int]) -> Dict[str, int]:
     Returns:
         Un diccionario con los nombres de las habilidades y sus valores calculados.
     """
-    # TODO: Implementar "+ Modificadores de Clase" de la fórmula original.
-    # Actualmente la función no recibe la clase del personaje como parámetro.
-
     skills = {}
     if not attributes:
         return {}

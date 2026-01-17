@@ -23,14 +23,54 @@ CLASSES: Dict[str, Dict[str, str]] = {
 # --- Constantes de Reglas del Juego ---
 
 SKILL_MAPPING: Dict[str, Tuple[str, str]] = {
-    "Combate Cercano": ("fuerza", "agilidad"),
-    "Puntería": ("agilidad", "tecnica"),
-    "Hacking": ("intelecto", "tecnica"),
-    "Pilotaje": ("agilidad", "intelecto"),
-    "Persuasión": ("presencia", "voluntad"),
-    "Medicina": ("intelecto", "tecnica"),
-    "Sigilo": ("agilidad", "presencia"),
-    "Ingeniería": ("tecnica", "intelecto")
+    # 1. Pilotaje y Vehículos
+    "Piloteo de naves pequeñas": ("agilidad", "tecnica"),
+    "Piloteo de naves medianas": ("tecnica", "intelecto"),
+    "Piloteo de fragatas y capitales": ("intelecto", "voluntad"),
+    "Maniobras evasivas espaciales": ("agilidad", "voluntad"),
+    "Navegación en zonas peligrosas": ("intelecto", "voluntad"),
+    # 2. Combate y Armamento
+    "Armas de precisión": ("tecnica", "agilidad"),
+    "Armas pesadas": ("fuerza", "tecnica"),
+    "Combate cuerpo a cuerpo": ("fuerza", "agilidad"),
+    "Tácticas de escuadra": ("intelecto", "voluntad"),
+    "Combate defensivo": ("voluntad", "agilidad"),
+    "Uso de drones de combate": ("tecnica", "intelecto"),
+    # 3. Ingeniería y Tecnología
+    "Reparación mecánica": ("tecnica", "fuerza"),
+    "Reparación electrónica": ("tecnica", "intelecto"),
+    "Hackeo de sistemas": ("intelecto", "tecnica"),
+    "Sabotaje tecnológico": ("intelecto", "agilidad"),
+    "Optimización de sistemas": ("intelecto", "voluntad"),
+    "Interfaz con sistemas": ("tecnica", "intelecto"),
+    # 4. Ciencia e Investigación
+    "Investigación científica": ("intelecto", "tecnica"),
+    "Análisis de datos": ("intelecto", "voluntad"),
+    "Ingeniería inversa": ("intelecto", "tecnica"),
+    "Evaluación de amenazas": ("intelecto", "presencia"),
+    # 5. Sigilo e Infiltración
+    "Sigilo físico": ("agilidad", "voluntad"),
+    "Infiltración urbana": ("agilidad", "intelecto"),
+    "Evasión de sensores": ("tecnica", "intelecto"),
+    "Movimiento silencioso": ("agilidad", "voluntad"),
+    "Escape táctico": ("agilidad", "intelecto"),
+    # 6. Diplomacia y Social
+    "Persuasión": ("presencia", "intelecto"),
+    "Engaño": ("presencia", "agilidad"),
+    "Intimidación": ("presencia", "fuerza"),
+    "Negociación": ("presencia", "voluntad"),
+    "Liderazgo": ("presencia", "voluntad"),
+    "Lectura emocional": ("presencia", "intelecto"),
+    # 7. Comando y Estrategia
+    "Planificación de misiones": ("intelecto", "voluntad"),
+    "Coordinación de unidades": ("intelecto", "presencia"),
+    "Gestión de recursos": ("intelecto", "tecnica"),
+    "Toma de decisiones bajo presión": ("voluntad", "intelecto"),
+    # 8. Supervivencia y Físico
+    "Resistencia física": ("fuerza", "voluntad"),
+    "Supervivencia en entornos hostiles": ("voluntad", "fuerza"),
+    "Atletismo": ("fuerza", "agilidad"),
+    "Orientación y exploración": ("intelecto", "agilidad")
 }
 
 POINTS_AVAILABLE_FOR_ATTRIBUTES: int = 15
