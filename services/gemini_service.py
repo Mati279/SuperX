@@ -25,6 +25,7 @@ from data.world_repository import queue_player_action, get_world_state
 
 from core.time_engine import check_and_trigger_tick, is_lock_in_window
 from core.mrg_engine import resolve_action, ResultType
+# La siguiente importación ahora funcionará correctamente
 from core.mrg_constants import DIFFICULTY_NORMAL
 from core.mrg_effects import apply_partial_success_complication
 
