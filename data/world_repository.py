@@ -139,3 +139,70 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
     except Exception as e:
         log_event(f"Error obteniendo ubicación HUD: {e}", is_error=True)
         return default_loc
+
+
+# --- FUNCIONES PARA OBTENER SISTEMAS Y PLANETAS DE LA BD ---
+
+def get_all_systems_from_db() -> List[Dict[str, Any]]:
+    """
+    Obtiene todos los sistemas estelares de la base de datos.
+
+    Returns:
+        Lista de sistemas con id, name, x, y, star_class
+    """
+    try:
+        response = supabase.table("systems").select("*").execute()
+        return response.data if response.data else []
+    except Exception as e:
+        log_event(f"Error obteniendo sistemas de BD: {e}", is_error=True)
+        return []
+
+
+def get_system_by_id(system_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene un sistema por su ID.
+
+    Args:
+        system_id: ID del sistema
+
+    Returns:
+        Diccionario con datos del sistema o None
+    """
+    try:
+        response = supabase.table("systems").select("*").eq("id", system_id).single().execute()
+        return response.data if response.data else None
+    except Exception:
+        return None
+
+
+def get_planets_by_system_id(system_id: int) -> List[Dict[str, Any]]:
+    """
+    Obtiene todos los planetas de un sistema.
+
+    Args:
+        system_id: ID del sistema
+
+    Returns:
+        Lista de planetas del sistema
+    """
+    try:
+        response = supabase.table("planets").select("*").eq("system_id", system_id).order("orbital_ring").execute()
+        return response.data if response.data else []
+    except Exception as e:
+        log_event(f"Error obteniendo planetas del sistema {system_id}: {e}", is_error=True)
+        return []
+
+
+def get_starlanes_from_db() -> List[Dict[str, Any]]:
+    """
+    Obtiene todas las rutas estelares (conexiones entre sistemas).
+
+    Returns:
+        Lista de starlanes con system_a_id, system_b_id, distance
+    """
+    try:
+        response = supabase.table("starlanes").select("*").execute()
+        return response.data if response.data else []
+    except Exception as e:
+        log_event(f"Error obteniendo starlanes: {e}", is_error=True)
+        return []

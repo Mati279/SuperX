@@ -1,17 +1,38 @@
 # ui/galaxy_map_page.py
+"""
+Mapa Galáctico - Usa datos directamente de la Base de Datos.
+Sin generación procedural, la galaxia es fija.
+"""
 import json
 import math
 import streamlit as st
 import streamlit.components.v1 as components
-from core.galaxy_generator import get_galaxy
-from core.world_models import System, Planet, AsteroidBelt
-from core.world_constants import RESOURCE_STAR_WEIGHTS, METAL_RESOURCES
+from core.world_constants import METAL_RESOURCES
 from data.planet_repository import get_all_player_planets
+from data.world_repository import (
+    get_all_systems_from_db,
+    get_system_by_id,
+    get_planets_by_system_id,
+    get_starlanes_from_db
+)
 from ui.state import get_player
 
 
+# --- Constantes de visualización ---
+STAR_COLORS = {"G": "#f8f5ff", "O": "#8ec5ff", "M": "#f2b880", "D": "#d7d7d7", "X": "#d6a4ff"}
+STAR_SIZES = {"G": 7, "O": 8, "M": 6, "D": 7, "X": 9}
+BIOME_COLORS = {
+    "Terrestre (Gaya)": "#7be0a5",
+    "Desértico": "#e3c07b",
+    "Oceánico": "#6fb6ff",
+    "Volcánico": "#ff7058",
+    "Gélido": "#a8d8ff",
+    "Gigante Gaseoso": "#c6a3ff",
+}
+
+
 def show_galaxy_map_page():
-    """Punto de entrada para la pagina del mapa galactico."""
+    """Punto de entrada para la página del mapa galáctico."""
     st.title("Mapa de la Galaxia")
     st.markdown("---")
 
@@ -21,22 +42,19 @@ def show_galaxy_map_page():
     if "selected_system_id" not in st.session_state:
         st.session_state.selected_system_id = None
     if "preview_system_id" not in st.session_state:
-        st.session_state.preview_system_id = None # ID del sistema seleccionado en el mapa (click)
+        st.session_state.preview_system_id = None
     if "selected_planet_id" not in st.session_state:
         st.session_state.selected_planet_id = None
 
     # --- LÓGICA DE NAVEGACIÓN (Bridging JS -> Python) ---
-    # Si el mapa envía un 'preview_id' (al hacer click en una estrella), actualizamos la previsualización
     if "preview_id" in st.query_params:
         try:
             p_id = int(st.query_params["preview_id"])
             st.session_state.preview_system_id = p_id
-            # Limpiamos la URL para evitar recargas en bucle, pero mantenemos el estado
             del st.query_params["preview_id"]
         except (ValueError, TypeError):
-             if "preview_id" in st.query_params:
+            if "preview_id" in st.query_params:
                 del st.query_params["preview_id"]
-        # Rerun para mostrar la info en la barra lateral
         st.rerun()
 
     # --- Renderizado de Vistas ---
@@ -48,9 +66,29 @@ def show_galaxy_map_page():
         _render_planet_view()
 
 
-def _scale_positions(systems: list[System], target_width: int = 1400, target_height: int = 900, margin: int = 80):
-    xs = [s.position[0] for s in systems]
-    ys = [s.position[1] for s in systems]
+def _get_player_home_info():
+    """Obtiene el system_id y planet_id de la base del jugador."""
+    player = get_player()
+    if not player:
+        return None, None
+
+    home_base_name = f"Base {player.faccion_nombre}"
+    player_planets = get_all_player_planets(player.id)
+
+    for p in player_planets:
+        if p.get('nombre_asentamiento') == home_base_name:
+            return p.get('system_id'), p.get('planet_id')
+
+    return None, None
+
+
+def _scale_positions(systems: list, target_width: int = 1400, target_height: int = 900, margin: int = 80):
+    """Escala las posiciones de los sistemas para el canvas."""
+    if not systems:
+        return {}
+
+    xs = [s.get('x', 0) for s in systems]
+    ys = [s.get('y', 0) for s in systems]
     min_x, max_x = min(xs), max(xs)
     min_y, max_y = min(ys), max(ys)
     span_x = max(max_x - min_x, 1)
@@ -61,239 +99,161 @@ def _scale_positions(systems: list[System], target_width: int = 1400, target_hei
         return margin + ((value - min_val) / span) * usable
 
     return {
-        system.id: (
-            scale(system.position[0], min_x, span_x, target_width),
-            scale(system.position[1], min_y, span_y, target_height),
+        s['id']: (
+            scale(s.get('x', 0), min_x, span_x, target_width),
+            scale(s.get('y', 0), min_y, span_y, target_height),
         )
-        for system in systems
+        for s in systems
     }
 
 
-def _build_connections(systems: list[System], positions: dict[int, tuple[float, float]], neighbors: int = 3):
-    edges = set()
-    for system in systems:
-        x1, y1 = positions[system.id]
-        distances = []
-        for other in systems:
-            if other.id == system.id:
-                continue
-            x2, y2 = positions[other.id]
-            dist = math.hypot(x1 - x2, y1 - y2)
-            distances.append((dist, other.id))
-        distances.sort(key=lambda t: t[0])
-        for _, neighbor_id in distances[:neighbors]:
-            edge_key = tuple(sorted((system.id, neighbor_id)))
-            edges.add(edge_key)
-
+def _build_connections_from_starlanes(starlanes: list, positions: dict):
+    """Construye las conexiones visuales desde las starlanes de la BD."""
     connections = []
-    for a_id, b_id in edges:
-        ax, ay = positions[a_id]
-        bx, by = positions[b_id]
-        connections.append(
-            {"a_id": a_id, "b_id": b_id, "ax": ax, "ay": ay, "bx": bx, "by": by}
-        )
+    for lane in starlanes:
+        a_id = lane.get('system_a_id')
+        b_id = lane.get('system_b_id')
+        if a_id in positions and b_id in positions:
+            ax, ay = positions[a_id]
+            bx, by = positions[b_id]
+            connections.append({
+                "a_id": a_id, "b_id": b_id,
+                "ax": ax, "ay": ay, "bx": bx, "by": by
+            })
     return connections
 
 
-def _resource_probability(resource_name: str, star_class: str) -> float:
-    weights = RESOURCE_STAR_WEIGHTS.get(star_class, {})
-    total = sum(weights.values())
-    if total <= 0:
-        return 0.0
-    return round((weights.get(resource_name, 0) / total) * 100, 2)
-
-
-def _planet_color_for_biome(biome: str) -> str:
-    biome_key = (biome or "").lower()
-    if "terrestre" in biome_key:
-        return "#7be0a5"
-    if "des" in biome_key:
-        return "#e3c07b"
-    if "oce" in biome_key:
-        return "#6fb6ff"
-    if "volc" in biome_key:
-        return "#ff7058"
-    if "lido" in biome_key:
-        return "#a8d8ff"
-    if "gaseoso" in biome_key:
-        return "#c6a3ff"
-    return "#7ec7ff"
-
-
-def _resource_radius_factor(probability: float) -> float:
-    if probability is None:
-        return 1.0
-    clamped = max(0.0, min(probability, 100.0))
-    return 0.3 + (clamped / 100.0) * 3.2
-
-
-def _resource_color(resource_name: str) -> str:
-    resource_colors = {
-        "Hierro": "#9aa2ad",
-        "Cobre": "#c77a48",
-        "Niquel": "#b6b6b6",
-        "Titanio": "#9bb7d6",
-        "Platino": "#d3d7db",
-        "Oricalco Oscuro": "#5b6a8a",
-        "Neutrilium": "#67c7b1",
-        "Aetherion": "#f1d26a",
-    }
-    return resource_colors.get(resource_name, "#9fb2ff")
-
-
 def _render_interactive_galaxy_map():
+    """Renderiza el mapa interactivo de la galaxia usando datos de BD."""
     st.header("Sistemas Conocidos")
-    galaxy = get_galaxy()
-    systems_sorted = sorted(galaxy.systems, key=lambda s: s.id)
-    
-    # Columnas: Mapa (izquierda grande) - Controles/Info (derecha pequeña)
+
+    # Obtener datos de la BD
+    systems = get_all_systems_from_db()
+    starlanes = get_starlanes_from_db()
+
+    if not systems:
+        st.error("No se pudieron cargar los sistemas de la galaxia.")
+        return
+
+    systems_sorted = sorted(systems, key=lambda s: s.get('id', 0))
+
+    # Obtener info del jugador
+    player_home_system_id, _ = _get_player_home_info()
+
     col_map, col_controls = st.columns([5, 2])
-    
+
     # --- COLUMNA DERECHA: FILTROS Y DETALLES ---
     with col_controls:
-        # 1. Filtros
         search_term = st.text_input("Buscar sistema", placeholder="Ej. Alpha-Orionis")
-        
-        # Sincronizar el selectbox con el estado de preview si existe
-        # Esto permite que si clickeas en el mapa, el selectbox se actualice (truco visual)
-        # o si usas el selectbox, se actualice el preview.
+
+        # Sincronizar selectbox con preview
         current_idx = 0
-        sys_options = [s.name for s in systems_sorted]
+        sys_options = [s.get('name', f"Sistema {s['id']}") for s in systems_sorted]
         if st.session_state.preview_system_id is not None:
             for i, s in enumerate(systems_sorted):
-                if s.id == st.session_state.preview_system_id:
+                if s['id'] == st.session_state.preview_system_id:
                     current_idx = i
                     break
-        
-        # Selector manual
+
         selected_name = st.selectbox(
             "Seleccionar sistema",
             sys_options,
             index=current_idx,
             key="manual_system_selector"
         )
-        
-        # Si el usuario cambia el selectbox manualmente, actualizamos el preview
-        selected_sys_obj = systems_sorted[sys_options.index(selected_name)]
-        if selected_sys_obj.id != st.session_state.preview_system_id:
-            st.session_state.preview_system_id = selected_sys_obj.id
+
+        # Actualizar preview si cambia el selectbox
+        selected_sys = systems_sorted[sys_options.index(selected_name)]
+        if selected_sys['id'] != st.session_state.preview_system_id:
+            st.session_state.preview_system_id = selected_sys['id']
             st.rerun()
 
         st.markdown("---")
-        
-        class_options = sorted({s.star.class_type for s in galaxy.systems})
+
+        # Filtros de clase
+        class_options = sorted({s.get('star_class', 'G') for s in systems})
         selected_classes = st.multiselect(
             "Clases visibles", class_options, default=class_options
         )
         show_routes = st.toggle("Mostrar rutas", value=True)
-        star_scale = st.slider("Tamano relativo", 0.8, 2.0, 1.0, 0.05)
-        
+        star_scale = st.slider("Tamaño relativo", 0.8, 2.0, 1.0, 0.05)
+
         resource_options = ["(sin filtro)"] + list(METAL_RESOURCES.keys())
         selected_resource = st.selectbox("Recurso a resaltar", resource_options, index=0)
-        
+
         st.markdown("---")
 
-        # 2. PANEL DE INFORMACIÓN DEL SISTEMA SELECCIONADO
-        # Aquí es donde mostramos la info cuando se hace click en el mapa
+        # Panel de información del sistema seleccionado
         if st.session_state.preview_system_id is not None:
-            # Buscar el sistema en la lista
-            preview_sys = next((s for s in galaxy.systems if s.id == st.session_state.preview_system_id), None)
-            
+            preview_sys = next((s for s in systems if s['id'] == st.session_state.preview_system_id), None)
+
             if preview_sys:
-                st.subheader(f"🔭 {preview_sys.name}")
-                st.caption(f"ID: {preview_sys.id} | Coordenadas: {preview_sys.position}")
-                
+                st.subheader(f"🔭 {preview_sys.get('name', 'Sistema')}")
+                st.caption(f"ID: {preview_sys['id']} | Coords: ({preview_sys.get('x', 0):.0f}, {preview_sys.get('y', 0):.0f})")
+
                 with st.container(border=True):
                     c1, c2 = st.columns(2)
-                    c1.metric("Clase", preview_sys.star.class_type)
-                    c2.metric("Rareza", preview_sys.star.rarity)
-                    
-                    st.write(f"**Energía:** {preview_sys.star.energy_modifier:+.0%}")
-                    st.info(f"📜 {preview_sys.star.special_rule}")
-                    
-                    # Botón de acción principal
+                    c1.metric("Clase", preview_sys.get('star_class', 'G'))
+
+                    # Contar planetas del sistema
+                    planets_count = len(get_planets_by_system_id(preview_sys['id']))
+                    c2.metric("Planetas", planets_count)
+
+                    if preview_sys['id'] == player_home_system_id:
+                        st.success("🏠 Tu sistema base")
+
                     if st.button("🚀 ENTRAR AL SISTEMA", type="primary", use_container_width=True):
-                        st.session_state.selected_system_id = preview_sys.id
+                        st.session_state.selected_system_id = preview_sys['id']
                         st.session_state.map_view = "system"
                         st.rerun()
             else:
-                st.warning("Sistema seleccionado no encontrado.")
+                st.warning("Sistema no encontrado.")
         else:
             st.info("Selecciona una estrella en el mapa o en la lista para ver detalles.")
 
-    # --- LÓGICA DE DATOS PARA EL MAPA ---
-    resource_filter_active = selected_resource != "(sin filtro)"
-    
+    # --- PREPARAR DATOS PARA EL MAPA ---
     canvas_width, canvas_height = 1400, 900
-    scaled_positions = _scale_positions(galaxy.systems, canvas_width, canvas_height)
+    scaled_positions = _scale_positions(systems, canvas_width, canvas_height)
 
-    star_colors = {"G": "#f8f5ff", "O": "#8ec5ff", "M": "#f2b880", "D": "#d7d7d7", "X": "#d6a4ff"}
-    size_by_class = {"G": 7, "O": 8, "M": 6, "D": 7, "X": 9}
-
-    filtered_ids = {s.id for s in galaxy.systems if s.star.class_type in selected_classes} if selected_classes else {s.id for s in galaxy.systems}
+    filtered_ids = {s['id'] for s in systems if s.get('star_class', 'G') in selected_classes}
     highlight_ids = {
-        s.id for s in galaxy.systems if search_term and search_term.lower() in s.name.lower()
+        s['id'] for s in systems if search_term and search_term.lower() in s.get('name', '').lower()
     }
-    
-    # Si hay uno seleccionado en preview, lo resaltamos también
+
     if st.session_state.preview_system_id is not None:
         highlight_ids.add(st.session_state.preview_system_id)
 
-    player_home_system_ids = set()
-    player = get_player()
-    if player:
-        home_base_name = f"Base {player.faccion_nombre}"
-        player_planets = get_all_player_planets(player.id)
-        for p in player_planets:
-            if p['nombre_asentamiento'] == home_base_name:
-                # El system_id de la BD no coincide con el ID procedural.
-                # Buscamos por nombre del sistema para obtener el ID correcto.
-                db_system_id = p['system_id']
-                try:
-                    from data.database import get_supabase
-                    sys_res = get_supabase().table("systems").select("name").eq("id", db_system_id).single().execute()
-                    if sys_res.data:
-                        system_name = sys_res.data.get("name")
-                        # Buscar el sistema en la galaxia procedural por nombre
-                        for sys in galaxy.systems:
-                            if sys.name == system_name:
-                                player_home_system_ids.add(sys.id)
-                                break
-                except Exception:
-                    pass
-                break  # Assuming only one home base
+    player_home_system_ids = {player_home_system_id} if player_home_system_id else set()
 
+    # Construir payload de sistemas
     systems_payload = []
-    for system in galaxy.systems:
-        x, y = scaled_positions[system.id]
-        base_radius = size_by_class.get(system.star.class_type, 7) * star_scale
-        resource_prob = _resource_probability(selected_resource, system.star.class_type) if resource_filter_active else None
-        radius = base_radius
-        if resource_filter_active and resource_prob is not None:
-            radius = base_radius * _resource_radius_factor(resource_prob)
-        color = star_colors.get(system.star.class_type, "#FFFFFF")
-        if resource_filter_active:
-            color = _resource_color(selected_resource)
-        systems_payload.append(
-            {
-                "id": system.id,
-                "name": system.name,
-                "class": system.star.class_type,
-                "x": round(x, 2),
-                "y": round(y, 2),
-                "color": color,
-                "radius": round(radius, 2),
-                "resource_prob": resource_prob,
-            }
-        )
+    for sys in systems:
+        if sys['id'] not in scaled_positions:
+            continue
+        x, y = scaled_positions[sys['id']]
+        star_class = sys.get('star_class', 'G')
+        base_radius = STAR_SIZES.get(star_class, 7) * star_scale
+        color = STAR_COLORS.get(star_class, "#FFFFFF")
 
-    connections = _build_connections(galaxy.systems, scaled_positions) if show_routes else []
+        systems_payload.append({
+            "id": sys['id'],
+            "name": sys.get('name', f"Sistema {sys['id']}"),
+            "class": star_class,
+            "x": round(x, 2),
+            "y": round(y, 2),
+            "color": color,
+            "radius": round(base_radius, 2),
+        })
 
+    # Construir conexiones
+    connections = _build_connections_from_starlanes(starlanes, scaled_positions) if show_routes else []
+
+    # JSON para JavaScript
     systems_json = json.dumps(systems_payload)
     connections_json = json.dumps(connections)
     filtered_json = json.dumps(list(filtered_ids))
     highlight_json = json.dumps(list(highlight_ids))
-    player_home_system_ids_json = json.dumps(list(player_home_system_ids))
+    player_home_json = json.dumps(list(player_home_system_ids))
 
     # --- HTML DEL MAPA ---
     html_template = f"""
@@ -331,21 +291,12 @@ def _render_interactive_galaxy_map():
             filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8));
             animation: pulse 2s infinite;
         }}
-        
         @keyframes pulse {{
-            0% {{
-                filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8));
-            }}
-            50% {{
-                filter: drop-shadow(0 0 25px rgba(77, 255, 136, 1));
-            }}
-            100% {{
-                filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8));
-            }}
+            0% {{ filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8)); }}
+            50% {{ filter: drop-shadow(0 0 25px rgba(77, 255, 136, 1)); }}
+            100% {{ filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8)); }}
         }}
-
         .route {{ stroke: #5b7bff; stroke-opacity: 0.2; stroke-width: 1.5; pointer-events: none; }}
-        
         #tooltip {{
             position: absolute; pointer-events: none; background: rgba(0,0,0,0.8);
             padding: 4px 8px; border-radius: 4px; font-size: 11px; color: #fff;
@@ -376,8 +327,8 @@ def _render_interactive_galaxy_map():
             const routes = {connections_json};
             const filteredIds = new Set({filtered_json});
             const highlightIds = new Set({highlight_json});
-            const playerHomeSystemIds = new Set({player_home_system_ids_json});
-            
+            const playerHomeSystemIds = new Set({player_home_json});
+
             const starsLayer = document.getElementById("stars-layer");
             const routesLayer = document.getElementById("routes-layer");
             const tooltip = document.getElementById("tooltip");
@@ -398,12 +349,11 @@ def _render_interactive_galaxy_map():
                 c.setAttribute("r", sys.radius);
                 c.setAttribute("fill", sys.color);
                 c.setAttribute("class", "star");
-                
+
                 if (!filteredIds.has(sys.id)) c.classList.add("dim");
                 if (highlightIds.has(sys.id)) c.classList.add("selected");
                 if (playerHomeSystemIds.has(sys.id)) c.classList.add("player-home");
-                
-                // Hover simple
+
                 c.addEventListener("mouseenter", () => {{
                     tooltip.style.display = "block";
                     tooltip.textContent = sys.name;
@@ -413,17 +363,14 @@ def _render_interactive_galaxy_map():
                     tooltip.style.top = (e.pageY - 20) + "px";
                 }});
                 c.addEventListener("mouseleave", () => tooltip.style.display = "none");
-                
-                // CLICK: Navegación simple y robusta
+
                 c.addEventListener("click", () => {{
-                    console.log("Click en sistema:", sys.id);
-                    // Forzar recarga de la ventana PADRE con el parámetro
                     const targetWin = window.parent || window.top || window;
                     const url = new URL(targetWin.location.href);
                     url.searchParams.set("preview_id", sys.id);
                     targetWin.location.href = url.toString();
                 }});
-                
+
                 starsLayer.appendChild(c);
             }});
 
@@ -443,65 +390,111 @@ def _render_interactive_galaxy_map():
         components.html(html_template, height=860, scrolling=False)
 
 
-def _render_system_orbits(system: System):
-    """Visual del sol y planetas orbitando con click en planeta."""
-    player = get_player()
-    player_home_planet_id = None
-    if player:
-        home_base_name = f"Base {player.faccion_nombre}"
-        player_planets = get_all_player_planets(player.id)
-        for p in player_planets:
-            if p['nombre_asentamiento'] == home_base_name:
-                # El planet_id de la BD no coincide con el ID procedural.
-                # Buscamos el nombre del planeta en la BD y lo comparamos.
-                db_planet_id = p['planet_id']
-                try:
-                    from data.database import get_supabase
-                    planet_res = get_supabase().table("planets").select("name").eq("id", db_planet_id).single().execute()
-                    if planet_res.data:
-                        planet_name = planet_res.data.get("name")
-                        # Buscar el planeta en el sistema por nombre
-                        for body in system.orbital_rings.values():
-                            if isinstance(body, Planet) and body.name == planet_name:
-                                player_home_planet_id = body.id
-                                break
-                except Exception:
-                    pass
-                break
+def _render_system_view():
+    """Muestra los detalles de un sistema estelar seleccionado."""
+    system_id = st.session_state.selected_system_id
+    system = get_system_by_id(system_id)
 
-    star_colors = {"G": "#f8f5ff", "O": "#8ec5ff", "M": "#f2b880", "D": "#d7d7d7", "X": "#d6a4ff"}
+    if not system:
+        st.error("Error: Sistema no encontrado.")
+        _reset_to_galaxy_view()
+        return
+
+    st.header(f"Sistema: {system.get('name', 'Desconocido')}")
+
+    with st.container():
+        if st.button("← Volver al mapa", use_container_width=True, type="primary", key="back_to_map"):
+            _reset_to_galaxy_view()
+
+    with st.expander("Información de la Estrella Central", expanded=True):
+        star_class = system.get('star_class', 'G')
+        st.subheader(f"Estrella Clase {star_class}")
+        st.caption(f"Coordenadas: ({system.get('x', 0):.0f}, {system.get('y', 0):.0f})")
+
+    st.subheader("Vista orbital")
+    _render_system_orbits(system_id)
+
+    st.subheader("Cuerpos celestiales")
+    planets = get_planets_by_system_id(system_id)
+
+    _, player_home_planet_id = _get_player_home_info()
+
+    for ring in range(1, 10):
+        planet = next((p for p in planets if p.get('orbital_ring') == ring), None)
+        with st.container(border=True):
+            col1, col2, col3 = st.columns([1, 3, 3])
+            with col1:
+                st.caption(f"Anillo {ring}")
+            with col2:
+                if planet is None:
+                    st.write("_(Vacío)_")
+                else:
+                    biome = planet.get('biome', 'Desconocido')
+                    color = BIOME_COLORS.get(biome, "#7ec7ff")
+                    name = planet.get('name', f"Planeta-{ring}")
+
+                    is_home = planet['id'] == player_home_planet_id
+                    home_indicator = " 🏠" if is_home else ""
+
+                    st.markdown(
+                        f"<span style='color: {color}; font-weight: 700'>{name}{home_indicator}</span>",
+                        unsafe_allow_html=True,
+                    )
+                    st.write(f"Bioma: {biome} | Tamaño: {planet.get('planet_size', 'Mediano')}")
+            with col3:
+                if planet:
+                    resources = planet.get('resources', [])
+                    top_res = ", ".join(resources[:3]) if resources else "Sin recursos"
+                    st.write(f"Recursos: {top_res}")
+                    if st.button("Ver Detalles", key=f"planet_{planet['id']}"):
+                        st.session_state.map_view = "planet"
+                        st.session_state.selected_planet_id = planet['id']
+                        st.rerun()
+
+
+def _render_system_orbits(system_id: int):
+    """Visual del sol y planetas orbitando."""
+    system = get_system_by_id(system_id)
+    planets = get_planets_by_system_id(system_id)
+
+    if not system:
+        return
+
+    _, player_home_planet_id = _get_player_home_info()
+
+    star_class = system.get('star_class', 'G')
+    star_color = STAR_COLORS.get(star_class, "#f8f5ff")
     star_glow = {"G": 18, "O": 22, "M": 16, "D": 18, "X": 24}
-    planet_colors = {
-        "Terrestre (Gaya)": "#7be0a5",
-        "Desértico": "#e3c07b",
-        "Oceánico": "#6fb6ff",
-        "Volcánico": "#ff7058",
-        "Gélido": "#a8d8ff",
-        "Gigante Gaseoso": "#c6a3ff",
-    }
+
     center_x = 360
     center_y = 360
     orbit_step = 38
-    planets = []
-    planet_items = [(ring, body) for ring, body in sorted(system.orbital_rings.items()) if isinstance(body, Planet)]
-    for idx, (ring, body) in enumerate(planet_items):
-        # Golden angle for even angular spacing with few planets.
-        angle_deg = ((system.id * 23) + (idx * 137.5)) % 360
+
+    # Preparar datos de planetas
+    planets_data = []
+    for idx, planet in enumerate(planets):
+        ring = planet.get('orbital_ring', idx + 1)
+        angle_deg = ((system_id * 23) + (idx * 137.5)) % 360
         angle_rad = math.radians(angle_deg)
         radius = 70 + ring * orbit_step
         px = center_x + radius * math.cos(angle_rad)
         py = center_y + radius * math.sin(angle_rad)
+
         size_map = {"Pequeno": 7, "Mediano": 10, "Grande": 13}
-        pr = size_map.get(body.size, 9)
-        color = _planet_color_for_biome(body.biome)
-        resources = ", ".join(body.resources[:3]) if body.resources else "Sin recursos"
-        planets.append({
-            "id": body.id,
-            "name": body.name,
-            "biome": body.biome,
-            "size": body.size,
-            "resources": resources,
-            "explored": body.explored_pct,
+        pr = size_map.get(planet.get('planet_size', 'Mediano'), 9)
+
+        biome = planet.get('biome', 'Desconocido')
+        color = BIOME_COLORS.get(biome, "#7ec7ff")
+
+        resources = planet.get('resources', [])
+        resources_str = ", ".join(resources[:3]) if resources else "Sin recursos"
+
+        planets_data.append({
+            "id": planet['id'],
+            "name": planet.get('name', f"Planeta-{ring}"),
+            "biome": biome,
+            "size": planet.get('planet_size', 'Mediano'),
+            "resources": resources_str,
             "x": round(px, 2),
             "y": round(py, 2),
             "r": pr,
@@ -512,10 +505,9 @@ def _render_system_orbits(system: System):
     # Calcular radios de órbitas para todos los anillos (1-6)
     orbit_radii = [70 + ring * orbit_step for ring in range(1, 7)]
 
-    planets_json = json.dumps(planets)
+    planets_json = json.dumps(planets_data)
     orbits_json = json.dumps(orbit_radii)
-    player_planets_ids_json = json.dumps([player_home_planet_id] if player_home_planet_id else [])
-    star_color = star_colors.get(system.star.class_type, "#f8f5ff")
+    player_planet_ids_json = json.dumps([player_home_planet_id] if player_home_planet_id else [])
 
     html = f"""
     <style>
@@ -540,15 +532,9 @@ def _render_system_orbits(system: System):
         animation: pulse-planet 2s infinite;
     }}
     @keyframes pulse-planet {{
-        0% {{
-            filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9));
-        }}
-        50% {{
-            filter: drop-shadow(0 0 20px rgba(77, 255, 136, 1));
-        }}
-        100% {{
-            filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9));
-        }}
+        0% {{ filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9)); }}
+        50% {{ filter: drop-shadow(0 0 20px rgba(77, 255, 136, 1)); }}
+        100% {{ filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9)); }}
     }}
     </style>
     <div class="sys-wrapper">
@@ -558,13 +544,11 @@ def _render_system_orbits(system: System):
                     <stop offset="0%" stop-color="{star_color}" stop-opacity="0.95" />
                     <stop offset="100%" stop-color="{star_color}" stop-opacity="0.1" />
                 </radialGradient>
+                <filter id="glowShadow" x="-50%" y="-50%" width="200%" height="200%">
+                    <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="{star_color}" flood-opacity="0.7" />
+                </filter>
             </defs>
-            <circle cx="{center_x}" cy="{center_y}" r="{star_glow.get(system.star.class_type, 20)}" fill="url(#starGlow)" stroke="{star_color}" stroke-width="2.5" filter="url(#glowShadow)" />
-            <defs>
-              <filter id="glowShadow" x="-50%" y="-50%" width="200%" height="200%">
-                <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="{star_color}" flood-opacity="0.7" />
-              </filter>
-            </defs>
+            <circle cx="{center_x}" cy="{center_y}" r="{star_glow.get(star_class, 20)}" fill="url(#starGlow)" stroke="{star_color}" stroke-width="2.5" filter="url(#glowShadow)" />
         </svg>
         <div id="sys-tooltip" class="sys-tooltip"></div>
         <div class="legend">
@@ -577,13 +561,13 @@ def _render_system_orbits(system: System):
     <script>
       const planets = {planets_json};
       const orbitRadii = {orbits_json};
-      const playerPlanets = new Set({player_planets_ids_json});
+      const playerPlanetIds = new Set({player_planet_ids_json});
       const svg = document.getElementById("system-orbits");
       const tooltip = document.getElementById("sys-tooltip");
       const centerX = {center_x};
       const centerY = {center_y};
 
-      // draw all orbital rings (1-6)
+      // Dibujar órbitas
       orbitRadii.forEach((radius, idx) => {{
         const orbit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         orbit.setAttribute("cx", centerX);
@@ -596,7 +580,7 @@ def _render_system_orbits(system: System):
         svg.appendChild(orbit);
       }});
 
-      // draw planets
+      // Dibujar planetas
       planets.forEach(p => {{
         const planet = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         planet.setAttribute("cx", p.x);
@@ -606,28 +590,29 @@ def _render_system_orbits(system: System):
         planet.setAttribute("stroke", "#b2d7ff");
         planet.setAttribute("stroke-width", "1");
         planet.style.cursor = "pointer";
-        if (playerPlanets.has(p.id)) {{
+
+        if (playerPlanetIds.has(p.id)) {{
             planet.classList.add("player-home-planet");
         }}
+
         planet.addEventListener("mousemove", (evt) => {{
             tooltip.style.display = "block";
             tooltip.style.left = (evt.pageX + 10) + "px";
             tooltip.style.top = (evt.pageY + 10) + "px";
             tooltip.innerHTML = `<strong>${{p.name}}</strong><br/>
                 Bioma: ${{p.biome}}<br/>
-                Tamano: ${{p.size}}<br/>
-                Explorado: ${{p.explored}}%<br/>
+                Tamaño: ${{p.size}}<br/>
                 Recursos: ${{p.resources}}`;
         }});
         planet.addEventListener("mouseleave", () => tooltip.style.display = "none");
-        // Nota: El click en planetas no navega via URL param en esta versión simplificada
         planet.addEventListener("click", () => {{
-            console.log("Planeta seleccionado (Orbital View):", p.name);
+            console.log("Planeta seleccionado:", p.name);
         }});
         svg.appendChild(planet);
 
+        // Etiqueta del planeta
         const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        label.setAttribute("x", p.x + 10);
+        label.setAttribute("x", p.x + 12);
         label.setAttribute("y", p.y + 4);
         label.setAttribute("fill", "#dfe8ff");
         label.setAttribute("font-size", p.r >= 12 ? "13" : "11");
@@ -640,104 +625,42 @@ def _render_system_orbits(system: System):
     return components.html(html, height=780)
 
 
-def _render_system_view():
-    """Muestra los detalles de un sistema estelar seleccionado."""
-    galaxy = get_galaxy()
-    system = next((s for s in galaxy.systems if s.id == st.session_state.selected_system_id), None)
-
-    if not system:
-        st.error("Error: Sistema no encontrado.")
-        _reset_to_galaxy_view()
-        return
-
-    st.header(f"Sistema: {system.name}")
-    with st.container():
-        if st.button("← Volver al mapa", use_container_width=True, type="primary", key="back_to_map"):
-            _reset_to_galaxy_view()
-
-    with st.expander("Informacion de la Estrella Central", expanded=True):
-        st.subheader(f"Estrella: {system.star.name}")
-        st.metric("Modificador de Energia", f"{system.star.energy_modifier:+.0%}")
-        st.info(f"Regla Especial: {system.star.special_rule}")
-        st.caption(f"Clase: {system.star.class_type} | Rareza: {system.star.rarity}")
-
-    st.subheader("Vista orbital")
-    # Renderizamos la vista orbital
-    _render_system_orbits(system)
-
-    st.subheader("Cuerpos celestiales")
-    for ring in range(1, 10):
-        body = system.orbital_rings.get(ring)
-        with st.container(border=True):
-            col1, col2, col3 = st.columns([1, 3, 3])
-            with col1:
-                st.caption(f"Anillo {ring}")
-            with col2:
-                if body is None:
-                    st.write("_(Vacio)_")
-                elif isinstance(body, Planet):
-                    color = _planet_color_for_biome(body.biome)
-                    st.markdown(
-                        f"<span style='color: {color}; font-weight: 700'>{body.name}</span>",
-                        unsafe_allow_html=True,
-                    )
-                    st.write(f"Bioma: {body.biome} | Tamano: {body.size}")
-                elif isinstance(body, AsteroidBelt):
-                    st.write(f"**Cinturon de Asteroides:** {body.name}")
-            with col3:
-                if isinstance(body, Planet):
-                    st.progress(body.explored_pct / 100.0, text=f"Explorado {body.explored_pct}%")
-                    top_res = ", ".join(body.resources[:3]) if body.resources else "Sin recursos"
-                    st.write(f"Recursos: {top_res}")
-                    if st.button("Ver Detalles", key=f"planet_{body.id}"):
-                        st.session_state.map_view = "planet"
-                        st.session_state.selected_planet_id = body.id
-                        st.rerun()
-
-
 def _render_planet_view():
     """Muestra los detalles de un planeta seleccionado."""
-    galaxy = get_galaxy()
-    system = next((s for s in galaxy.systems if s.id == st.session_state.selected_system_id), None)
+    from data.database import get_supabase
 
-    if not system:
-        st.error("Error: Sistema no encontrado.")
-        _reset_to_galaxy_view()
-        return
+    planet_id = st.session_state.selected_planet_id
 
-    planet = None
-    for body in system.orbital_rings.values():
-        if isinstance(body, Planet) and body.id == st.session_state.selected_planet_id:
-            planet = body
-            break
+    try:
+        planet_res = get_supabase().table("planets").select("*").eq("id", planet_id).single().execute()
+        planet = planet_res.data if planet_res.data else None
+    except Exception:
+        planet = None
 
     if not planet:
         st.error("Error: Planeta no encontrado.")
         _reset_to_system_view()
         return
 
-    st.header(f"Informe del Planeta: {planet.name}")
-    if st.button(f"<- Volver al Sistema {system.name}"):
+    system = get_system_by_id(planet.get('system_id'))
+    system_name = system.get('name', 'Desconocido') if system else 'Desconocido'
+
+    st.header(f"Informe del Planeta: {planet.get('name', 'Desconocido')}")
+    if st.button(f"← Volver al Sistema {system_name}"):
         _reset_to_system_view()
 
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("Anillo Orbital", planet.ring)
-        st.metric("Slots de Construccion", planet.construction_slots)
-        st.metric("Mod. Mantenimiento", f"{planet.maintenance_mod:+.0%}")
-        st.metric("Tamano", planet.size)
-        st.metric("Explorado", f"{planet.explored_pct}%")
+        st.metric("Anillo Orbital", planet.get('orbital_ring', '-'))
+        st.metric("Slots de Construcción", planet.get('construction_slots', 0))
+        st.metric("Tamaño", planet.get('planet_size', 'Mediano'))
     with col2:
-        st.subheader(f"Bioma: {planet.biome}")
-        st.info(f"Bonus: {planet.bonuses}")
-        st.write(f"Recursos: {', '.join(planet.resources[:3]) if planet.resources else 'Sin recursos'}")
-
-    st.subheader("Satelites Naturales (Lunas)")
-    if planet.moons:
-        for moon in planet.moons:
-            st.write(f"- {moon.name}")
-    else:
-        st.write("_Este planeta no tiene lunas._")
+        st.subheader(f"Bioma: {planet.get('biome', 'Desconocido')}")
+        bonuses = planet.get('bonuses', {})
+        if bonuses:
+            st.info(f"Bonus: {bonuses.get('desc', 'Ninguno')}")
+        resources = planet.get('resources', [])
+        st.write(f"Recursos: {', '.join(resources[:3]) if resources else 'Sin recursos'}")
 
 
 def _reset_to_galaxy_view():
