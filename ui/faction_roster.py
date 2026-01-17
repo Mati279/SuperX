@@ -5,7 +5,7 @@ Muestra tarjetas visuales con atributos, habilidades y sistema de level up.
 """
 
 import streamlit as st
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union
 from data.character_repository import (
     get_all_characters_by_player_id,
     update_character,
@@ -229,11 +229,11 @@ def _show_level_up_dialog(char: Dict[str, Any], player_id: int, progress: Dict[s
     col_cancel, col_confirm = st.columns([1, 2])
 
     with col_cancel:
-        if st.button("Cancelar", use_container_width=True):
+        if st.button("Cancelar", width='stretch'):
             st.rerun()
 
     with col_confirm:
-        if st.button("⬆️ CONFIRMAR ASCENSO", type="primary", use_container_width=True):
+        if st.button("⬆️ CONFIRMAR ASCENSO", type="primary", width='stretch'):
             try:
                 new_stats, changes = apply_level_up(char)
                 result = update_character_level(char['id'], changes['nivel_nuevo'], new_stats, player_id)
@@ -247,8 +247,14 @@ def _show_level_up_dialog(char: Dict[str, Any], player_id: int, progress: Dict[s
                 st.error(f"Error al ascender: {e}")
 
 
-def render_character_card(char: Dict[str, Any], player_id: int, is_commander: bool = False):
+def render_character_card(char: Union[Dict[str, Any], Any], player_id: int, is_commander: bool = False):
     """Muestra la tarjeta completa de un personaje con todos sus stats."""
+
+    # FIX: Convertir Pydantic models a dict si es necesario
+    if hasattr(char, "model_dump"):
+        char = char.model_dump()
+    elif hasattr(char, "dict"):
+        char = char.dict()
 
     stats = char.get('stats_json', {})
     bio = stats.get('bio', {})
@@ -389,6 +395,12 @@ def render_character_card(char: Dict[str, Any], player_id: int, is_commander: bo
 
 def _render_debug_panel(char: Dict[str, Any], player_id: int):
     """Panel de debug/Game Master para testing."""
+    
+    # FIX: Asegurar que char sea dict
+    if hasattr(char, "model_dump"):
+        char = char.model_dump()
+    elif hasattr(char, "dict"):
+        char = char.dict()
 
     st.markdown("---")
     st.warning("Zona de pruebas - Los cambios son permanentes")
@@ -462,10 +474,22 @@ def show_faction_roster():
         st.warning("No se ha podido identificar al jugador. Por favor, vuelve a iniciar sesion.")
         return
 
-    player_id = player['id']
+    # FIX: Acceder como objeto, no como dict
+    player_id = player.id
 
     try:
-        characters: List[Dict[str, Any]] = get_all_characters_by_player_id(player_id)
+        raw_characters = get_all_characters_by_player_id(player_id)
+        
+        # FIX: Normalizar a diccionarios
+        characters = []
+        if raw_characters:
+            for c in raw_characters:
+                if hasattr(c, "model_dump"):
+                    characters.append(c.model_dump())
+                elif hasattr(c, "dict"):
+                    characters.append(c.dict())
+                else:
+                    characters.append(c)
 
         if not characters:
             st.info("No tienes personal en tu faccion. ¡Es hora de reclutar!")

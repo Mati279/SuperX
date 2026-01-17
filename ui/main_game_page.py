@@ -83,10 +83,9 @@ def _render_sticky_top_hud(player, commander):
     influencia = f"{safe_val('influencia'):,}"
 
     # CSS separado para mayor claridad
+    # FIX: Se eliminó el @import de la fuente para evitar el 'flash' o titileo al recargar.
     hud_css = """
     <style>
-    @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&display=swap");
-
     .top-hud-sticky {
         position: fixed;
         top: 0;
@@ -272,7 +271,8 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         st.markdown(clock_css, unsafe_allow_html=True)
 
         # Botón de debug debajo del reloj
-        if st.button("🔄 Forzar Tick", help="Avanzar tiempo manualmente (Debug)", use_container_width=True):
+        # FIX: Replaced use_container_width with width='stretch'
+        if st.button("🔄 Forzar Tick", help="Avanzar tiempo manualmente (Debug)", width='stretch'):
             with st.spinner("⏳ Procesando tick..."):
                 debug_force_tick()
             st.rerun()
