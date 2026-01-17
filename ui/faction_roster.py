@@ -52,8 +52,18 @@ def show_faction_roster():
         st.error("No se pudo identificar al jugador.")
         return
 
-    st.markdown("## 👥 Cuadrilla Operativa")
-    st.caption("Personal bajo su mando directo.")
+    # Header principal con el botón de reclutamiento integrado
+    c_head, c_btn = st.columns([3, 1])
+    with c_head:
+        st.markdown("## 👥 Cuadrilla Operativa")
+        st.caption("Personal bajo su mando directo.")
+    
+    with c_btn:
+        st.write("") # Spacer vertical para alinear con el título
+        if st.button("➕ Reclutar Personal", type="primary", use_container_width=True):
+            st.session_state.current_page = "Centro de Reclutamiento"
+            st.rerun()
+
     st.write("")
 
     # Obtener personajes del jugador usando la función correcta del repositorio

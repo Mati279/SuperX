@@ -46,6 +46,8 @@ def render_main_game_page(cookie_manager):
     _render_navigation_sidebar(player, commander, cookie_manager)
 
     # --- 3. Renderizar la página seleccionada ---
+    # NOTA: Mantenemos "Centro de Reclutamiento" aquí para que sea accesible
+    # aunque no esté en el menú lateral.
     PAGES = {
         "Puente de Mando": _render_war_room_page,
         "Cuadrilla": show_faction_roster,  # Renombrado de Comando de Facción
@@ -303,8 +305,9 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         st.divider()
         
         # Actualizado con "Cuadrilla"
+        # "Centro de Reclutamiento" removido de aquí, ahora accesible desde Cuadrilla
         pages = ["Puente de Mando", "Mapa de la Galaxia", 
-                 "Cuadrilla", "Centro de Reclutamiento", "Flota"]
+                 "Cuadrilla", "Flota"]
         
         for p in pages:
             if st.button(p, use_container_width=True, type="primary" if st.session_state.current_page == p else "secondary"):
@@ -353,3 +356,4 @@ def _render_war_room_page():
         log_event(f"[PLAYER] {action}", player.id)
         resolve_player_action(action, player.id)
         st.rerun()
+        
