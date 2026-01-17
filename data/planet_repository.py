@@ -296,3 +296,102 @@ def demolish_building(building_id: int, player_id: int) -> bool:
     except Exception as e:
         log_event(f"Error demoliendo edificio: {e}", player_id, is_error=True)
         return False
+
+
+def get_luxury_extraction_sites_for_player(player_id: int) -> List[Dict[str, Any]]:
+    """
+    Obtiene todos los sitios de extracción de lujo de un jugador.
+
+    Args:
+        player_id: ID del jugador
+
+    Returns:
+        Lista de sitios de extracción activos
+    """
+    try:
+        response = _get_db().table("luxury_extraction_sites")\
+            .select("*")\
+            .eq("player_id", player_id)\
+            .eq("is_active", True)\
+            .execute()
+
+        return response.data if response.data else []
+    except Exception as e:
+        log_event(f"Error obteniendo sitios de extracción: {e}", player_id, is_error=True)
+        return []
+
+
+def batch_update_planet_security(updates: List[Tuple[int, float]]) -> bool:
+    """
+    Actualiza la seguridad de múltiples planetas en batch.
+
+    Args:
+        updates: Lista de tuplas (planet_asset_id, nuevo_valor_seguridad)
+
+    Returns:
+        True si todas las actualizaciones fueron exitosas
+    """
+    if not updates:
+        return True
+
+    try:
+        db = _get_db()
+        for planet_id, security in updates:
+            db.table("planet_assets").update({
+                "seguridad": security
+            }).eq("id", planet_id).execute()
+        return True
+    except Exception as e:
+        log_event(f"Error en batch update de seguridad: {e}", is_error=True)
+        return False
+
+
+def batch_update_building_status(updates: List[Tuple[int, bool]]) -> Tuple[int, int]:
+    """
+    Actualiza el estado de múltiples edificios en batch.
+
+    Args:
+        updates: Lista de tuplas (building_id, is_active)
+
+    Returns:
+        Tupla (cantidad exitosa, cantidad fallida)
+    """
+    if not updates:
+        return (0, 0)
+
+    success = 0
+    failed = 0
+    db = _get_db()
+
+    for building_id, is_active in updates:
+        try:
+            db.table("planet_buildings").update({
+                "is_active": is_active
+            }).eq("id", building_id).execute()
+            success += 1
+        except Exception:
+            failed += 1
+
+    return (success, failed)
+
+
+def update_planet_asset(
+    planet_asset_id: int,
+    updates: Dict[str, Any]
+) -> bool:
+    """
+    Actualiza campos de un activo planetario.
+
+    Args:
+        planet_asset_id: ID del activo
+        updates: Diccionario con campos a actualizar
+
+    Returns:
+        True si se actualizó correctamente
+    """
+    try:
+        _get_db().table("planet_assets").update(updates).eq("id", planet_asset_id).execute()
+        return True
+    except Exception as e:
+        log_event(f"Error actualizando activo planetario ID {planet_asset_id}: {e}", is_error=True)
+        return False
