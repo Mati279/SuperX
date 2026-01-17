@@ -31,7 +31,9 @@ def render_main_game_page(cookie_manager):
     commander = get_commander()
 
     if not player or not commander:
-        st.error("No se pudieron cargar los datos del jugador o comandante. Por favor, reinicia la sesión.")
+        st.error("❌ ERROR CRÍTICO: No se pudieron cargar los datos del jugador. Reinicia sesión.")
+        if st.button("Volver al Login"):
+            logout_user(cookie_manager)
         return
 
     # --- Renderizar el Sidebar de Navegación ---
@@ -151,7 +153,7 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 
 
 def _render_war_room_styles():
-    """Estilos visuales para el Puente de Mando con corrección para mensajes de usuario."""
+    """Estilos visuales para el Puente de Mando."""
     st.markdown(
         """
         <style>
@@ -200,38 +202,16 @@ def _render_war_room_styles():
             margin-bottom: 10px;
         }
 
-        div[data-testid="stChatMessage"]:has(.user-marker) {
-            background: linear-gradient(145deg, #161b22, #0d1117) !important;
-            border: 1px solid rgba(160, 160, 160, 0.3) !important;
-            box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.2) !important;
-        }
-
+        /* Color explícito para asegurar contraste */
         div[data-testid="stChatMessage"] div[data-testid="stChatMessageContent"] {
             font-family: "Share Tech Mono", monospace;
-            color: #d5f3ff;
+            color: #ffffff !important; 
             font-size: 14px;
         }
         
         div[data-testid="stChatMessage"] span[title] {
             font-family: "Orbitron", sans-serif;
             letter-spacing: 1px;
-        }
-
-        div[data-testid="stChatInput"] {
-            border-radius: 16px;
-            border: 1px solid rgba(90, 200, 255, 0.5);
-            background: linear-gradient(135deg, rgba(9, 18, 30, 0.95), rgba(6, 12, 20, 0.95));
-            box-shadow: 0 12px 26px rgba(8, 14, 24, 0.5), inset 0 0 18px rgba(75, 200, 255, 0.12);
-        }
-        div[data-testid="stChatInput"] textarea {
-            font-family: "Share Tech Mono", monospace;
-            font-size: 14px;
-            color: #dcf6ff;
-        }
-        div[data-testid="stChatInput"] button {
-            border-radius: 10px;
-            border: 1px solid rgba(120, 215, 255, 0.5);
-            background: linear-gradient(135deg, rgba(36, 86, 122, 0.9), rgba(20, 40, 64, 0.9));
         }
         </style>
         """,
@@ -240,7 +220,7 @@ def _render_war_room_styles():
 
 
 def _render_war_room_page():
-    """Página del Puente de Mando con historial persistente."""
+    """Página del Puente de Mando con historial persistente robusto."""
     _render_war_room_styles()
     st.markdown(
         """
@@ -266,40 +246,51 @@ def _render_war_room_page():
     player_id = get_player()['id']
     commander_name = get_commander()['nombre']
     
-    # Renderizado del Historial
-    log_container = st.container(height=520)
-    logs = get_recent_logs(player_id, limit=20)
+    # --- RENDERIZADO DEL CHAT ---
+    # 1. Obtenemos logs. Si falla, logs será [].
+    logs = get_recent_logs(player_id, limit=30)
     
-    for log in reversed(logs):
-        mensaje = log.get('message', '')
-        
-        # FIX: Eliminado filtro agresivo de "ERROR" que ocultaba respuestas válidas.
-        # Solo ocultamos basura técnica si es estrictamente necesario.
-        if "[DEBUG]" in mensaje or "Traceback" in mensaje:
-            continue
+    # 2. Contenedor PRINCIPAL (Sin altura fija para evitar bugs de rendering)
+    log_container = st.container()
 
-        if mensaje.startswith("[PLAYER]"):
-            mensaje_limpio = mensaje.replace("[PLAYER] ", "")
-            with log_container.chat_message("user", avatar="👤"):
-                st.write(mensaje_limpio)
-                st.markdown('<div class="user-marker" style="display:none;"></div>', unsafe_allow_html=True)
-        else:
-            icon = "🤖"
-            if "VENTANA DE BLOQUEO" in mensaje or "⏱️" in mensaje: icon = "⏳"
-            elif "CONGELADO" in mensaje or "❄️" in mensaje: icon = "❄️"
-            elif "Misión EXITOSA" in mensaje or "✅" in mensaje: icon = "✅"
-            elif "Misión FALLIDA" in mensaje or "❌" in mensaje: icon = "❌"
-
-            # Limpiar prefijos de la bitácora para la UI
-            mensaje_limpio = mensaje
-            for p in ["[GM] ", "🤖 [ASISTENTE] ", "[ASISTENTE] ", "🤖 "]:
-                if mensaje_limpio.startswith(p):
-                    mensaje_limpio = mensaje_limpio.replace(p, "", 1)
-                    break
-
-            with log_container.chat_message("assistant", avatar=icon):
-                st.write(mensaje_limpio)
+    if not logs:
+        st.info(f"ℹ️ Inicializando sistemas de comunicación para el Comandante {commander_name}. Historial vacío.")
+    
+    with log_container:
+        # Nota: logs viene ordenado DESC (nuevo -> viejo), usamos reversed para renderizar viejo -> nuevo (arriba -> abajo)
+        for log in reversed(logs):
+            mensaje = log.get('message', '')
             
+            # Filtro básico de basura técnica
+            if "[DEBUG]" in mensaje or "Traceback" in mensaje:
+                continue
+
+            if mensaje.startswith("[PLAYER]"):
+                mensaje_limpio = mensaje.replace("[PLAYER] ", "")
+                with st.chat_message("user", avatar="👤"):
+                    st.write(mensaje_limpio)
+            else:
+                icon = "🤖"
+                if "VENTANA DE BLOQUEO" in mensaje or "⏱️" in mensaje: icon = "⏳"
+                elif "CONGELADO" in mensaje or "❄️" in mensaje: icon = "❄️"
+                elif "Misión EXITOSA" in mensaje or "✅" in mensaje: icon = "✅"
+                elif "Misión FALLIDA" in mensaje or "❌" in mensaje: icon = "❌"
+
+                # Limpieza de prefijos
+                mensaje_limpio = mensaje
+                for p in ["[GM] ", "🤖 [ASISTENTE] ", "[ASISTENTE] ", "🤖 "]:
+                    if mensaje_limpio.startswith(p):
+                        mensaje_limpio = mensaje_limpio.replace(p, "", 1)
+                        break
+
+                with st.chat_message("assistant", avatar=icon):
+                    st.write(mensaje_limpio)
+            
+    # Espaciador para separar el chat del input en pantallas grandes
+    st.write("") 
+    st.write("") 
+
+    # --- INPUT DE CHAT (Siempre abajo) ---
     input_placeholder = f"¿Órdenes, Comandante {commander_name}?"
     if status['is_frozen']:
         input_placeholder = "Sistemas congelados. Entrada deshabilitada."
@@ -310,84 +301,11 @@ def _render_war_room_page():
         # Registrar el mensaje del usuario inmediatamente
         log_event(f"[PLAYER] {action}", player_id)
 
-        with st.spinner("Transmitiendo órdenes..."):
+        # Spinner mientras procesa
+        with st.spinner("Procesando orden..."):
             try:
-                # El servicio ya se encarga de loguear la respuesta de la IA
                 resolve_player_action(action, player_id)
-                st.rerun() # Forzar recarga para mostrar nuevos mensajes
+                # Forzar recarga inmediata para ver el resultado
+                st.rerun()
             except Exception as e:
-                st.error(f"⚠️ Error de enlace: {e}")
-
-
-def _render_commander_sheet_page():
-    """Página de la Ficha del Comandante."""
-    st.title("Ficha de Servicio del Comandante")
-
-    commander = get_commander()
-    stats = commander.get('stats_json', {})
-    bio = stats.get('bio', {})
-    atributos = stats.get('atributos', {})
-    habilidades = stats.get('habilidades', {})
-
-    st.header(f"Informe de {commander['nombre']}")
-
-    # Biografía
-    st.subheader("Biografía")
-    col_bio1, col_bio2 = st.columns(2)
-    with col_bio1:
-        st.markdown(f"**Raza:** {bio.get('raza', 'N/A')}")
-        st.markdown(f"**Clase:** {bio.get('clase', 'N/A')}")
-    with col_bio2:
-        if bio.get('descripcion_raza'):
-            st.caption(f"*{bio.get('descripcion_raza')}*")
-        if bio.get('descripcion_clase'):
-            st.caption(f"*{bio.get('descripcion_clase')}*")
-
-    st.markdown("---")
-
-    # Atributos con barras visuales
-    st.subheader("Atributos")
-    attr_colors = {
-        "fuerza": "#ff6b6b", "agilidad": "#4ecdc4", "intelecto": "#45b7d1",
-        "tecnica": "#f9ca24", "presencia": "#a55eea", "voluntad": "#26de81"
-    }
-    cols = st.columns(2)
-    for i, (attr, value) in enumerate(atributos.items()):
-        with cols[i % 2]:
-            color = attr_colors.get(attr.lower(), "#888")
-            percentage = min(100, (value / 20) * 100)
-            st.markdown(f"""
-                <div style="margin-bottom: 8px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                        <span style="font-size: 0.85em; color: #ccc;">{attr.upper()}</span>
-                        <span style="font-size: 0.85em; font-weight: bold; color: {color};">{value}</span>
-                    </div>
-                    <div style="background: #1a1a2e; border-radius: 4px; height: 8px; overflow: hidden;">
-                        <div style="background: {color}; width: {percentage}%; height: 100%; border-radius: 4px;"></div>
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # Habilidades con chips visuales
-    st.subheader("Habilidades")
-    if habilidades:
-        skills_html = ""
-        for skill, val in sorted(habilidades.items(), key=lambda x: -x[1]):
-            if val >= 30:
-                color, border = "#ffd700", "#ffd700"  # Dorado - Maestro
-            elif val >= 20:
-                color, border = "#45b7d1", "#45b7d1"  # Azul - Experto
-            else:
-                color, border = "#888", "#444"  # Gris - Normal
-            skills_html += f"""
-                <span style="
-                    display: inline-block; padding: 4px 10px; margin: 2px 4px 2px 0;
-                    background: rgba(0,0,0,0.3); border: 1px solid {border};
-                    border-radius: 12px; font-size: 0.75em; color: {color};
-                ">{skill}: <b>{val}</b></span>
-            """
-        st.markdown(f'<div style="margin-top: 8px;">{skills_html}</div>', unsafe_allow_html=True)
-    else:
-        st.info("No hay habilidades calculadas.")
+                st.error(f"⚠️ Error crítico en enlace neuronal: {e}")
