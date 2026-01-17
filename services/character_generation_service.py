@@ -15,7 +15,7 @@ El flujo es:
 
 import random
 import json
-import re  # Agregado para limpieza robusta de JSON
+import re  # IMPORTANTE: Para limpieza robusta de JSON
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from google.genai import types
@@ -236,27 +236,31 @@ def _generate_fallback_identity(race: str, sex: BiologicalSex) -> GeneratedIdent
         biografia=f"{race} reclutado recientemente. Pendiente de evaluación completa."
     )
 
-
 def _clean_json_text(text: str) -> str:
     """
-    Intenta extraer JSON válido de una respuesta de texto.
+    Intenta extraer JSON válido de una respuesta de texto usando Regex.
     Maneja bloques de código markdown y texto conversacional.
     """
+    if not text:
+        return "{}"
+        
     text = text.strip()
     
-    # 1. Intentar encontrar bloque de código JSON
+    # 1. Intentar encontrar bloque de código JSON con regex
+    # Busca ```json ... ``` o ``` ... ```
     code_block_pattern = r"```(?:json)?\s*(\{.*?\})\s*```"
     match = re.search(code_block_pattern, text, re.DOTALL)
     if match:
         return match.group(1)
         
-    # 2. Intentar encontrar objeto JSON crudo (entre llaves)
+    # 2. Intentar encontrar el primer '{' y el último '}'
+    # Esto captura el objeto JSON incluso si hay texto antes o después
     json_pattern = r"\{.*\}"
     match = re.search(json_pattern, text, re.DOTALL)
     if match:
         return match.group(0)
         
-    # 3. Retornar texto original si no hay patrón claro (intentar parsear directo)
+    # 3. Fallback: Retornar texto original (confiando en que sea JSON puro)
     return text
 
 
@@ -274,7 +278,7 @@ async def _generate_identity_with_ai(
     attributes: Dict[str, int]
 ) -> GeneratedIdentity:
     """
-    Genera nombre, apellido y biografía usando la IA.
+    Genera nombre, apellido y biografía usando la IA (Async).
     Fallback a generación local si falla.
     """
     container = get_service_container()
@@ -302,24 +306,28 @@ async def _generate_identity_with_ai(
             config=types.GenerateContentConfig(
                 temperature=0.9,
                 max_output_tokens=600,
-                response_mime_type="application/json"  # Forzar JSON
+                response_mime_type="application/json"  # FORZAR JSON
             )
         )
 
         if response and response.text:
             text = _clean_json_text(response.text)
-            data = json.loads(text)
-            
-            return GeneratedIdentity(
-                nombre=data.get("nombre", "Sin Nombre"),
-                apellido=data.get("apellido", ""),
-                biografia=data.get("biografia", f"{race} {char_class}.")
-            )
+            try:
+                data = json.loads(text)
+                return GeneratedIdentity(
+                    nombre=data.get("nombre", "Sin Nombre"),
+                    apellido=data.get("apellido", ""),
+                    biografia=data.get("biografia", f"{race} {char_class}.")
+                )
+            except json.JSONDecodeError:
+                # Loguear el texto que falló para debug
+                print(f"🔴 ERROR PARSE JSON: {text}")
+                raise 
         else:
-            log_event(f"IA respondió vacío o bloqueado (Safety?)", is_error=True)
+            log_event(f"IA respondió vacío o bloqueado", is_error=True)
 
     except Exception as e:
-        # 📏Tareas manuales: Revisa la consola para ver este error
+        # Revisa la consola para ver el error real (puede ser Model Not Found)
         print(f"🔴 ERROR CRÍTICO GEMINI (Async) [{TEXT_MODEL_NAME}]: {e}")
         log_event(f"Error generando identidad con IA: {e}", is_error=True)
 
@@ -363,7 +371,7 @@ def generate_identity_with_ai_sync(
             config=types.GenerateContentConfig(
                 temperature=0.9,
                 max_output_tokens=600,
-                response_mime_type="application/json"  # Forzar JSON
+                response_mime_type="application/json"  # FORZAR JSON
             )
         )
 
@@ -377,11 +385,12 @@ def generate_identity_with_ai_sync(
                     biografia=data.get("biografia", f"{race} {char_class}.")
                 )
             except json.JSONDecodeError as json_err:
-                log_event(f"Error parseando JSON de IA: {json_err}. Texto: {text[:100]}...", is_error=True)
+                print(f"🔴 ERROR PARSE JSON (Sync): {text}")
+                log_event(f"Error parseando JSON de IA: {json_err}", is_error=True)
                 raise json_err
 
     except Exception as e:
-        # 📏Tareas manuales: Revisa la consola para ver este error
+        # Revisa la consola para ver el error real
         print(f"🔴 ERROR CRÍTICO GEMINI (Sync) [{TEXT_MODEL_NAME}]: {e}")
         log_event(f"Error generando identidad con IA: {e}", is_error=True)
 
@@ -466,8 +475,18 @@ def generate_random_character_with_ai(
     full_name = f"{identity.nombre} {identity.apellido}"
     attempts = 0
     while full_name in existing_names and attempts < 5:
-        identity = _generate_fallback_identity(race_name, sex)
-        full_name = f"{identity.nombre} {identity.apellido}"
+        # Si el nombre está duplicado, intentamos regenerar identidad o fallback
+        # Para no gastar tokens, usamos fallback aquí si hay colisión
+        fallback_id = _generate_fallback_identity(race_name, sex)
+        full_name = f"{fallback_id.nombre} {fallback_id.apellido}"
+        # Mantenemos la biografía rica si ya la teníamos, o usamos la fallback
+        if attempts == 0: # Primer intento fallido
+             pass # Mantenemos identity original pero cambiamos nombre? 
+             # Simplificación: Usamos fallback completo para evitar colisiones complejas
+             identity = fallback_id
+        else:
+             identity = fallback_id
+             
         attempts += 1
 
     # 9. Determinar ubicación
@@ -547,22 +566,6 @@ def recruit_character_with_ai(
 ) -> Optional[Dict[str, Any]]:
     """
     Recluta un nuevo personaje y lo guarda en la BD.
-
-    Esta es la función principal que coordina:
-    1. Generación del personaje con IA
-    2. Persistencia en base de datos
-    3. Logging del evento
-
-    Args:
-        player_id: ID del jugador que recluta
-        location_planet_id: ID del planeta donde se recluta (para raza predominante)
-        predominant_race: Raza predominante del planeta (opcional)
-        min_level: Nivel mínimo del recluta
-        max_level: Nivel máximo del recluta
-        existing_names: Nombres existentes para evitar duplicados
-
-    Returns:
-        Dict con datos del personaje creado, o None si falla
     """
     context = RecruitmentContext(
         player_id=player_id,
@@ -603,18 +606,6 @@ def generate_character_pool(
 ) -> List[Dict[str, Any]]:
     """
     Genera un pool de candidatos para que el jugador elija.
-    NO los guarda en BD - solo genera los datos.
-
-    Args:
-        player_id: ID del jugador
-        pool_size: Cantidad de candidatos a generar
-        location_planet_id: ID del planeta
-        predominant_race: Raza predominante
-        min_level: Nivel mínimo
-        max_level: Nivel máximo
-
-    Returns:
-        Lista de candidatos generados
     """
     context = RecruitmentContext(
         player_id=player_id,
