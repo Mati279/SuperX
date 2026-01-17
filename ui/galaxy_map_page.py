@@ -159,7 +159,7 @@ def _render_interactive_galaxy_map():
         # o si usas el selectbox, se actualice el preview.
         current_idx = 0
         sys_options = [s.name for s in systems_sorted]
-        if st.session_state.preview_system_id:
+        if st.session_state.preview_system_id is not None:
             for i, s in enumerate(systems_sorted):
                 if s.id == st.session_state.preview_system_id:
                     current_idx = i
@@ -195,7 +195,7 @@ def _render_interactive_galaxy_map():
 
         # 2. PANEL DE INFORMACIÓN DEL SISTEMA SELECCIONADO
         # Aquí es donde mostramos la info cuando se hace click en el mapa
-        if st.session_state.preview_system_id:
+        if st.session_state.preview_system_id is not None:
             # Buscar el sistema en la lista
             preview_sys = next((s for s in galaxy.systems if s.id == st.session_state.preview_system_id), None)
             
@@ -236,7 +236,7 @@ def _render_interactive_galaxy_map():
     }
     
     # Si hay uno seleccionado en preview, lo resaltamos también
-    if st.session_state.preview_system_id:
+    if st.session_state.preview_system_id is not None:
         highlight_ids.add(st.session_state.preview_system_id)
 
     player_home_system_ids = set()
