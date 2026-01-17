@@ -189,3 +189,170 @@ def update_character(character_id: int, data: Dict[str, Any]) -> Optional[Dict[s
     except Exception as e:
         log_event(f"Error al actualizar personaje ID {character_id}: {e}", is_error=True)
         raise Exception("Error del sistema al actualizar datos.")
+
+
+def get_character_by_id(character_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene un personaje específico por su ID.
+
+    Args:
+        character_id: El ID del personaje.
+
+    Returns:
+        Diccionario con los datos del personaje o None.
+    """
+    try:
+        response = supabase.table("characters").select("*").eq("id", character_id).single().execute()
+        if response.data and isinstance(response.data, dict):
+            return response.data
+        return None
+    except Exception:
+        return None
+
+
+def update_character_xp(character_id: int, new_xp: int, player_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """
+    Actualiza el XP de un personaje en su stats_json.
+
+    Args:
+        character_id: ID del personaje.
+        new_xp: Nuevo valor total de XP.
+        player_id: ID del jugador para logging (opcional).
+
+    Returns:
+        El personaje actualizado o None si falla.
+    """
+    try:
+        # Obtener personaje actual
+        char = get_character_by_id(character_id)
+        if not char:
+            return None
+
+        # Actualizar XP en stats_json
+        stats = char.get("stats_json", {})
+        old_xp = stats.get("xp", 0)
+        stats["xp"] = new_xp
+
+        # Guardar
+        response = supabase.table("characters")\
+            .update({"stats_json": stats})\
+            .eq("id", character_id)\
+            .execute()
+
+        if response.data:
+            xp_diff = new_xp - old_xp
+            sign = "+" if xp_diff >= 0 else ""
+            log_event(f"XP actualizado para {char['nombre']}: {sign}{xp_diff} (Total: {new_xp})", player_id)
+            return response.data[0]
+        return None
+
+    except Exception as e:
+        log_event(f"Error actualizando XP para personaje ID {character_id}: {e}", player_id, is_error=True)
+        return None
+
+
+def add_xp_to_character(character_id: int, xp_amount: int, player_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """
+    Añade XP a un personaje (suma al valor actual).
+
+    Args:
+        character_id: ID del personaje.
+        xp_amount: Cantidad de XP a añadir (puede ser negativo).
+        player_id: ID del jugador para logging.
+
+    Returns:
+        El personaje actualizado o None si falla.
+    """
+    try:
+        char = get_character_by_id(character_id)
+        if not char:
+            return None
+
+        stats = char.get("stats_json", {})
+        current_xp = stats.get("xp", 0)
+        new_xp = max(0, current_xp + xp_amount)  # No permitir XP negativo
+
+        return update_character_xp(character_id, new_xp, player_id)
+
+    except Exception as e:
+        log_event(f"Error añadiendo XP a personaje ID {character_id}: {e}", player_id, is_error=True)
+        return None
+
+
+def update_character_stats(character_id: int, new_stats_json: Dict[str, Any], player_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """
+    Actualiza el stats_json completo de un personaje.
+
+    Args:
+        character_id: ID del personaje.
+        new_stats_json: Nuevo diccionario de stats completo.
+        player_id: ID del jugador para logging.
+
+    Returns:
+        El personaje actualizado o None si falla.
+    """
+    try:
+        response = supabase.table("characters")\
+            .update({"stats_json": new_stats_json})\
+            .eq("id", character_id)\
+            .execute()
+
+        if response.data and len(response.data) > 0:
+            result = response.data[0]
+            char_name = result.get("nombre", "Desconocido") if isinstance(result, dict) else "Desconocido"
+            log_event(f"Stats actualizados para {char_name}.", player_id)
+            return result if isinstance(result, dict) else None
+        return None
+
+    except Exception as e:
+        log_event(f"Error actualizando stats para personaje ID {character_id}: {e}", player_id, is_error=True)
+        return None
+
+
+def update_character_level(character_id: int, new_level: int, new_stats_json: Dict[str, Any], player_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """
+    Actualiza el nivel y stats de un personaje después de level up.
+
+    Args:
+        character_id: ID del personaje.
+        new_level: Nuevo nivel.
+        new_stats_json: Stats actualizados con bonificaciones de nivel.
+        player_id: ID del jugador para logging.
+
+    Returns:
+        El personaje actualizado o None si falla.
+    """
+    try:
+        # Obtener nombre para el log
+        char = get_character_by_id(character_id)
+        char_name = char.get("nombre", "Desconocido") if char else "Desconocido"
+
+        response = supabase.table("characters")\
+            .update({
+                "stats_json": new_stats_json
+            })\
+            .eq("id", character_id)\
+            .execute()
+
+        if response.data:
+            log_event(f"{char_name} ha ascendido a Nivel {new_level}!", player_id)
+            return response.data[0]
+        return None
+
+    except Exception as e:
+        log_event(f"Error en level up para personaje ID {character_id}: {e}", player_id, is_error=True)
+        return None
+
+
+def recruit_character(player_id: int, character_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Recluta un nuevo personaje (alias de create_character para claridad semántica).
+
+    Args:
+        player_id: ID del jugador que recluta.
+        character_data: Datos del personaje a reclutar.
+
+    Returns:
+        El personaje creado o None si falla.
+    """
+    return create_character(player_id, character_data)
