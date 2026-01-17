@@ -10,7 +10,7 @@ from data.world_repository import get_pending_actions_count
 from data.player_repository import get_player_finances
 
 # --- Importar las vistas del juego ---
-from .faction_roster import show_faction_roster
+from .faction_roster import show_faction_roster, render_character_card # Importamos render_character_card
 from .recruitment_center import show_recruitment_center
 from .galaxy_map_page import show_galaxy_map_page
 from .ship_status_page import show_ship_status_page
@@ -45,7 +45,7 @@ def render_main_game_page(cookie_manager):
     # --- Renderizar la página seleccionada ---
     PAGES = {
         "Puente de Mando": _render_war_room_page,
-        "Ficha del Comandante": _render_commander_sheet_page,
+        "Ficha del Comandante": _render_commander_sheet_page, # Ahora la función existe
         "Comando de Facción": show_faction_roster,
         "Centro de Reclutamiento": show_recruitment_center,
         "Mapa de la Galaxia": show_galaxy_map_page,
@@ -151,6 +151,17 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             logout_user(cookie_manager)
             st.rerun()
 
+def _render_commander_sheet_page():
+    """Renderiza la ficha específica del Comandante."""
+    st.title("Ficha de Servicio: Comandante")
+    player = get_player()
+    commander = get_commander()
+    
+    if player and commander:
+        # Reutilizamos la tarjeta visual de faction_roster
+        render_character_card(commander, player['id'], is_commander=True)
+    else:
+        st.error("Datos del comandante no disponibles.")
 
 def _render_war_room_styles():
     """Estilos visuales para el Puente de Mando."""
@@ -259,7 +270,8 @@ def _render_war_room_page():
     with log_container:
         # Nota: logs viene ordenado DESC (nuevo -> viejo), usamos reversed para renderizar viejo -> nuevo (arriba -> abajo)
         for log in reversed(logs):
-            mensaje = log.get('message', '')
+            # FIX: Usamos 'evento_texto' que es el nombre real en DB, fallback a 'message'
+            mensaje = log.get('evento_texto', log.get('message', ''))
             
             # Filtro básico de basura técnica
             if "[DEBUG]" in mensaje or "Traceback" in mensaje:

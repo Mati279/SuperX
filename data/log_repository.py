@@ -12,11 +12,14 @@ def log_event(message: str, player_id: int = None, event_type: str = "GENERAL"):
         print("⚠️ Advertencia: Intento de loggear sin player_id")
         return
 
+    # FIX: Ajuste al esquema real de la DB (ver db_setup.sql)
+    # message -> evento_texto
+    # created_at -> fecha_evento
+    # event_type -> NO EXISTE en la tabla logs, se ignora
     log_data = {
-        "message": str(message),
-        "player_id": int(player_id), # Asegurar int
-        "event_type": str(event_type),
-        "created_at": datetime.datetime.now().isoformat()
+        "evento_texto": str(message),
+        "player_id": int(player_id), 
+        "fecha_evento": datetime.datetime.now().isoformat()
     }
     
     try:
@@ -36,10 +39,12 @@ def get_recent_logs(player_id: int, limit: int = 20) -> List[Dict[str, Any]]:
         return []
 
     try:
+        # FIX: 'descending' no es válido, se usa 'desc'
+        # FIX: 'created_at' no existe, se usa 'fecha_evento'
         response = supabase.table("logs") \
             .select("*") \
             .eq("player_id", int(player_id)) \
-            .order("created_at", descending=True) \
+            .order("fecha_evento", desc=True) \
             .limit(limit) \
             .execute()
         
