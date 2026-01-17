@@ -94,10 +94,10 @@ def mark_action_processed(action_id: int, result_status: str) -> None:
 
 def get_commander_location_display(commander_id: int) -> Dict[str, str]:
     """
-    Recupera los detalles de ubicación del comandante para el HUD.
+    Recupera los detalles de ubicación del comandante para mostrar en UI.
     Determina si está en una nave o en un asentamiento y devuelve nombres legibles.
     """
-    # Valores por defecto si no se encuentra nada
+    # Valores por defecto
     loc_data = {
         "system": "Sector Desconocido", 
         "planet": "Espacio Profundo", 
@@ -132,13 +132,9 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
             loc_data["planet"] = "Espacio Profundo" 
             
             return loc_data
-
-        # 2. TODO: Lógica futura para cuando el comandante esté asignado a un Asset terrestre (Edificio/Base)
-        # Aquí se consultaría la tabla 'planet_assets' o 'characters.ubicacion' si cambia la lógica.
         
         return loc_data
 
     except Exception as e:
-        # Silenciar error en UI, loguear en backend
         log_event(f"Error HUD Location: {e}", is_error=True)
         return loc_data
