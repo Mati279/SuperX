@@ -7,8 +7,17 @@ import json
 import math
 import streamlit as st
 import streamlit.components.v1 as components
-from core.world_constants import METAL_RESOURCES
-from data.planet_repository import get_all_player_planets
+from core.world_constants import METAL_RESOURCES, BUILDING_TYPES, INFRASTRUCTURE_MODULES
+from data.planet_repository import (
+    get_all_player_planets, 
+    build_structure, 
+    get_planet_buildings,
+    get_base_slots_info,
+    upgrade_base_tier,
+    upgrade_infrastructure_module,
+    demolish_building
+)
+from data.player_repository import get_player_resources, update_player_resources
 from data.world_repository import (
     get_all_systems_from_db,
     get_system_by_id,
@@ -141,18 +150,12 @@ def _get_player_home_info():
         return None, None
 
     home_base_name = f"Base {player.faccion_nombre}"
-    # Obtenemos TODOS los planetas, no asumimos nombre
     player_planets = get_all_player_planets(player.id)
     
-    # Si tiene planetas, devolvemos el primero (asumimos que es el home o principal por ahora)
-    # O buscamos por el nombre específico si la lógica de génesis lo garantiza
     if player_planets:
-        # Prioridad: Buscar uno que se llame como la base, si no, el primero
         for p in player_planets:
              if "Base" in p.get('nombre_asentamiento', ''):
                  return p.get('system_id'), p.get('planet_id')
-        
-        # Fallback al primero
         first = player_planets[0]
         return first.get('system_id'), first.get('planet_id')
 
@@ -201,10 +204,7 @@ def _build_connections_from_starlanes(starlanes: list, positions: dict):
 
 
 def _build_connections_fallback(systems: list, positions: dict, max_neighbors: int = 3):
-    """
-    Fallback: genera conexiones basadas en vecinos cercanos si no hay starlanes en BD.
-    Conecta cada sistema solo con sus N vecinos más cercanos.
-    """
+    """Fallback: genera conexiones basadas en vecinos cercanos."""
     edges = set()
     for sys_a in systems:
         a_id = sys_a['id']
@@ -212,7 +212,6 @@ def _build_connections_fallback(systems: list, positions: dict, max_neighbors: i
             continue
         x1, y1 = positions[a_id]
 
-        # Calcular distancias a otros sistemas
         distances = []
         for sys_b in systems:
             b_id = sys_b['id']
@@ -222,13 +221,11 @@ def _build_connections_fallback(systems: list, positions: dict, max_neighbors: i
             dist = math.hypot(x1 - x2, y1 - y2)
             distances.append((dist, b_id))
 
-        # Ordenar por distancia y tomar los N más cercanos
         distances.sort(key=lambda t: t[0])
         for _, neighbor_id in distances[:max_neighbors]:
             edge_key = tuple(sorted((a_id, neighbor_id)))
             edges.add(edge_key)
 
-    # Construir conexiones
     connections = []
     for a_id, b_id in edges:
         if a_id in positions and b_id in positions:
@@ -242,32 +239,24 @@ def _build_connections_fallback(systems: list, positions: dict, max_neighbors: i
 
 
 def _render_interactive_galaxy_map():
-    """Renderiza el mapa interactivo de la galaxia usando datos de BD."""
+    """Renderiza el mapa interactivo de la galaxia."""
     st.header("Sistemas Conocidos")
 
-    # Obtener datos de la BD
     systems = get_all_systems_from_db()
     starlanes = get_starlanes_from_db()
-
-    # Debug: mostrar cantidad de starlanes
-    st.caption(f"📊 {len(systems)} sistemas | {len(starlanes)} rutas estelares cargadas de BD")
-
+    
     if not systems:
         st.error("No se pudieron cargar los sistemas de la galaxia.")
         return
 
     systems_sorted = sorted(systems, key=lambda s: s.get('id', 0))
-
-    # Obtener info del jugador
     player_home_system_id, _ = _get_player_home_info()
 
     col_map, col_controls = st.columns([5, 2])
 
-    # --- COLUMNA DERECHA: FILTROS Y DETALLES ---
     with col_controls:
         search_term = st.text_input("Buscar sistema", placeholder="Ej. Alpha-Orionis")
 
-        # Sincronizar selectbox con preview
         current_idx = 0
         sys_options = [s.get('name', f"Sistema {s['id']}") for s in systems_sorted]
         if st.session_state.preview_system_id is not None:
@@ -283,7 +272,6 @@ def _render_interactive_galaxy_map():
             key="manual_system_selector"
         )
 
-        # Actualizar preview si cambia el selectbox
         selected_sys = systems_sorted[sys_options.index(selected_name)]
         if selected_sys['id'] != st.session_state.preview_system_id:
             st.session_state.preview_system_id = selected_sys['id']
@@ -291,7 +279,6 @@ def _render_interactive_galaxy_map():
 
         st.markdown("---")
 
-        # Filtros de clase
         class_options = sorted({s.get('star_class', 'G') for s in systems})
         selected_classes = st.multiselect(
             "Clases visibles", class_options, default=class_options
@@ -299,12 +286,8 @@ def _render_interactive_galaxy_map():
         show_routes = st.toggle("Mostrar rutas", value=True)
         star_scale = st.slider("Tamaño relativo", 0.8, 2.0, 1.0, 0.05)
 
-        resource_options = ["(sin filtro)"] + list(METAL_RESOURCES.keys())
-        selected_resource = st.selectbox("Recurso a resaltar", resource_options, index=0)
-
         st.markdown("---")
 
-        # Panel de información del sistema seleccionado
         if st.session_state.preview_system_id is not None:
             preview_sys = next((s for s in systems if s['id'] == st.session_state.preview_system_id), None)
 
@@ -316,7 +299,6 @@ def _render_interactive_galaxy_map():
                     c1, c2 = st.columns(2)
                     c1.metric("Clase", preview_sys.get('star_class', 'G'))
 
-                    # Contar planetas del sistema
                     planets_count = len(get_planets_by_system_id(preview_sys['id']))
                     c2.metric("Planetas", planets_count)
 
@@ -332,7 +314,6 @@ def _render_interactive_galaxy_map():
         else:
             st.info("Selecciona una estrella en el mapa o en la lista para ver detalles.")
 
-    # --- PREPARAR DATOS PARA EL MAPA ---
     canvas_width, canvas_height = 1400, 900
     scaled_positions = _scale_positions(systems, canvas_width, canvas_height)
 
@@ -346,7 +327,6 @@ def _render_interactive_galaxy_map():
 
     player_home_system_ids = {player_home_system_id} if player_home_system_id else set()
 
-    # Construir payload de sistemas
     systems_payload = []
     for sys in systems:
         if sys['id'] not in scaled_positions:
@@ -366,24 +346,20 @@ def _render_interactive_galaxy_map():
             "radius": round(base_radius, 2),
         })
 
-    # Construir conexiones (usar starlanes de BD, o fallback si no hay)
     if show_routes:
         if starlanes:
             connections = _build_connections_from_starlanes(starlanes, scaled_positions)
         else:
-            # Fallback: generar conexiones con vecinos cercanos
             connections = _build_connections_fallback(systems, scaled_positions, max_neighbors=3)
     else:
         connections = []
 
-    # JSON para JavaScript
     systems_json = json.dumps(systems_payload)
     connections_json = json.dumps(connections)
     filtered_json = json.dumps(list(filtered_ids))
     highlight_json = json.dumps(list(highlight_ids))
     player_home_json = json.dumps(list(player_home_system_ids))
 
-    # --- HTML DEL MAPA ---
     html_template = f"""
     <!DOCTYPE html>
     <html>
@@ -391,14 +367,8 @@ def _render_interactive_galaxy_map():
     <meta charset="UTF-8" />
     <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
     <style>
-        :root {{
-            --bg-1: #0b0f18;
-            --stroke: #1f2a3d;
-            --text: #e6ecff;
-        }}
-        body {{
-            margin: 0; font-family: "Inter", sans-serif; background: #000; color: var(--text); overflow: hidden;
-        }}
+        :root {{ --bg-1: #0b0f18; --stroke: #1f2a3d; --text: #e6ecff; }}
+        body {{ margin: 0; font-family: "Inter", sans-serif; background: #000; color: var(--text); overflow: hidden; }}
         .wrapper {{ width: 100%; height: 100%; }}
         .map-frame {{
             width: 100%; height: 860px;
@@ -406,30 +376,14 @@ def _render_interactive_galaxy_map():
             background: radial-gradient(circle at 50% 35%, #0f1c2d, #070b12 75%);
         }}
         svg {{ width: 100%; height: 100%; cursor: grab; }}
-        .star {{
-            transition: all 0.2s ease; cursor: pointer;
-            filter: drop-shadow(0 0 4px rgba(255,255,255,0.3));
-        }}
+        .star {{ transition: all 0.2s ease; cursor: pointer; filter: drop-shadow(0 0 4px rgba(255,255,255,0.3)); }}
         .star.dim {{ opacity: 0.15; pointer-events: none; }}
         .star:hover {{ r: 16; stroke: white; stroke-width: 2px; filter: drop-shadow(0 0 12px rgba(255,255,255,0.8)); }}
         .star.selected {{ stroke: #5b7bff; stroke-width: 3px; r: 16; filter: drop-shadow(0 0 15px rgba(91, 123, 255, 0.8)); }}
-        .star.player-home {{
-            stroke: #4dff88;
-            stroke-width: 3px;
-            filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8));
-            animation: pulse 2s infinite;
-        }}
-        @keyframes pulse {{
-            0% {{ filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8)); }}
-            50% {{ filter: drop-shadow(0 0 25px rgba(77, 255, 136, 1)); }}
-            100% {{ filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8)); }}
-        }}
+        .star.player-home {{ stroke: #4dff88; stroke-width: 3px; filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8)); animation: pulse 2s infinite; }}
+        @keyframes pulse {{ 0% {{ filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8)); }} 50% {{ filter: drop-shadow(0 0 25px rgba(77, 255, 136, 1)); }} 100% {{ filter: drop-shadow(0 0 15px rgba(77, 255, 136, 0.8)); }} }}
         .route {{ stroke: #5b7bff; stroke-opacity: 0.2; stroke-width: 1.5; pointer-events: none; }}
-        #tooltip {{
-            position: absolute; pointer-events: none; background: rgba(0,0,0,0.8);
-            padding: 4px 8px; border-radius: 4px; font-size: 11px; color: #fff;
-            display: none; border: 1px solid #444; z-index: 100;
-        }}
+        #tooltip {{ position: absolute; pointer-events: none; background: rgba(0,0,0,0.8); padding: 4px 8px; border-radius: 4px; font-size: 11px; color: #fff; display: none; border: 1px solid #444; z-index: 100; }}
         .toolbar {{ position: absolute; top: 10px; right: 10px; }}
         .btn {{ background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #333; cursor:pointer; padding: 5px 10px; border-radius: 4px; }}
     </style>
@@ -449,7 +403,6 @@ def _render_interactive_galaxy_map():
                 </svg>
             </div>
         </div>
-
         <script>
             const systems = {systems_json};
             const routes = {connections_json};
@@ -461,7 +414,6 @@ def _render_interactive_galaxy_map():
             const routesLayer = document.getElementById("routes-layer");
             const tooltip = document.getElementById("tooltip");
 
-            // Dibujar Rutas
             routes.forEach(r => {{
                 const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
                 line.setAttribute("x1", r.ax); line.setAttribute("y1", r.ay);
@@ -470,7 +422,6 @@ def _render_interactive_galaxy_map():
                 routesLayer.appendChild(line);
             }});
 
-            // Dibujar Estrellas
             systems.forEach(sys => {{
                 const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
                 c.setAttribute("cx", sys.x); c.setAttribute("cy", sys.y);
@@ -491,21 +442,16 @@ def _render_interactive_galaxy_map():
                     tooltip.style.top = (e.pageY - 20) + "px";
                 }});
                 c.addEventListener("mouseleave", () => tooltip.style.display = "none");
-
                 c.addEventListener("click", () => {{
                     const targetWin = window.parent || window.top || window;
                     const url = new URL(targetWin.location.href);
                     url.searchParams.set("preview_id", sys.id);
                     targetWin.location.href = url.toString();
                 }});
-
                 starsLayer.appendChild(c);
             }});
 
-            // Pan y Zoom
-            const pz = svgPanZoom("#galaxy-map", {{
-                zoomEnabled: true, controlIconsEnabled: false, fit: true, center: true, minZoom: 0.5, maxZoom: 10
-            }});
+            const pz = svgPanZoom("#galaxy-map", {{ zoomEnabled: true, controlIconsEnabled: false, fit: true, center: true, minZoom: 0.5, maxZoom: 10 }});
             document.getElementById("reset").onclick = () => {{ pz.resetZoom(); pz.resetPan(); }};
             document.getElementById("zin").onclick = () => pz.zoomIn();
             document.getElementById("zout").onclick = () => pz.zoomOut();
@@ -513,7 +459,6 @@ def _render_interactive_galaxy_map():
     </body>
     </html>
     """
-
     with col_map:
         components.html(html_template, height=860, scrolling=False)
 
@@ -560,14 +505,9 @@ def _render_system_view():
                     biome = planet.get('biome', 'Desconocido')
                     color = BIOME_COLORS.get(biome, "#7ec7ff")
                     name = planet.get('name', f"Planeta-{ring}")
-
                     is_home = planet['id'] == player_home_planet_id
                     home_indicator = " 🏠" if is_home else ""
-
-                    st.markdown(
-                        f"<span style='color: {color}; font-weight: 700'>{name}{home_indicator}</span>",
-                        unsafe_allow_html=True,
-                    )
+                    st.markdown(f"<span style='color: {color}; font-weight: 700'>{name}{home_indicator}</span>", unsafe_allow_html=True)
                     st.write(f"Bioma: {biome} | Tamaño: {planet.get('planet_size', 'Mediano')}")
             with col3:
                 if planet:
@@ -584,21 +524,15 @@ def _render_system_orbits(system_id: int):
     """Visual del sol y planetas orbitando."""
     system = get_system_by_id(system_id)
     planets = get_planets_by_system_id(system_id)
-
-    if not system:
-        return
+    if not system: return
 
     _, player_home_planet_id = _get_player_home_info()
-
     star_class = system.get('star_class', 'G')
     star_color = STAR_COLORS.get(star_class, "#f8f5ff")
     star_glow = {"G": 18, "O": 22, "M": 16, "D": 18, "X": 24}
 
-    center_x = 360
-    center_y = 360
-    orbit_step = 38
-
-    # Preparar datos de planetas
+    center_x, center_y, orbit_step = 360, 360, 38
+    
     planets_data = []
     for idx, planet in enumerate(planets):
         ring = planet.get('orbital_ring', idx + 1)
@@ -607,32 +541,21 @@ def _render_system_orbits(system_id: int):
         radius = 70 + ring * orbit_step
         px = center_x + radius * math.cos(angle_rad)
         py = center_y + radius * math.sin(angle_rad)
-
         size_map = {"Pequeno": 7, "Mediano": 10, "Grande": 13}
         pr = size_map.get(planet.get('planet_size', 'Mediano'), 9)
-
         biome = planet.get('biome', 'Desconocido')
         color = BIOME_COLORS.get(biome, "#7ec7ff")
-
         resources = planet.get('resources', [])
         resources_str = ", ".join(resources[:3]) if resources else "Sin recursos"
 
         planets_data.append({
-            "id": planet['id'],
-            "name": planet.get('name', f"Planeta-{ring}"),
-            "biome": biome,
-            "size": planet.get('planet_size', 'Mediano'),
-            "resources": resources_str,
-            "x": round(px, 2),
-            "y": round(py, 2),
-            "r": pr,
-            "ring": ring,
-            "color": color,
+            "id": planet['id'], "name": planet.get('name', f"Planeta-{ring}"),
+            "biome": biome, "size": planet.get('planet_size', 'Mediano'),
+            "resources": resources_str, "x": round(px, 2), "y": round(py, 2),
+            "r": pr, "ring": ring, "color": color,
         })
 
-    # Calcular radios de órbitas para todos los anillos (1-6)
     orbit_radii = [70 + ring * orbit_step for ring in range(1, 7)]
-
     planets_json = json.dumps(planets_data)
     orbits_json = json.dumps(orbit_radii)
     player_planet_ids_json = json.dumps([player_home_planet_id] if player_home_planet_id else [])
@@ -640,30 +563,13 @@ def _render_system_orbits(system_id: int):
     html = f"""
     <style>
     .sys-wrapper {{ width: 100%; height: 720px; display: flex; justify-content: center; align-items: center; }}
-    .sys-canvas {{
-        width: 720px; height: 720px; border-radius: 12px;
-        background: radial-gradient(circle at 30% 20%, #111a2e, #080c16 70%);
-        border: 1px solid #1d2a3c; position: relative; overflow: hidden;
-    }}
-    .sys-tooltip {{
-        position: absolute; background: rgba(8,12,22,0.95); color: #e6ecff;
-        border: 1px solid #1f2a3d; padding: 8px 10px; border-radius: 8px;
-        font-size: 12px; pointer-events: none; display: none; max-width: 240px;
-    }}
+    .sys-canvas {{ width: 720px; height: 720px; border-radius: 12px; background: radial-gradient(circle at 30% 20%, #111a2e, #080c16 70%); border: 1px solid #1d2a3c; position: relative; overflow: hidden; }}
+    .sys-tooltip {{ position: absolute; background: rgba(8,12,22,0.95); color: #e6ecff; border: 1px solid #1f2a3d; padding: 8px 10px; border-radius: 8px; font-size: 12px; pointer-events: none; display: none; max-width: 240px; }}
     .legend {{ position:absolute; top:10px; right:10px; background:rgba(10,14,24,0.8); padding:8px 10px; border:1px solid #1f2a3d; border-radius:8px; color:#cfd8f5; font-size:12px; }}
     .legend h4 {{ margin:0 0 6px 0; font-size:12px; color:#9fb2ff; }}
     .legend-row {{ margin:2px 0; }}
-    .player-home-planet {{
-        stroke: #4dff88 !important;
-        stroke-width: 3px !important;
-        filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9));
-        animation: pulse-planet 2s infinite;
-    }}
-    @keyframes pulse-planet {{
-        0% {{ filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9)); }}
-        50% {{ filter: drop-shadow(0 0 20px rgba(77, 255, 136, 1)); }}
-        100% {{ filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9)); }}
-    }}
+    .player-home-planet {{ stroke: #4dff88 !important; stroke-width: 3px !important; filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9)); animation: pulse-planet 2s infinite; }}
+    @keyframes pulse-planet {{ 0% {{ filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9)); }} 50% {{ filter: drop-shadow(0 0 20px rgba(77, 255, 136, 1)); }} 100% {{ filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9)); }} }}
     </style>
     <div class="sys-wrapper">
         <svg id="system-orbits" class="sys-canvas" viewBox="0 0 {center_x*2} {center_y*2}" preserveAspectRatio="xMidYMid meet">
@@ -679,12 +585,7 @@ def _render_system_orbits(system_id: int):
             <circle cx="{center_x}" cy="{center_y}" r="{star_glow.get(star_class, 20)}" fill="url(#starGlow)" stroke="{star_color}" stroke-width="2.5" filter="url(#glowShadow)" />
         </svg>
         <div id="sys-tooltip" class="sys-tooltip"></div>
-        <div class="legend">
-            <h4>Claves visuales</h4>
-            <div class="legend-row">■ Tamaño y nombre escalan con el planeta</div>
-            <div class="legend-row">■ Click en planeta para abrir detalles</div>
-            <div class="legend-row" style="color: #4dff88;">■ Tu base (resaltado verde)</div>
-        </div>
+        <div class="legend"><h4>Claves visuales</h4><div class="legend-row">■ Tamaño y nombre escalan con el planeta</div><div class="legend-row">■ Click en planeta para abrir detalles</div><div class="legend-row" style="color: #4dff88;">■ Tu base (resaltado verde)</div></div>
     </div>
     <script>
       const planets = {planets_json};
@@ -695,56 +596,32 @@ def _render_system_orbits(system_id: int):
       const centerX = {center_x};
       const centerY = {center_y};
 
-      // Dibujar órbitas
-      orbitRadii.forEach((radius, idx) => {{
+      orbitRadii.forEach((radius) => {{
         const orbit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        orbit.setAttribute("cx", centerX);
-        orbit.setAttribute("cy", centerY);
-        orbit.setAttribute("r", radius);
-        orbit.setAttribute("fill", "none");
-        orbit.setAttribute("stroke", "rgba(100, 150, 255, 0.2)");
-        orbit.setAttribute("stroke-width", "1");
-        orbit.setAttribute("stroke-dasharray", "4 4");
+        orbit.setAttribute("cx", centerX); orbit.setAttribute("cy", centerY); orbit.setAttribute("r", radius);
+        orbit.setAttribute("fill", "none"); orbit.setAttribute("stroke", "rgba(100, 150, 255, 0.2)"); orbit.setAttribute("stroke-width", "1"); orbit.setAttribute("stroke-dasharray", "4 4");
         svg.appendChild(orbit);
       }});
 
-      // Dibujar planetas
       planets.forEach(p => {{
         const planet = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        planet.setAttribute("cx", p.x);
-        planet.setAttribute("cy", p.y);
-        planet.setAttribute("r", p.r);
-        planet.setAttribute("fill", p.color);
-        planet.setAttribute("stroke", "#b2d7ff");
-        planet.setAttribute("stroke-width", "1");
-        planet.style.cursor = "pointer";
-
-        if (playerPlanetIds.has(p.id)) {{
-            planet.classList.add("player-home-planet");
-        }}
-
+        planet.setAttribute("cx", p.x); planet.setAttribute("cy", p.y); planet.setAttribute("r", p.r);
+        planet.setAttribute("fill", p.color); planet.setAttribute("stroke", "#b2d7ff"); planet.setAttribute("stroke-width", "1"); planet.style.cursor = "pointer";
+        if (playerPlanetIds.has(p.id)) planet.classList.add("player-home-planet");
         planet.addEventListener("mousemove", (evt) => {{
-            tooltip.style.display = "block";
-            tooltip.style.left = (evt.pageX + 10) + "px";
-            tooltip.style.top = (evt.pageY + 10) + "px";
-            tooltip.innerHTML = `<strong>${{p.name}}</strong><br/>
-                Bioma: ${{p.biome}}<br/>
-                Tamaño: ${{p.size}}<br/>
-                Recursos: ${{p.resources}}`;
+            tooltip.style.display = "block"; tooltip.style.left = (evt.pageX + 10) + "px"; tooltip.style.top = (evt.pageY + 10) + "px";
+            tooltip.innerHTML = `<strong>${{p.name}}</strong><br/>Bioma: ${{p.biome}}<br/>Tamaño: ${{p.size}}<br/>Recursos: ${{p.resources}}`;
         }});
         planet.addEventListener("mouseleave", () => tooltip.style.display = "none");
         planet.addEventListener("click", () => {{
-            console.log("Planeta seleccionado:", p.name);
+             const targetWin = window.parent || window.top || window;
+             // Esta lógica es para JS puro, en Streamlit dependemos del rerun del padre, 
+             // pero aquí simulamos la interacción para efectos visuales o futuros hooks.
         }});
         svg.appendChild(planet);
-
-        // Etiqueta del planeta
         const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        label.setAttribute("x", p.x + 12);
-        label.setAttribute("y", p.y + 4);
-        label.setAttribute("fill", "#dfe8ff");
-        label.setAttribute("font-size", p.r >= 12 ? "13" : "11");
-        label.setAttribute("font-weight", "600");
+        label.setAttribute("x", p.x + 12); label.setAttribute("y", p.y + 4); label.setAttribute("fill", "#dfe8ff");
+        label.setAttribute("font-size", p.r >= 12 ? "13" : "11"); label.setAttribute("font-weight", "600");
         label.textContent = `${{p.name}} (R${{p.ring}})`;
         svg.appendChild(label);
       }});
@@ -756,7 +633,8 @@ def _render_system_orbits(system_id: int):
 def _render_planet_view():
     """Muestra los detalles de un planeta seleccionado."""
     from data.database import get_supabase
-
+    
+    player = get_player()
     planet_id = st.session_state.selected_planet_id
 
     try:
@@ -770,6 +648,20 @@ def _render_planet_view():
         _reset_to_system_view()
         return
 
+    # Verificar si el jugador posee este planeta (para habilitar construcción)
+    is_owner = False
+    planet_asset = None
+    if player:
+        try:
+            # Buscar si existe asset para este planeta y jugador
+            pa_res = get_supabase().table("planet_assets").select("*")\
+                .eq("planet_id", planet_id).eq("player_id", player.id).single().execute()
+            if pa_res.data:
+                is_owner = True
+                planet_asset = pa_res.data
+        except:
+            pass
+
     system = get_system_by_id(planet.get('system_id'))
     system_name = system.get('name', 'Desconocido') if system else 'Desconocido'
 
@@ -777,18 +669,156 @@ def _render_planet_view():
     if st.button(f"← Volver al Sistema {system_name}"):
         _reset_to_system_view()
 
+    # --- DATOS GENERALES ---
     col1, col2 = st.columns(2)
     with col1:
         st.metric("Anillo Orbital", planet.get('orbital_ring', '-'))
-        st.metric("Slots de Construcción", planet.get('construction_slots', 0))
         st.metric("Tamaño", planet.get('planet_size', 'Mediano'))
+        if is_owner:
+            st.success("✅ Asentamiento Establecido")
+        else:
+            st.info("Planeta No Colonizado (o de otra facción)")
+
     with col2:
         st.subheader(f"Bioma: {planet.get('biome', 'Desconocido')}")
         bonuses = planet.get('bonuses', {})
         if bonuses:
             st.info(f"Bonus: {bonuses.get('desc', 'Ninguno')}")
         resources = planet.get('resources', [])
-        st.write(f"Recursos: {', '.join(resources[:3]) if resources else 'Sin recursos'}")
+        st.write(f"Recursos Naturales: {', '.join(resources[:3]) if resources else 'Ninguno'}")
+
+    st.markdown("---")
+
+    # --- GESTIÓN DE EDIFICIOS (Solo si es dueño) ---
+    if is_owner and planet_asset:
+        _render_construction_ui(player, planet, planet_asset)
+    else:
+        st.warning("No tienes control sobre este planeta. No puedes construir aquí.")
+
+
+def _render_construction_ui(player, planet, planet_asset):
+    """Panel de gestión según reglas del Módulo 20 (Jerarquía y Slots)."""
+    
+    base_tier = planet_asset.get('base_tier', 1)
+    
+    st.markdown("### 🏯 Comando de Base Principal")
+    
+    # --- SECCIÓN 1: JERARQUÍA DE LA BASE ---
+    col_base_img, col_base_info = st.columns([1, 3])
+    
+    with col_base_info:
+        st.write(f"**Nivel de Base (Tier):** {base_tier}")
+        # Barra de progreso visual hacia el siguiente Tier (simbólico)
+        st.progress(base_tier / 4)
+        
+        if base_tier < 4:
+            if st.button(f"⏫ Ascender a Tier {base_tier + 1}"):
+                # Aquí llamaríamos a la lógica real con costos
+                if upgrade_base_tier(planet_asset['id'], player.id):
+                    st.success("¡Base Mejorada!")
+                    st.rerun()
+                else:
+                    st.error("Error o recursos insuficientes.")
+        else:
+            st.caption("🏆 Nivel Máximo Alcanzado")
+
+    st.markdown("---")
+    
+    # --- SECCIÓN 2: MATRIZ DE SENSORES Y DEFENSA (Módulos) ---
+    st.markdown("#### 📡 Matriz de Sensores & Defensa")
+    st.caption(f"Regla Overclock: Nivel Máximo de Módulos = {base_tier + 1}")
+    
+    # Grid de módulos
+    mod_cols = st.columns(2)
+    
+    modules_to_show = ["sensor_ground", "sensor_orbital", "defense_aa", "defense_ground"]
+    if base_tier >= 3:
+        modules_to_show.append("defense_orbital")
+        
+    for idx, mod_key in enumerate(modules_to_show):
+        col = mod_cols[idx % 2]
+        mod_def = INFRASTRUCTURE_MODULES.get(mod_key, {})
+        current_lvl = planet_asset.get(f"module_{mod_key}", 0) # Asume columnas en DB
+        
+        with col.container(border=True):
+            st.write(f"**{mod_def.get('name')}**")
+            c1, c2 = st.columns([2, 1])
+            c1.write(f"Nivel: {current_lvl}")
+            
+            # Botón de mejora
+            if c2.button("✚", key=f"upg_{mod_key}"):
+                res = upgrade_infrastructure_module(planet_asset['id'], mod_key, player.id)
+                if res == "OK":
+                    st.toast(f"{mod_def.get('name')} mejorado.")
+                    st.rerun()
+                else:
+                    st.error(res)
+
+    st.markdown("---")
+
+    # --- SECCIÓN 3: DISTRITO INDUSTRIAL (Slots de Construcción) ---
+    st.markdown("#### 🏗️ Distrito de Construcción")
+    
+    # Calcular slots reales usando la lógica del Módulo 20.5
+    slots_info = get_base_slots_info(planet_asset['id'])
+    used = slots_info['used']
+    total = slots_info['total']
+    
+    st.write(f"Capacidad Modular: {used} / {total} Slots")
+    st.progress(used / total if total > 0 else 0)
+    
+    if slots_info['free'] <= 0:
+        st.warning("⚠️ Capacidad máxima alcanzada. Mejora la Base Principal para obtener más slots.")
+    
+    # Listar edificios
+    buildings = get_planet_buildings(planet_asset['id'])
+    if buildings:
+        for b in buildings:
+            b_type = b.get('building_type', 'unknown')
+            b_def = BUILDING_TYPES.get(b_type, {})
+            with st.container(border=True):
+                c1, c2 = st.columns([4, 1])
+                c1.markdown(f"**{b_def.get('name', b_type)}** (Tier {b.get('building_tier', 1)})")
+                c1.caption(b_def.get('description'))
+                # Botón de demoler
+                if c2.button("🗑️", key=f"dem_{b['id']}"):
+                    if demolish_building(b['id'], player.id):
+                        st.toast("Edificio demolido.")
+                        st.rerun()
+    else:
+        st.info("Sin edificios civiles/militares construidos.")
+
+    # Formulario de Construcción (Solo si hay slots)
+    if slots_info['free'] > 0:
+        st.markdown("##### Iniciar Proyecto")
+        
+        available_types = list(BUILDING_TYPES.keys())
+        
+        # Filtro simple: No mostrar HQ si ya existe (opcional, por ahora lo dejamos libre)
+        # Podríamos agregar: if 'hq' in [b['building_type'] for b in buildings]: available_types.remove('hq')
+        
+        selected_key = st.selectbox(
+            "Plano", 
+            available_types, 
+            format_func=lambda x: f"{BUILDING_TYPES[x]['name']} (Coste: {BUILDING_TYPES[x].get('material_cost', 0)})"
+        )
+        
+        b_def = BUILDING_TYPES[selected_key]
+        
+        # Mostrar requisitos
+        req_cols = st.columns(3)
+        req_cols[0].metric("Materiales", b_def.get('material_cost', 0))
+        req_cols[1].metric("Energía", b_def.get('energy_cost', 0))
+        req_cols[2].metric("Población", b_def.get('pops_required', 0))
+        
+        if st.button(f"Construir {b_def['name']}", type="primary"):
+            # Lógica de construcción
+            res = build_structure(planet_asset['id'], player.id, selected_key)
+            if res:
+                st.success("Construcción iniciada.")
+                st.rerun()
+            else:
+                st.error("No se pudo construir (Fondos insuficientes o Error DB).")
 
 
 def _reset_to_galaxy_view():
