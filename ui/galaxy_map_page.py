@@ -452,7 +452,21 @@ def _render_system_orbits(system: System):
         player_planets = get_all_player_planets(player.id)
         for p in player_planets:
             if p['nombre_asentamiento'] == home_base_name:
-                player_home_planet_id = p['planet_id']
+                # El planet_id de la BD no coincide con el ID procedural.
+                # Buscamos el nombre del planeta en la BD y lo comparamos.
+                db_planet_id = p['planet_id']
+                try:
+                    from data.database import get_supabase
+                    planet_res = get_supabase().table("planets").select("name").eq("id", db_planet_id).single().execute()
+                    if planet_res.data:
+                        planet_name = planet_res.data.get("name")
+                        # Buscar el planeta en el sistema por nombre
+                        for body in system.orbital_rings.values():
+                            if isinstance(body, Planet) and body.name == planet_name:
+                                player_home_planet_id = body.id
+                                break
+                except Exception:
+                    pass
                 break
 
     star_colors = {"G": "#f8f5ff", "O": "#8ec5ff", "M": "#f2b880", "D": "#d7d7d7", "X": "#d6a4ff"}
@@ -495,7 +509,11 @@ def _render_system_orbits(system: System):
             "color": color,
         })
 
+    # Calcular radios de órbitas para todos los anillos (1-6)
+    orbit_radii = [70 + ring * orbit_step for ring in range(1, 7)]
+
     planets_json = json.dumps(planets)
+    orbits_json = json.dumps(orbit_radii)
     player_planets_ids_json = json.dumps([player_home_planet_id] if player_home_planet_id else [])
     star_color = star_colors.get(system.star.class_type, "#f8f5ff")
 
@@ -519,7 +537,18 @@ def _render_system_orbits(system: System):
         stroke: #4dff88 !important;
         stroke-width: 3px !important;
         filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9));
-        animation: pulse 2s infinite;
+        animation: pulse-planet 2s infinite;
+    }}
+    @keyframes pulse-planet {{
+        0% {{
+            filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9));
+        }}
+        50% {{
+            filter: drop-shadow(0 0 20px rgba(77, 255, 136, 1));
+        }}
+        100% {{
+            filter: drop-shadow(0 0 10px rgba(77, 255, 136, 0.9));
+        }}
     }}
     </style>
     <div class="sys-wrapper">
@@ -542,25 +571,28 @@ def _render_system_orbits(system: System):
             <h4>Claves visuales</h4>
             <div class="legend-row">■ Tamaño y nombre escalan con el planeta</div>
             <div class="legend-row">■ Click en planeta para abrir detalles</div>
+            <div class="legend-row" style="color: #4dff88;">■ Tu base (resaltado verde)</div>
         </div>
     </div>
     <script>
       const planets = {planets_json};
+      const orbitRadii = {orbits_json};
       const playerPlanets = new Set({player_planets_ids_json});
       const svg = document.getElementById("system-orbits");
       const tooltip = document.getElementById("sys-tooltip");
       const centerX = {center_x};
       const centerY = {center_y};
 
-      // draw orbits
-      planets.forEach(p => {{
+      // draw all orbital rings (1-6)
+      orbitRadii.forEach((radius, idx) => {{
         const orbit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         orbit.setAttribute("cx", centerX);
         orbit.setAttribute("cy", centerY);
-        orbit.setAttribute("r", Math.hypot(p.x - centerX, p.y - centerY));
+        orbit.setAttribute("r", radius);
         orbit.setAttribute("fill", "none");
-        orbit.setAttribute("stroke", "rgba(255,255,255,0..08)");
+        orbit.setAttribute("stroke", "rgba(100, 150, 255, 0.2)");
         orbit.setAttribute("stroke-width", "1");
+        orbit.setAttribute("stroke-dasharray", "4 4");
         svg.appendChild(orbit);
       }});
 
