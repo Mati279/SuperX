@@ -94,10 +94,9 @@ def mark_action_processed(action_id: int, result_status: str) -> None:
 
 def get_commander_location_display(commander_id: int) -> Dict[str, str]:
     """
-    Recupera los detalles de ubicación del comandante para mostrar en UI.
-    Determina si está en una nave o en un asentamiento y devuelve nombres legibles.
+    Recupera los detalles de ubicación del comandante basándose en su BASE PRINCIPAL.
+    Consulta planet_assets, systems y planets para dar datos reales.
     """
-    # Valores por defecto
     loc_data = {
         "system": "Sector Desconocido", 
         "planet": "Espacio Profundo", 
@@ -105,36 +104,52 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
     }
 
     try:
-        # 1. Verificar si el comandante está a bordo de una nave (Capitán)
-        # Nota: En Genesis v1.5, el comandante se asigna como 'capitan_id' de una nave.
-        resp_ship = supabase.table("ships").select("nombre, ubicacion_system_id")\
-            .eq("capitan_id", commander_id).maybe_single().execute()
-        
-        if resp_ship.data:
-            ship = resp_ship.data
-            system_id = ship.get("ubicacion_system_id")
-            
-            # Base es la Nave
-            loc_data["base"] = f"Nave {ship.get('nombre')}"
-            
-            # Obtener nombre del sistema
-            if system_id:
-                loc_data["system"] = f"Sector {system_id}" # Fallback
-                try:
-                    # Intenta obtener el nombre real si la tabla systems tiene columna 'nombre'
-                    resp_sys = supabase.table("systems").select("nombre").eq("id", system_id).maybe_single().execute()
-                    if resp_sys.data and resp_sys.data.get("nombre"):
-                        loc_data["system"] = resp_sys.data.get("nombre")
-                except:
-                    pass
-            
-            # Si está en nave y no aterrizado, el planeta es "Espacio Profundo" u "Orbita"
-            loc_data["planet"] = "Espacio Profundo" 
-            
+        # 1. Obtener el player_id asociado al comandante
+        char_res = supabase.table("characters").select("player_id").eq("id", commander_id).maybe_single().execute()
+        if not char_res.data:
             return loc_data
         
+        player_id = char_res.data.get("player_id")
+
+        # 2. Buscar el ASENTAMIENTO PRINCIPAL (Base) en planet_assets
+        # Se toma el de mayor población o el primero encontrado como "Base Principal"
+        asset_res = supabase.table("planet_assets")\
+            .select("system_id, planet_id, nombre_asentamiento")\
+            .eq("player_id", player_id)\
+            .order("poblacion", desc=True)\
+            .limit(1)\
+            .maybe_single()\
+            .execute()
+        
+        if asset_res.data:
+            asset = asset_res.data
+            system_id = asset.get("system_id")
+            planet_id = asset.get("planet_id")
+            
+            # Etiqueta fija solicitada
+            loc_data["base"] = "Base Principal"
+            
+            # 3. Obtener Nombre Real del Sistema
+            if system_id:
+                try:
+                    sys_res = supabase.table("systems").select("nombre").eq("id", system_id).maybe_single().execute()
+                    if sys_res.data:
+                        loc_data["system"] = sys_res.data.get("nombre", f"Sector {system_id}")
+                except Exception:
+                    loc_data["system"] = f"Sector {system_id}"
+
+            # 4. Obtener Nombre Real del Planeta
+            if planet_id:
+                try:
+                    pl_res = supabase.table("planets").select("nombre").eq("id", planet_id).maybe_single().execute()
+                    if pl_res.data:
+                        loc_data["planet"] = pl_res.data.get("nombre", "Planeta Desconocido")
+                except Exception:
+                    pass
+            
         return loc_data
 
     except Exception as e:
-        log_event(f"Error HUD Location: {e}", is_error=True)
+        # En caso de error, devolvemos los valores por defecto sin romper la UI
+        log_event(f"Error obteniendo ubicación HUD: {e}", is_error=True)
         return loc_data

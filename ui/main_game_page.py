@@ -181,15 +181,15 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
     """Sidebar con reloj galáctico, identidad y menú de navegación."""
     status = get_world_status_display()
     
-    # Obtener ubicación
+    # Obtener ubicación real (Base Principal)
     loc_data = get_commander_location_display(commander.id)
     loc_system = loc_data.get("system", "Desconocido")
     loc_planet = loc_data.get("planet", "---")
-    loc_base = loc_data.get("base", "---")
+    loc_base = loc_data.get("base", "Base Principal")
 
     with st.sidebar:
         
-        # --- PANEL DE UBICACIÓN (NUEVO) ---
+        # --- PANEL DE UBICACIÓN (ARRIBA DEL RELOJ) ---
         location_css = """
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700&display=swap');
@@ -205,12 +205,12 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             display: flex;
             align-items: center;
             gap: 10px;
-            margin-bottom: 4px;
+            margin-bottom: 6px;
             font-size: 0.85em;
         }
         .loc-row:last-child { margin-bottom: 0; }
         .loc-icon { color: #8ab4f8; width: 20px; text-align: center; }
-        .loc-label { color: #888; font-size: 0.7em; text-transform: uppercase; margin-right: 5px; }
+        .loc-label { color: #888; font-size: 0.7em; text-transform: uppercase; margin-right: 5px; font-weight: 600; }
         </style>
         """
         
@@ -226,14 +226,14 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             <div class="loc-row" title="Cuerpo Celeste">
                 <span class="loc-icon">🪐</span>
                  <div>
-                    <div class="loc-label">ÓRBITA</div>
+                    <div class="loc-label">PLANETA</div>
                     {loc_planet}
                 </div>
             </div>
             <div class="loc-row" title="Ubicación Actual">
                 <span class="loc-icon">🏛</span>
                  <div>
-                    <div class="loc-label">ACTIVO</div>
+                    <div class="loc-label">BASE</div>
                     {loc_base}
                 </div>
             </div>
