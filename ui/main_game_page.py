@@ -7,7 +7,7 @@ from services.gemini_service import resolve_player_action
 # --- Imports para STRT (Sistema de Tiempo) ---
 from core.time_engine import get_world_status_display, check_and_trigger_tick, debug_force_tick
 from data.world_repository import get_pending_actions_count
-from data.player_repository import get_player_finances
+from data.player_repository import get_player_finances, delete_player_account
 
 # --- Importar las vistas del juego ---
 from .faction_roster import show_faction_roster, render_character_card
@@ -83,7 +83,6 @@ def _render_sticky_top_hud(player, commander):
     influencia = f"{safe_val('influencia'):,}"
 
     # CSS separado para mayor claridad
-    # FIX: Se eliminó el @import de la fuente para evitar el 'flash' o titileo al recargar.
     hud_css = """
     <style>
     .top-hud-sticky {
@@ -188,57 +187,29 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         clock_time = str(status.get('time', '00:00'))
         clock_tick = str(status.get('tick', 0))
 
-        # Color según estado del sistema
         if status.get("is_frozen"):
-            time_color = "#ff6b6b"  # Rojo congelado
+            time_color = "#ff6b6b"
             status_icon = "❄️"
             status_text = "CONGELADO"
         elif status.get("is_lock_in"):
-            time_color = "#f9ca24"  # Amarillo bloqueo
+            time_color = "#f9ca24"
             status_icon = "⚠️"
             status_text = "BLOQUEO"
         else:
-            time_color = "#56d59f"  # Verde nominal
+            time_color = "#56d59f"
             status_icon = "🟢"
             status_text = "NOMINAL"
 
-        # CSS para el reloj elegante
         clock_css = f"""
         <style>
         @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&display=swap");
-
         .sidebar-clock-panel {{
             background: linear-gradient(135deg, rgba(20,25,35,0.9) 0%, rgba(30,40,55,0.9) 100%);
             border: 1px solid rgba(86, 213, 159, 0.3);
             border-radius: 10px;
             padding: 12px 15px;
             margin-bottom: 10px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05);
         }}
-
-        .clock-header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-        }}
-
-        .clock-label {{
-            font-family: 'Orbitron', monospace;
-            font-size: 0.7em;
-            color: #888;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-        }}
-
-        .clock-status {{
-            font-size: 0.65em;
-            color: {time_color};
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }}
-
         .clock-time {{
             font-family: 'Orbitron', monospace;
             font-size: 1.8em;
@@ -246,35 +217,21 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             color: {time_color};
             text-align: center;
             letter-spacing: 3px;
-            text-shadow: 0 0 10px {time_color}40;
-            margin: 5px 0;
-        }}
-
-        .clock-tick {{
-            font-family: 'Orbitron', monospace;
-            font-size: 0.7em;
-            color: #666;
-            text-align: center;
-            letter-spacing: 1px;
         }}
         </style>
-
         <div class="sidebar-clock-panel">
-            <div class="clock-header">
-                <span class="clock-label">Ciclo Galáctico</span>
-                <span class="clock-status">{status_icon} {status_text}</span>
+            <div style="display: flex; justify-content: space-between; font-size: 0.7em; color: #888;">
+                <span>Ciclo Galáctico</span>
+                <span style="color: {time_color};">{status_icon} {status_text}</span>
             </div>
             <div class="clock-time">{clock_time}</div>
-            <div class="clock-tick">TICK #{clock_tick}</div>
+            <div style="text-align: center; font-size: 0.7em; color: #666;">TICK #{clock_tick}</div>
         </div>
         """
         st.markdown(clock_css, unsafe_allow_html=True)
 
-        # Botón de debug debajo del reloj
-        # FIX: Replaced use_container_width with width='stretch'
-        if st.button("🔄 Forzar Tick", help="Avanzar tiempo manualmente (Debug)", width='stretch'):
-            with st.spinner("⏳ Procesando tick..."):
-                debug_force_tick()
+        if st.button("🔄 Forzar Tick", use_container_width=True):
+            debug_force_tick()
             st.rerun()
 
         st.divider()
@@ -286,33 +243,35 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 
         st.caption(f"Comandante {commander.nombre}")
 
-        pending = get_pending_actions_count(player.id)
-        if pending > 0:
-            st.info(f"📩 {pending} orden(es) en cola.")
-
         # --- SECCIÓN: NAVEGACIÓN ---
         st.divider()
-        st.subheader("Navegación")
-
-        # Botones de menú
-        nav_options = [
-            ("Puente de Mando", "primary" if st.session_state.current_page == "Puente de Mando" else "secondary"),
-            ("Mapa de la Galaxia", "primary" if st.session_state.current_page == "Mapa de la Galaxia" else "secondary"),
-            ("Estado de la Nave", "primary" if st.session_state.current_page == "Estado de la Nave" else "secondary"),
-            ("Ficha del Comandante", "primary" if st.session_state.current_page == "Ficha del Comandante" else "secondary"),
-            ("Comando de Facción", "primary" if st.session_state.current_page == "Comando de Facción" else "secondary"),
-            ("Centro de Reclutamiento", "primary" if st.session_state.current_page == "Centro de Reclutamiento" else "secondary"),
-        ]
-
-        for label, btn_type in nav_options:
-            if st.button(label, width='stretch', type=btn_type):
-                st.session_state.current_page = label
+        
+        pages = ["Puente de Mando", "Mapa de la Galaxia", "Estado de la Nave", 
+                 "Ficha del Comandante", "Comando de Facción", "Centro de Reclutamiento"]
+        
+        for p in pages:
+            if st.button(p, use_container_width=True, type="primary" if st.session_state.current_page == p else "secondary"):
+                st.session_state.current_page = p
                 st.rerun()
 
         st.divider()
-        if st.button("Cerrar Sesión", width='stretch'):
+        if st.button("Cerrar Sesión", use_container_width=True):
             logout_user(cookie_manager)
             st.rerun()
+
+        # --- BOTÓN DE DEBUG: HARD RESET ---
+        # Ubicado al final de la sidebar para ser fácilmente localizable
+        st.write("")
+        st.write("")
+        st.markdown("---")
+        st.caption("🛠️ ZONA DE PRUEBAS")
+        if st.button("🔥 ELIMINAR CUENTA (DEBUG)", type="secondary", use_container_width=True, help="Elimina permanentemente al jugador y sus datos para reiniciar el Génesis."):
+            if delete_player_account(player.id):
+                st.success("Cuenta eliminada.")
+                logout_user(cookie_manager)
+                st.rerun()
+            else:
+                st.error("Error al eliminar.")
 
 
 def _render_commander_sheet_page():
@@ -320,119 +279,31 @@ def _render_commander_sheet_page():
     st.title("Ficha de Servicio: Comandante")
     player = get_player()
     commander = get_commander()
-    
     if player and commander:
         render_character_card(commander, player.id, is_commander=True)
-    else:
-        st.error("Datos del comandante no disponibles.")
-
-
-def _render_war_room_styles():
-    """Estilos visuales para el Puente de Mando."""
-    st.markdown(
-        """
-        <style>
-        @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&display=swap");
-
-        .war-room-title {
-            font-family: "Orbitron", sans-serif;
-            font-size: 24px;
-            font-weight: 700;
-            color: #dff6ff;
-            text-transform: uppercase;
-            margin-bottom: 10px;
-        }
-
-        /* --- ESTILOS DE CHAT --- */
-        div[data-testid="stChatMessage"] {
-            border-radius: 8px;
-            border: 1px solid rgba(80, 170, 220, 0.2);
-            background: rgba(10, 20, 32, 0.6);
-            padding: 10px;
-            margin-bottom: 8px;
-        }
-        /* Fuente monoespaciada para mensajes */
-        div[data-testid="stChatMessage"] div[data-testid="stChatMessageContent"] {
-            font-family: "Share Tech Mono", monospace;
-            color: #e0e0e0 !important; 
-            font-size: 14px;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 def _render_war_room_page():
-    """Página del Puente de Mando con CHAT COMPACTO."""
-    _render_war_room_styles()
-    
+    """Página del Puente de Mando con CHAT."""
     player = get_player()
     commander = get_commander()
-    if not player or not commander:
-        st.error("Datos no disponibles.")
-        return
-    player_id = player.id
-    commander_name = commander.nombre
-    status = get_world_status_display()
+    if not player: return
 
-    # Título más compacto con botón de limpiar
-    col_title, col_clear = st.columns([4, 1])
-    with col_title:
-        st.markdown('<div class="war-room-title">📟 Enlace Neuronal de Mando</div>', unsafe_allow_html=True)
-    with col_clear:
-        if st.button("🗑️ Limpiar", help="Borrar historial del chat"):
-            clear_player_logs(player_id)
-            st.rerun()
-
-    if status['is_lock_in']:
-        st.warning("⚠️ VENTANA DE BLOQUEO ACTIVA")
+    st.markdown("### 📟 Enlace Neuronal de Mando")
     
-    # --- CONTENEDOR DE CHAT (SCROLLABLE) ---
-    # Usamos st.container con altura fija para crear la "caja" contenida
     chat_box = st.container(height=500, border=True)
-
-    logs = get_recent_logs(player_id, limit=30) 
+    logs = get_recent_logs(player.id, limit=30) 
 
     with chat_box:
-        if not logs:
-            st.info(f"Conexión establecida. Esperando órdenes, Comandante {commander_name}...")
-        
-        # Logs en orden cronológico inverso visual (Chat Style)
         for log in reversed(logs):
-            mensaje = log.get('evento_texto', log.get('message', ''))
-            
-            if "[DEBUG]" in mensaje: continue
-
-            if mensaje.startswith("[PLAYER]"):
-                clean_msg = mensaje.replace("[PLAYER] ", "")
-                with st.chat_message("user", avatar="👤"):
-                    st.write(clean_msg)
+            mensaje = log.get('evento_texto', '')
+            if "[PLAYER]" in mensaje:
+                with st.chat_message("user"): st.write(mensaje.replace("[PLAYER] ", ""))
             else:
-                icon = "🤖"
-                if "EXITOSA" in mensaje: icon = "✅"
-                elif "FALLIDA" in mensaje: icon = "❌"
-                
-                clean_msg = mensaje
-                for p in ["[GM] ", "🤖 [ASISTENTE] ", "🤖 "]:
-                    clean_msg = clean_msg.replace(p, "")
+                with st.chat_message("assistant"): st.write(mensaje)
 
-                with st.chat_message("assistant", avatar=icon):
-                    st.write(clean_msg)
-
-    # --- INPUT AREA (Fuera del scroll, siempre visible abajo) ---
-    st.write("") 
-    input_placeholder = f"Escriba sus órdenes, Cmdt. {commander_name}..."
-    if status['is_frozen']:
-        input_placeholder = "SISTEMAS CONGELADOS."
-        
-    action = st.chat_input(input_placeholder, disabled=status['is_frozen'])
-
+    action = st.chat_input("Escriba sus órdenes...")
     if action:
-        log_event(f"[PLAYER] {action}", player_id)
-        with st.spinner("Transmitiendo..."):
-            try:
-                resolve_player_action(action, player_id)
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error de transmisión: {e}")
+        log_event(f"[PLAYER] {action}", player.id)
+        resolve_player_action(action, player.id)
+        st.rerun()
