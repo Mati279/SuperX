@@ -1,12 +1,12 @@
 # ui/main_game_page.py
 import streamlit as st
 from .state import logout_user, get_player, get_commander
-from data.log_repository import get_recent_logs, log_event, clear_player_logs
+from data.log_repository import get_recent_logs, log_event
 from services.gemini_service import resolve_player_action
 
 # --- Imports para STRT (Sistema de Tiempo) ---
 from core.time_engine import get_world_status_display, check_and_trigger_tick, debug_force_tick
-from data.world_repository import get_pending_actions_count, get_commander_location_display
+from data.world_repository import get_commander_location_display
 from data.player_repository import get_player_finances, delete_player_account
 
 # --- Importar las vistas del juego ---
@@ -48,7 +48,7 @@ def render_main_game_page(cookie_manager):
     # --- 3. Renderizar la página seleccionada ---
     PAGES = {
         "Puente de Mando": _render_war_room_page,
-        "Comando de Facción": show_faction_roster,
+        "Cuadrilla": show_faction_roster,  # Renombrado de Comando de Facción
         "Centro de Reclutamiento": show_recruitment_center,
         "Mapa de la Galaxia": show_galaxy_map_page,
         "Flota": show_ship_status_page,
@@ -184,15 +184,11 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
     loc_data = get_commander_location_display(commander.id)
     loc_system = loc_data.get("system", "Desconocido")
     loc_planet = loc_data.get("planet", "---")
-    
-    # El label de "Base" aquí lo uso como título de la sección o nombre del activo,
-    # según tu requerimiento de "El sistema y el planeta en donde está a planet asset".
-    # Incluyo el nombre de la base también para contexto completo.
     loc_base_name = loc_data.get("base", "Base Principal")
 
     with st.sidebar:
         
-        # --- PANEL DE UBICACIÓN (ARRIBA DEL RELOJ) ---
+        # --- PANEL DE UBICACIÓN ---
         location_css = """
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700&display=swap');
@@ -244,7 +240,7 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         """
         st.markdown(location_css + location_html, unsafe_allow_html=True)
 
-        # --- RELOJ GALÁCTICO + DEBUG ---
+        # --- RELOJ GALÁCTICO ---
         clock_time = str(status.get('time', '00:00'))
         clock_tick = str(status.get('tick', 0))
 
@@ -306,8 +302,9 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         # --- SECCIÓN: NAVEGACIÓN ---
         st.divider()
         
+        # Actualizado con "Cuadrilla"
         pages = ["Puente de Mando", "Mapa de la Galaxia", 
-                 "Comando de Facción", "Centro de Reclutamiento", "Flota"]
+                 "Cuadrilla", "Centro de Reclutamiento", "Flota"]
         
         for p in pages:
             if st.button(p, use_container_width=True, type="primary" if st.session_state.current_page == p else "secondary"):
@@ -320,12 +317,11 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             st.rerun()
 
         # --- BOTÓN DE DEBUG: HARD RESET ---
-        # Ubicado al final de la sidebar para ser fácilmente localizable
         st.write("")
         st.write("")
         st.markdown("---")
         st.caption("🛠️ ZONA DE PRUEBAS")
-        if st.button("🔥 ELIMINAR CUENTA (DEBUG)", type="secondary", use_container_width=True, help="Elimina permanentemente al jugador y sus datos para reiniciar el Génesis."):
+        if st.button("🔥 ELIMINAR CUENTA (DEBUG)", type="secondary", use_container_width=True, help="Elimina permanentemente al jugador y sus datos."):
             if delete_player_account(player.id):
                 st.success("Cuenta eliminada.")
                 logout_user(cookie_manager)
@@ -337,7 +333,6 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 def _render_war_room_page():
     """Página del Puente de Mando con CHAT."""
     player = get_player()
-    commander = get_commander()
     if not player: return
 
     st.markdown("### 📟 Enlace Neuronal de Mando")
