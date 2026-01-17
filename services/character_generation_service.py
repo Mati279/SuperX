@@ -56,11 +56,11 @@ PREDOMINANT_RACE_CHANCE = 0.5
 # Rango por defecto para nuevos reclutas
 DEFAULT_RANK = "Iniciado"
 
-# Prompt para generación de identidad por IA
+# Prompt para generación de identidad por IA (MEJORADO)
 IDENTITY_GENERATION_PROMPT = """
-Eres un generador de identidades para personajes de un juego de ciencia ficción espacial.
+Actúa como un Oficial de Reclutamiento Veterano de una facción galáctica en un juego de ciencia ficción serio. Tu trabajo es registrar a un nuevo operativo en la base de datos.
 
-DATOS DEL PERSONAJE A NOMBRAR:
+DATOS TÉCNICOS DEL OPERATIVO:
 - Raza: {race}
 - Clase: {char_class}
 - Nivel: {level}
@@ -69,28 +69,28 @@ DATOS DEL PERSONAJE A NOMBRAR:
 - Rasgos de personalidad: {traits}
 - Atributos destacados: {top_attributes}
 
-INSTRUCCIONES:
-1. Genera un NOMBRE y APELLIDO apropiados para la raza y ambientación sci-fi.
-   - Humano: Nombres occidentales/internacionales variados
-   - Cyborg: Nombres con prefijos técnicos o alfanuméricos
-   - Marciano: Nombres con sonoridad latina/mediterránea
-   - Selenita: Nombres etéreos, con sonidos suaves
-   - Androide: Designaciones técnicas o nombres elegidos
+INSTRUCCIONES DE GENERACIÓN:
+1. Asigna un NOMBRE y APELLIDO coherentes con el lore:
+   - Humano: Nombres variados de culturas terrestres antiguas.
+   - Cyborg: Nombres duros o códigos alfanuméricos mezclados (ej. Kade-9, Vex).
+   - Marciano: Nombres de sonoridad latina, romana o imperial.
+   - Selenita: Nombres suaves, etéreos, astronómicos.
+   - Androide: Siglas, designaciones de serie o nombres mitológicos.
 
-2. Escribe una BIOGRAFÍA CORTA (2-3 oraciones máximo) que:
-   - Sintetice la esencia del personaje
-   - Mencione en qué destaca según sus atributos
-   - Sugiera posibles roles/funciones en una tripulación
-   - Sea coherente con la edad y nivel
+2. Redacta una EVALUACIÓN PROFESIONAL (campo 'biografia') detallada y rica (aprox. 50-80 palabras). Debe incluir:
+   - Trasfondo: Un breve origen o formación previa (ej. ex-militar, sobreviviente de colonia, prototipo fallido).
+   - Perfil Psicológico: Cómo sus rasgos ({traits}) afectan su desempeño en misión.
+   - Evaluación Táctica: Describe explícitamente en qué funciones destaca gracias a sus atributos ({top_attributes}). Ej: "Ideal para infiltración", "Potencial de mando", "Soporte técnico crítico".
+   - Tono: Profesional, descriptivo e inmersivo.
 
 FORMATO DE RESPUESTA (JSON estricto):
 {{
   "nombre": "Nombre",
   "apellido": "Apellido",
-  "biografia": "Biografía corta aquí."
+  "biografia": "Texto de la evaluación profesional aquí."
 }}
 
-Responde SOLO con el JSON, sin texto adicional.
+Responde ÚNICAMENTE con el objeto JSON válido.
 """
 
 
@@ -276,7 +276,7 @@ async def _generate_identity_with_ai(
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.9,
-                max_output_tokens=256
+                max_output_tokens=600  # Aumentado para permitir bios más largas
             )
         )
 
@@ -340,7 +340,7 @@ def generate_identity_with_ai_sync(
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.9,
-                max_output_tokens=256
+                max_output_tokens=600  # Aumentado para permitir bios más largas
             )
         )
 
