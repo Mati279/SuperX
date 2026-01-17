@@ -44,7 +44,7 @@ def genesis_protocol(player_id: int) -> bool:
         log_event("Iniciando Protocolo Génesis...", player_id)
 
         # 1. Buscar Sistema Seguro
-        system_id = _find_safe_starting_node()
+        system_id = find_safe_starting_node()
         
         # 2. Seleccionar Planeta en ese sistema
         # Intentamos buscar planetas que no sean gigantes gaseosos si es posible,
@@ -91,7 +91,7 @@ def genesis_protocol(player_id: int) -> bool:
         log_event(f"❌ Error Crítico en Genesis Protocol: {e}", player_id, is_error=True)
         return False
 
-def _find_safe_starting_node() -> int:
+def find_safe_starting_node() -> int:
     """
     Lógica de topología para encontrar un sistema aislado.
     Retorna el ID del sistema candidato.
