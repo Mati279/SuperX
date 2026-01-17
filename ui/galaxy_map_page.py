@@ -246,8 +246,22 @@ def _render_interactive_galaxy_map():
         player_planets = get_all_player_planets(player.id)
         for p in player_planets:
             if p['nombre_asentamiento'] == home_base_name:
-                player_home_system_ids.add(p['system_id'])
-                break # Assuming only one home base
+                # El system_id de la BD no coincide con el ID procedural.
+                # Buscamos por nombre del sistema para obtener el ID correcto.
+                db_system_id = p['system_id']
+                try:
+                    from data.database import get_supabase
+                    sys_res = get_supabase().table("systems").select("name").eq("id", db_system_id).single().execute()
+                    if sys_res.data:
+                        system_name = sys_res.data.get("name")
+                        # Buscar el sistema en la galaxia procedural por nombre
+                        for sys in galaxy.systems:
+                            if sys.name == system_name:
+                                player_home_system_ids.add(sys.id)
+                                break
+                except Exception:
+                    pass
+                break  # Assuming only one home base
 
     systems_payload = []
     for system in galaxy.systems:
