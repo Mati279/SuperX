@@ -17,6 +17,7 @@ from data.planet_repository import (
     upgrade_infrastructure_module,
     demolish_building
 )
+# Aseguramos que data.player_repository tenga la función get_player_resources
 from data.player_repository import get_player_resources, update_player_resources
 from data.world_repository import (
     get_all_systems_from_db,
