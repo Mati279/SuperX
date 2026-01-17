@@ -38,7 +38,8 @@ TEXT_MODEL_NAME = "gemini-2.5-flash"
 IMAGE_MODEL_NAME = "imagen-3.0-generate-001"
 
 # --- Configuración de Base de Datos ---
-DEFAULT_PLAYER_CREDITS = 1000     # Créditos iniciales para nuevos jugadores
+# Modificado a 500,000 para facilitar el debug de la economía
+DEFAULT_PLAYER_CREDITS = 50000    # Créditos iniciales para nuevos jugadores
 LOG_LIMIT_DEFAULT = 10            # Cantidad de logs a mostrar por defecto
 WORLD_STATE_SINGLETON_ID = 1      # ID único de la fila world_state
 
