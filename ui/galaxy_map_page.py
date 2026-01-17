@@ -123,6 +123,47 @@ def _build_connections_from_starlanes(starlanes: list, positions: dict):
     return connections
 
 
+def _build_connections_fallback(systems: list, positions: dict, max_neighbors: int = 3):
+    """
+    Fallback: genera conexiones basadas en vecinos cercanos si no hay starlanes en BD.
+    Conecta cada sistema solo con sus N vecinos más cercanos.
+    """
+    edges = set()
+    for sys_a in systems:
+        a_id = sys_a['id']
+        if a_id not in positions:
+            continue
+        x1, y1 = positions[a_id]
+
+        # Calcular distancias a otros sistemas
+        distances = []
+        for sys_b in systems:
+            b_id = sys_b['id']
+            if b_id == a_id or b_id not in positions:
+                continue
+            x2, y2 = positions[b_id]
+            dist = math.hypot(x1 - x2, y1 - y2)
+            distances.append((dist, b_id))
+
+        # Ordenar por distancia y tomar los N más cercanos
+        distances.sort(key=lambda t: t[0])
+        for _, neighbor_id in distances[:max_neighbors]:
+            edge_key = tuple(sorted((a_id, neighbor_id)))
+            edges.add(edge_key)
+
+    # Construir conexiones
+    connections = []
+    for a_id, b_id in edges:
+        if a_id in positions and b_id in positions:
+            ax, ay = positions[a_id]
+            bx, by = positions[b_id]
+            connections.append({
+                "a_id": a_id, "b_id": b_id,
+                "ax": ax, "ay": ay, "bx": bx, "by": by
+            })
+    return connections
+
+
 def _render_interactive_galaxy_map():
     """Renderiza el mapa interactivo de la galaxia usando datos de BD."""
     st.header("Sistemas Conocidos")
@@ -130,6 +171,9 @@ def _render_interactive_galaxy_map():
     # Obtener datos de la BD
     systems = get_all_systems_from_db()
     starlanes = get_starlanes_from_db()
+
+    # Debug: mostrar cantidad de starlanes
+    st.caption(f"📊 {len(systems)} sistemas | {len(starlanes)} rutas estelares cargadas de BD")
 
     if not systems:
         st.error("No se pudieron cargar los sistemas de la galaxia.")
@@ -245,8 +289,15 @@ def _render_interactive_galaxy_map():
             "radius": round(base_radius, 2),
         })
 
-    # Construir conexiones
-    connections = _build_connections_from_starlanes(starlanes, scaled_positions) if show_routes else []
+    # Construir conexiones (usar starlanes de BD, o fallback si no hay)
+    if show_routes:
+        if starlanes:
+            connections = _build_connections_from_starlanes(starlanes, scaled_positions)
+        else:
+            # Fallback: generar conexiones con vecinos cercanos
+            connections = _build_connections_fallback(systems, scaled_positions, max_neighbors=3)
+    else:
+        connections = []
 
     # JSON para JavaScript
     systems_json = json.dumps(systems_payload)
