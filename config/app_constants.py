@@ -19,9 +19,9 @@ LOGIN_SUCCESS_DELAY_SECONDS = 0.5  # Delay para asegurar escritura de cookie
 # --- Configuración de Generación Procedural ---
 CANDIDATE_NAME_SUFFIX_MIN = 100
 CANDIDATE_NAME_SUFFIX_MAX = 999
-# Ajustado para cumplir con el rango base del diseño (5-20)
+# Ajustado para cumplir con el rango base del diseño (5-9)
 ATTRIBUTE_BASE_MIN = 5
-ATTRIBUTE_BASE_MAX = 10
+ATTRIBUTE_BASE_MAX = 9
 RECRUITMENT_BASE_COST_MULTIPLIER = 25
 RECRUITMENT_COST_VARIANCE_MIN = 0.8
 RECRUITMENT_COST_VARIANCE_MAX = 1.2
@@ -61,8 +61,8 @@ PREDOMINANT_RACE_PROBABILITY = 0.5
 # Nivel mínimo para asignar clase (Novato obligatorio para 1-2)
 CLASS_ASSIGNMENT_MIN_LEVEL = 3
 
-# Cantidad de candidatos por defecto en pool de reclutamiento
-DEFAULT_RECRUITMENT_POOL_SIZE = 3
+# Cantidad de candidatos por defecto en pool de reclutamiento (Modificado a 5)
+DEFAULT_RECRUITMENT_POOL_SIZE = 5
 
 # Costo base de reclutamiento por nivel
 RECRUITMENT_COST_PER_LEVEL = 200

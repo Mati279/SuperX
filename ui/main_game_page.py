@@ -7,7 +7,7 @@ from services.gemini_service import resolve_player_action
 # --- Imports para STRT (Sistema de Tiempo) ---
 from core.time_engine import get_world_status_display, check_and_trigger_tick, debug_force_tick
 from data.world_repository import get_commander_location_display
-from data.player_repository import get_player_finances, delete_player_account
+from data.player_repository import get_player_finances, delete_player_account, add_player_credits
 
 # --- Importar las vistas del juego ---
 from .faction_roster import show_faction_roster
@@ -340,6 +340,14 @@ def _render_war_room_page():
 
     st.markdown("### 📟 Enlace Neuronal de Mando")
     
+    # Botón de Debug para Créditos
+    col_debug, _ = st.columns([1, 4])
+    with col_debug:
+        if st.button("💰 Debug: +1000 Créditos", type="secondary"):
+             add_player_credits(player.id, 1000)
+             st.success("Créditos añadidos.")
+             st.rerun()
+
     chat_box = st.container(height=500, border=True)
     logs = get_recent_logs(player.id, limit=30) 
 
@@ -356,4 +364,3 @@ def _render_war_room_page():
         log_event(f"[PLAYER] {action}", player.id)
         resolve_player_action(action, player.id)
         st.rerun()
-        

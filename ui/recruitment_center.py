@@ -7,22 +7,37 @@ Genera candidatos aleatorios con stats completos usando character_engine.
 import streamlit as st
 from typing import Dict, Any, List
 from ui.state import get_player
-from core.character_engine import generate_random_character, calculate_recruitment_cost
+# Importamos calculate_recruitment_cost de core
+from core.character_engine import calculate_recruitment_cost
+# Importamos el generador con IA y el contexto
+from services.character_generation_service import generate_random_character_with_ai, RecruitmentContext
 from core.recruitment_logic import can_recruit
 from data.player_repository import get_player_credits, update_player_credits
 from data.character_repository import create_character, get_all_characters_by_player_id
-from config.app_constants import DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS, DEFAULT_RECRUIT_LOCATION
+from config.app_constants import (
+    DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS, DEFAULT_RECRUIT_LOCATION,
+    DEFAULT_RECRUITMENT_POOL_SIZE
+)
 
 
-def _generate_recruitment_pool(pool_size: int, existing_names: List[str], min_level: int = 1, max_level: int = 3) -> List[Dict[str, Any]]:
+def _generate_recruitment_pool(
+    player_id: int, 
+    pool_size: int, 
+    existing_names: List[str], 
+    min_level: int = 1, 
+    max_level: int = 3
+) -> List[Dict[str, Any]]:
     """
-    Genera una piscina de candidatos para reclutamiento usando el motor de personajes.
+    Genera una piscina de candidatos para reclutamiento usando el servicio de IA.
+    
+    REGLA: Si se solicitan candidatos, al menos 2 deben ser Nivel 1.
 
     Args:
+        player_id: ID del jugador (necesario para el contexto)
         pool_size: Cantidad de candidatos a generar.
         existing_names: Nombres existentes para evitar duplicados.
-        min_level: Nivel minimo de los candidatos.
-        max_level: Nivel maximo de los candidatos.
+        min_level: Nivel minimo de los candidatos (general).
+        max_level: Nivel maximo de los candidatos (general).
 
     Returns:
         Lista de candidatos con stats completos y costo calculado.
@@ -30,11 +45,25 @@ def _generate_recruitment_pool(pool_size: int, existing_names: List[str], min_le
     candidates = []
     names_in_use = list(existing_names)
 
-    for _ in range(pool_size):
-        # Generar personaje con el motor
-        char = generate_random_character(
-            min_level=min_level,
-            max_level=max_level,
+    for i in range(pool_size):
+        # Lógica para forzar al menos 2 nivel 1 al inicio del pool
+        if i < 2:
+            current_min = 1
+            current_max = 1
+        else:
+            current_min = min_level
+            current_max = max_level
+
+        # Crear contexto de reclutamiento
+        context = RecruitmentContext(
+            player_id=player_id,
+            min_level=current_min,
+            max_level=current_max
+        )
+
+        # Generar personaje usando el servicio con IA
+        char = generate_random_character_with_ai(
+            context=context,
             existing_names=names_in_use
         )
 
@@ -101,8 +130,8 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
         """, unsafe_allow_html=True)
 
         # Descripcion de raza y clase
-        st.caption(f"*{bio.get('descripcion_raza', '')}*")
-        st.caption(f"*{bio.get('descripcion_clase', '')}*")
+        # Nota: La IA ahora llena 'biografia_corta'
+        st.caption(f"_{bio.get('biografia_corta', '')}_")
 
         # Atributos en grid compacto
         with st.expander("Ver Atributos", expanded=False):
@@ -145,10 +174,10 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
         with col_btn:
             if can_afford:
                 # FIX: Añadido width='stretch' para mejor UI
-                if st.button(f"CONTRATAR", key=f"recruit_{index}", type="primary", width='stretch'):
+                if st.button(f"CONTRATAR", key=f"recruit_{index}", type="primary", use_container_width=True):
                     _process_recruitment(player_id, candidate, player_credits)
             else:
-                st.button("FONDOS INSUFICIENTES", key=f"recruit_{index}", disabled=True, width='stretch')
+                st.button("FONDOS INSUFICIENTES", key=f"recruit_{index}", disabled=True, use_container_width=True)
 
 
 def _process_recruitment(player_id: int, candidate: Dict[str, Any], player_credits: int):
@@ -237,7 +266,7 @@ def show_recruitment_center():
             f"Buscar Nuevos\n({refresh_cost} C)",
             disabled=not can_refresh,
             type="secondary",
-            width='stretch'
+            use_container_width=True
         ):
             if update_player_credits(player_id, player_credits - refresh_cost):
                 if 'recruitment_pool' in st.session_state:
@@ -285,12 +314,14 @@ def show_recruitment_center():
         max_lvl = st.session_state.get('recruit_max_level', 3)
 
         # Generar candidatos
-        st.session_state.recruitment_pool = _generate_recruitment_pool(
-            pool_size=3,
-            existing_names=existing_names,
-            min_level=min_lvl,
-            max_level=max_lvl
-        )
+        with st.spinner("Conectando con la red de reclutamiento IA..."):
+            st.session_state.recruitment_pool = _generate_recruitment_pool(
+                player_id=player_id,
+                pool_size=DEFAULT_RECRUITMENT_POOL_SIZE,
+                existing_names=existing_names,
+                min_level=min_lvl,
+                max_level=max_lvl
+            )
 
     candidates = st.session_state.recruitment_pool
 
