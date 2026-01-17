@@ -1,17 +1,35 @@
 # core/economy_engine.py
-from typing import Dict, List, Any, Tuple
-from data.database import supabase
+"""
+Motor Económico MMFR (Materials, Metals, Fuel, Resources).
+Gestiona toda la lógica de cálculo económico del juego.
+
+IMPORTANTE: Este módulo NO importa supabase directamente.
+Todas las operaciones de DB se realizan a través de repositorios.
+"""
+
+from typing import Dict, List, Any, Tuple, Optional
+from dataclasses import dataclass, field
+
 from data.log_repository import log_event
-from data.player_repository import get_player_finances, update_player_resources
+from data.player_repository import get_player_finances, update_player_resources, get_all_players
+from data.planet_repository import (
+    get_all_player_planets_with_buildings,
+    get_luxury_extraction_sites_for_player,
+    batch_update_planet_security,
+    batch_update_building_status,
+    update_planet_asset
+)
+
 from core.world_constants import (
     BUILDING_TYPES,
     BUILDING_SHUTDOWN_PRIORITY,
     ECONOMY_RATES,
     BROKER_PRICES
 )
+from core.models import ProductionSummary, EconomyTickResult
 
 
-# --- FUNCIONES DE CÁLCULO ECONÓMICO ---
+# --- FUNCIONES DE CÁLCULO ECONÓMICO (PURAS - SIN SIDE EFFECTS) ---
 
 def calculate_security_multiplier(infrastructure_defense: int) -> float:
     """
@@ -89,181 +107,17 @@ def calculate_building_maintenance(buildings: List[Dict[str, Any]]) -> Dict[str,
     return {"celulas_energia": total_energy}
 
 
-# --- SISTEMA DE DESACTIVACIÓN EN CASCADA ---
-
-def cascade_shutdown_buildings(
-    planet_asset_id: int,
-    available_pops: int,
-    buildings: List[Dict[str, Any]]
-) -> Tuple[List[int], int]:
-    """
-    Desactiva edificios en cascada si no hay suficiente población.
-
-    Orden de desactivación (prioridad inversa):
-    1. Alta Tecnología
-    2. Industria Pesada
-    3. Defensa
-    4. Extracción Base (crítico, se desactiva al final)
-
-    Args:
-        planet_asset_id: ID del activo planetario
-        available_pops: Población disponible para asignar
-        buildings: Lista de edificios del planeta
-
-    Returns:
-        Tupla: (IDs de edificios desactivados, población restante)
-    """
-    # Calcular requisitos totales
-    total_required = sum(
-        b.get("pops_required", 0)
-        for b in buildings
-        if b.get("is_active", True)
-    )
-
-    # Si hay suficiente población, no hacer nada
-    if available_pops >= total_required:
-        return ([], available_pops - total_required)
-
-    # Ordenar edificios por prioridad de desactivación
-    def get_priority(building: Dict[str, Any]) -> int:
-        building_type = building.get("building_type", "")
-        definition = BUILDING_TYPES.get(building_type, {})
-        category = definition.get("category", "extraccion")
-        return BUILDING_SHUTDOWN_PRIORITY.get(category, 999)
-
-    sorted_buildings = sorted(
-        [b for b in buildings if b.get("is_active", True)],
-        key=get_priority
-    )
-
-    disabled_ids = []
-    remaining_pops = available_pops
-
-    # Desactivar edificios hasta que haya suficiente población
-    for building in sorted_buildings:
-        if remaining_pops >= total_required:
-            break
-
-        building_id = building["id"]
-        pops_freed = building.get("pops_required", 0)
-
-        # Desactivar edificio en DB
-        try:
-            supabase.table("planet_buildings").update({
-                "is_active": False
-            }).eq("id", building_id).execute()
-
-            disabled_ids.append(building_id)
-            remaining_pops += pops_freed
-            total_required -= pops_freed
-
-            building_name = BUILDING_TYPES.get(
-                building.get("building_type", ""), {}
-            ).get("name", "Edificio Desconocido")
-
-            log_event(
-                f"⚠️ Edificio desactivado por falta de POPs: {building_name}",
-                building.get("player_id")
-            )
-        except Exception as e:
-            log_event(
-                f"Error desactivando edificio ID {building_id}: {e}",
-                building.get("player_id"),
-                is_error=True
-            )
-
-    return (disabled_ids, remaining_pops - total_required)
-
-
-def reactivate_buildings_if_possible(
-    planet_asset_id: int,
-    available_pops: int,
-    buildings: List[Dict[str, Any]]
-) -> List[int]:
-    """
-    Reactiva edificios desactivados si hay población disponible.
-
-    Orden inverso al shutdown: primero Extracción, luego Defensa, etc.
-
-    Args:
-        planet_asset_id: ID del activo planetario
-        available_pops: Población desempleada disponible
-        buildings: Lista de todos los edificios
-
-    Returns:
-        Lista de IDs de edificios reactivados
-    """
-    # Edificios desactivados, ordenados por prioridad inversa (extracción primero)
-    def get_priority(building: Dict[str, Any]) -> int:
-        building_type = building.get("building_type", "")
-        definition = BUILDING_TYPES.get(building_type, {})
-        category = definition.get("category", "extraccion")
-        return -BUILDING_SHUTDOWN_PRIORITY.get(category, 999)
-
-    inactive_buildings = sorted(
-        [b for b in buildings if not b.get("is_active", True)],
-        key=get_priority
-    )
-
-    reactivated_ids = []
-    remaining_pops = available_pops
-
-    for building in inactive_buildings:
-        pops_needed = building.get("pops_required", 0)
-
-        if remaining_pops >= pops_needed:
-            building_id = building["id"]
-
-            try:
-                supabase.table("planet_buildings").update({
-                    "is_active": True
-                }).eq("id", building_id).execute()
-
-                reactivated_ids.append(building_id)
-                remaining_pops -= pops_needed
-
-                building_name = BUILDING_TYPES.get(
-                    building.get("building_type", ""), {}
-                ).get("name", "Edificio Desconocido")
-
-                log_event(
-                    f"✅ Edificio reactivado: {building_name}",
-                    building.get("player_id")
-                )
-            except Exception as e:
-                log_event(
-                    f"Error reactivando edificio ID {building_id}: {e}",
-                    building.get("player_id"),
-                    is_error=True
-                )
-        else:
-            break  # No hay más población disponible
-
-    return reactivated_ids
-
-
-# --- PROCESAMIENTO DE RECURSOS ---
-
-def process_planet_production(
-    planet_asset: Dict[str, Any],
-    buildings: List[Dict[str, Any]]
-) -> Dict[str, int]:
+def calculate_planet_production(buildings: List[Dict[str, Any]]) -> ProductionSummary:
     """
     Calcula la producción total de un planeta basándose en sus edificios activos.
 
     Args:
-        planet_asset: Datos del activo planetario
         buildings: Lista de edificios del planeta
 
     Returns:
-        Diccionario con recursos producidos: {"materiales": X, "componentes": Y, ...}
+        ProductionSummary con recursos producidos
     """
-    production = {
-        "materiales": 0,
-        "componentes": 0,
-        "celulas_energia": 0,
-        "influencia": 0
-    }
+    production = ProductionSummary()
 
     for building in buildings:
         if not building.get("is_active", True):
@@ -273,250 +127,344 @@ def process_planet_production(
         definition = BUILDING_TYPES.get(building_type, {})
         building_production = definition.get("production", {})
 
-        for resource, amount in building_production.items():
-            production[resource] = production.get(resource, 0) + amount
+        production.materiales += building_production.get("materiales", 0)
+        production.componentes += building_production.get("componentes", 0)
+        production.celulas_energia += building_production.get("celulas_energia", 0)
+        production.influencia += building_production.get("influencia", 0)
 
     return production
 
 
-def apply_maintenance_costs(
-    player_id: int,
-    planet_asset: Dict[str, Any],
+# --- SISTEMA DE DESACTIVACIÓN EN CASCADA ---
+
+@dataclass
+class CascadeResult:
+    """Resultado del sistema de desactivación en cascada."""
+    buildings_to_disable: List[Tuple[int, str]] = field(default_factory=list)  # (id, nombre)
+    buildings_to_enable: List[Tuple[int, str]] = field(default_factory=list)   # (id, nombre)
+    remaining_pops: int = 0
+
+
+def calculate_cascade_shutdown(
+    available_pops: int,
     buildings: List[Dict[str, Any]]
-) -> bool:
+) -> CascadeResult:
     """
-    Deduce los costos de mantenimiento (energía) de los edificios activos.
+    Calcula qué edificios deben desactivarse/reactivarse basándose en POPs disponibles.
+    Esta función es PURA - no realiza cambios en DB.
+
+    Orden de desactivación (prioridad inversa):
+    1. Alta Tecnología
+    2. Industria Pesada
+    3. Defensa
+    4. Extracción Base (crítico, se desactiva al final)
 
     Args:
-        player_id: ID del jugador
-        planet_asset: Datos del planeta
-        buildings: Lista de edificios
+        available_pops: Población disponible para asignar
+        buildings: Lista de edificios del planeta
 
     Returns:
-        True si se pagó el mantenimiento, False si no había suficientes recursos
+        CascadeResult con listas de edificios a activar/desactivar
     """
-    maintenance = calculate_building_maintenance(buildings)
+    result = CascadeResult()
+
+    # Separar edificios activos e inactivos
+    active_buildings = [b for b in buildings if b.get("is_active", True)]
+    inactive_buildings = [b for b in buildings if not b.get("is_active", True)]
+
+    # Calcular requisitos totales de edificios activos
+    total_required = sum(
+        b.get("pops_required", 0)
+        for b in active_buildings
+    )
+
+    # Si hay suficiente población, intentar reactivar edificios
+    if available_pops >= total_required:
+        remaining = available_pops - total_required
+        result.remaining_pops = remaining
+
+        # Intentar reactivar edificios (ordenados por prioridad inversa: extracción primero)
+        def get_reactivation_priority(building: Dict[str, Any]) -> int:
+            building_type = building.get("building_type", "")
+            definition = BUILDING_TYPES.get(building_type, {})
+            category = definition.get("category", "extraccion")
+            return -BUILDING_SHUTDOWN_PRIORITY.get(category, 999)
+
+        sorted_inactive = sorted(inactive_buildings, key=get_reactivation_priority)
+
+        for building in sorted_inactive:
+            pops_needed = building.get("pops_required", 0)
+            if remaining >= pops_needed:
+                building_name = BUILDING_TYPES.get(
+                    building.get("building_type", ""), {}
+                ).get("name", "Edificio Desconocido")
+                result.buildings_to_enable.append((building["id"], building_name))
+                remaining -= pops_needed
+
+        result.remaining_pops = remaining
+        return result
+
+    # Si no hay suficiente población, desactivar edificios
+    def get_shutdown_priority(building: Dict[str, Any]) -> int:
+        building_type = building.get("building_type", "")
+        definition = BUILDING_TYPES.get(building_type, {})
+        category = definition.get("category", "extraccion")
+        return BUILDING_SHUTDOWN_PRIORITY.get(category, 999)
+
+    sorted_active = sorted(active_buildings, key=get_shutdown_priority)
+
+    remaining_pops = available_pops
+
+    for building in sorted_active:
+        if remaining_pops >= total_required:
+            break
+
+        building_id = building["id"]
+        pops_freed = building.get("pops_required", 0)
+
+        building_name = BUILDING_TYPES.get(
+            building.get("building_type", ""), {}
+        ).get("name", "Edificio Desconocido")
+
+        result.buildings_to_disable.append((building_id, building_name))
+        remaining_pops += pops_freed
+        total_required -= pops_freed
+
+    result.remaining_pops = max(0, remaining_pops - total_required)
+    return result
+
+
+# --- PROCESAMIENTO DE RECURSOS DE LUJO ---
+
+def calculate_luxury_extraction(sites: List[Dict[str, Any]]) -> Dict[str, int]:
+    """
+    Calcula la extracción de recursos de lujo.
+    Esta función es PURA - no realiza cambios en DB.
+
+    Args:
+        sites: Lista de sitios de extracción activos
+
+    Returns:
+        Diccionario con claves "categoria.recurso" y cantidades
+    """
+    extracted: Dict[str, int] = {}
+
+    for site in sites:
+        if not site.get("is_active", True):
+            continue
+
+        resource_key = site.get("resource_key")
+        category = site.get("resource_category")
+        rate = site.get("extraction_rate", 1)
+
+        key = f"{category}.{resource_key}"
+        extracted[key] = extracted.get(key, 0) + rate
+
+    return extracted
+
+
+def merge_luxury_resources(
+    current: Dict[str, Any],
+    extracted: Dict[str, int]
+) -> Dict[str, Any]:
+    """
+    Combina recursos de lujo actuales con los recién extraídos.
+
+    Args:
+        current: JSONB actual de recursos_lujo
+        extracted: Nuevos recursos extraídos
+
+    Returns:
+        Diccionario actualizado de recursos de lujo
+    """
+    result = dict(current) if current else {}
+
+    for key, amount in extracted.items():
+        parts = key.split(".")
+        if len(parts) != 2:
+            continue
+
+        category, resource = parts
+
+        if category not in result:
+            result[category] = {}
+
+        result[category][resource] = result[category].get(resource, 0) + amount
+
+    return result
+
+
+# --- PROCESADOR DE PLANETA (INDIVIDUAL) ---
+
+@dataclass
+class PlanetTickResult:
+    """Resultado del procesamiento de un planeta."""
+    planet_id: int
+    income: int = 0
+    production: ProductionSummary = field(default_factory=ProductionSummary)
+    security_update: Optional[Tuple[int, float]] = None
+    buildings_disabled: List[Tuple[int, str]] = field(default_factory=list)
+    buildings_enabled: List[Tuple[int, str]] = field(default_factory=list)
+    maintenance_paid: bool = True
+
+
+def process_planet_tick(
+    planet: Dict[str, Any],
+    player_energy: int
+) -> PlanetTickResult:
+    """
+    Procesa el tick económico de un planeta individual.
+    Esta función es mayormente PURA - calcula pero no persiste.
+
+    Args:
+        planet: Datos del planeta con edificios precargados
+        player_energy: Energía disponible del jugador
+
+    Returns:
+        PlanetTickResult con todos los cálculos
+    """
+    result = PlanetTickResult(planet_id=planet["id"])
+
+    # Datos del planeta
+    population = planet.get("poblacion", 0)
+    infrastructure = planet.get("infraestructura_defensiva", 0)
+    happiness = planet.get("felicidad", 1.0)
+    buildings = planet.get("buildings", [])
+
+    # 1. Calcular seguridad
+    security = calculate_security_multiplier(infrastructure)
+    if security != planet.get("seguridad", 1.0):
+        result.security_update = (planet["id"], security)
+
+    # 2. Calcular ingresos
+    result.income = calculate_income(population, security, happiness)
+
+    # 3. Gestión de POPs
+    pops_activos = planet.get("pops_activos", population)
+    pops_desempleados = planet.get("pops_desempleados", 0)
+    available_pops = pops_activos + pops_desempleados
+
+    cascade = calculate_cascade_shutdown(available_pops, buildings)
+    result.buildings_disabled = cascade.buildings_to_disable
+    result.buildings_enabled = cascade.buildings_to_enable
+
+    # 4. Recalcular edificios activos después del cascade
+    active_building_ids = {b["id"] for b in buildings if b.get("is_active", True)}
+
+    # Remover los que se desactivarán
+    for bid, _ in cascade.buildings_to_disable:
+        active_building_ids.discard(bid)
+
+    # Agregar los que se reactivarán
+    for bid, _ in cascade.buildings_to_enable:
+        active_building_ids.add(bid)
+
+    # Filtrar edificios activos finales
+    final_active_buildings = [b for b in buildings if b["id"] in active_building_ids]
+
+    # 5. Calcular producción
+    result.production = calculate_planet_production(final_active_buildings)
+
+    # 6. Calcular mantenimiento
+    maintenance = calculate_building_maintenance(final_active_buildings)
     energy_cost = maintenance.get("celulas_energia", 0)
 
-    if energy_cost == 0:
-        return True
+    if energy_cost > player_energy:
+        result.maintenance_paid = False
 
-    # Obtener recursos actuales del jugador
-    finances = get_player_finances(player_id)
-    current_energy = finances.get("celulas_energia", 0)
-
-    if current_energy < energy_cost:
-        log_event(
-            f"⚠️ Energía insuficiente para mantenimiento en {planet_asset.get('nombre_asentamiento')}. "
-            f"Requerido: {energy_cost}, Disponible: {current_energy}",
-            player_id
-        )
-        return False
-
-    # Deducir energía
-    update_player_resources(player_id, {
-        "celulas_energia": current_energy - energy_cost
-    })
-
-    return True
-
-
-def process_luxury_resource_extraction(player_id: int) -> Dict[str, int]:
-    """
-    Procesa la extracción de recursos de lujo de todos los sitios activos del jugador.
-
-    Args:
-        player_id: ID del jugador
-
-    Returns:
-        Diccionario con recursos extraídos por categoría
-    """
-    try:
-        # Obtener todos los sitios de extracción activos
-        response = supabase.table("luxury_extraction_sites")\
-            .select("*")\
-            .eq("player_id", player_id)\
-            .eq("is_active", True)\
-            .execute()
-
-        sites = response.data if response.data else []
-
-        if not sites:
-            return {}
-
-        # Acumular producción
-        extracted = {}
-
-        for site in sites:
-            resource_key = site.get("resource_key")
-            category = site.get("resource_category")
-            rate = site.get("extraction_rate", 1)
-
-            key = f"{category}.{resource_key}"
-            extracted[key] = extracted.get(key, 0) + rate
-
-        # Actualizar recursos del jugador en JSONB
-        if extracted:
-            _update_luxury_resources(player_id, extracted)
-
-        return extracted
-
-    except Exception as e:
-        log_event(f"Error procesando extracción de lujo: {e}", player_id, is_error=True)
-        return {}
-
-
-def _update_luxury_resources(player_id: int, extracted: Dict[str, int]):
-    """
-    Actualiza el campo recursos_lujo JSONB del jugador.
-
-    Args:
-        player_id: ID del jugador
-        extracted: Diccionario con claves "categoria.recurso" y cantidades
-    """
-    try:
-        # Obtener el JSONB actual
-        response = supabase.table("players")\
-            .select("recursos_lujo")\
-            .eq("id", player_id)\
-            .single()\
-            .execute()
-
-        current_luxury = response.data.get("recursos_lujo", {}) if response.data else {}
-
-        # Sumar nuevos valores
-        for key, amount in extracted.items():
-            parts = key.split(".")
-            if len(parts) != 2:
-                continue
-
-            category, resource = parts
-
-            if category not in current_luxury:
-                current_luxury[category] = {}
-
-            current_luxury[category][resource] = \
-                current_luxury[category].get(resource, 0) + amount
-
-        # Actualizar DB
-        supabase.table("players").update({
-            "recursos_lujo": current_luxury
-        }).eq("id", player_id).execute()
-
-    except Exception as e:
-        log_event(f"Error actualizando recursos de lujo: {e}", player_id, is_error=True)
+    return result
 
 
 # --- ORQUESTADOR PRINCIPAL ---
 
-def run_economy_tick_for_player(player_id: int):
+def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
     """
     Ejecuta el ciclo económico completo para un jugador.
+    Optimizado para reducir queries a la DB.
 
     Orden de ejecución:
-    1. Procesar cada planeta del jugador
-    2. Calcular ingresos por población
-    3. Verificar requisitos de POPs y desactivar/reactivar edificios
-    4. Calcular producción de edificios activos
-    5. Aplicar mantenimiento
-    6. Extraer recursos de lujo
-    7. Actualizar recursos del jugador
-    """
-    try:
-        # 1. Obtener todos los planetas del jugador
-        response = supabase.table("planet_assets")\
-            .select("*")\
-            .eq("player_id", player_id)\
-            .execute()
+    1. Obtener todos los datos necesarios en queries batch
+    2. Calcular todos los cambios (funciones puras)
+    3. Aplicar cambios en batch
 
-        planets = response.data if response.data else []
+    Args:
+        player_id: ID del jugador
+
+    Returns:
+        EconomyTickResult con el resumen de la operación
+    """
+    result = EconomyTickResult(player_id=player_id)
+
+    try:
+        # 1. Obtener datos en batch
+        planets = get_all_player_planets_with_buildings(player_id)
 
         if not planets:
-            # Jugador sin planetas colonizados
-            return
+            return result  # Jugador sin planetas
 
-        # Acumuladores globales
-        total_income = 0
-        total_production = {
-            "materiales": 0,
-            "componentes": 0,
-            "celulas_energia": 0,
-            "influencia": 0
-        }
+        finances = get_player_finances(player_id)
+        luxury_sites = get_luxury_extraction_sites_for_player(player_id)
 
         # 2. Procesar cada planeta
+        security_updates: List[Tuple[int, float]] = []
+        building_status_updates: List[Tuple[int, bool]] = []
+        total_energy_available = finances.get("celulas_energia", 0)
+
         for planet in planets:
-            planet_id = planet["id"]
-            population = planet.get("poblacion", 0)
-            infrastructure = planet.get("infraestructura_defensiva", 0)
-            happiness = planet.get("felicidad", 1.0)
+            planet_result = process_planet_tick(planet, total_energy_available)
 
-            # Calcular seguridad
-            security = calculate_security_multiplier(infrastructure)
+            # Acumular resultados
+            result.total_income += planet_result.income
+            result.production = result.production.add(planet_result.production)
 
-            # Actualizar seguridad en DB
-            supabase.table("planet_assets").update({
-                "seguridad": security
-            }).eq("id", planet_id).execute()
+            # Recolectar actualizaciones
+            if planet_result.security_update:
+                security_updates.append(planet_result.security_update)
 
-            # Calcular ingresos
-            income = calculate_income(population, security, happiness)
-            total_income += income
+            for bid, name in planet_result.buildings_disabled:
+                building_status_updates.append((bid, False))
+                result.buildings_disabled.append(bid)
+                log_event(f"⚠️ Edificio desactivado por falta de POPs: {name}", player_id)
 
-            # 3. Obtener edificios del planeta
-            buildings_response = supabase.table("planet_buildings")\
-                .select("*")\
-                .eq("planet_asset_id", planet_id)\
-                .execute()
+            for bid, name in planet_result.buildings_enabled:
+                building_status_updates.append((bid, True))
+                result.buildings_reactivated.append(bid)
+                log_event(f"✅ Edificio reactivado: {name}", player_id)
 
-            buildings = buildings_response.data if buildings_response.data else []
+        # 3. Calcular recursos de lujo
+        luxury_extracted = calculate_luxury_extraction(luxury_sites)
+        result.luxury_extracted = luxury_extracted
 
-            # 4. Gestión de POPs
-            pops_activos = planet.get("pops_activos", population)
-            pops_desempleados = planet.get("pops_desempleados", 0)
-            available_pops = pops_activos + pops_desempleados
+        # 4. Aplicar cambios en batch
+        if security_updates:
+            batch_update_planet_security(security_updates)
 
-            # Desactivación en cascada si es necesario
-            disabled, remaining = cascade_shutdown_buildings(
-                planet_id, available_pops, buildings
-            )
+        if building_status_updates:
+            batch_update_building_status(building_status_updates)
 
-            # Intentar reactivar edificios si hay POPs disponibles
-            if remaining > 0:
-                reactivate_buildings_if_possible(planet_id, remaining, buildings)
-
-            # 5. Calcular producción
-            production = process_planet_production(planet, buildings)
-
-            for resource, amount in production.items():
-                total_production[resource] = total_production.get(resource, 0) + amount
-
-            # 6. Aplicar mantenimiento
-            apply_maintenance_costs(player_id, planet, buildings)
-
-        # 7. Extraer recursos de lujo
-        luxury_extracted = process_luxury_resource_extraction(player_id)
-
-        # 8. Actualizar recursos del jugador
-        finances = get_player_finances(player_id)
-
-        updates = {
-            "creditos": finances.get("creditos", 0) + total_income,
-            "materiales": finances.get("materiales", 0) + total_production.get("materiales", 0),
-            "componentes": finances.get("componentes", 0) + total_production.get("componentes", 0),
-            "celulas_energia": finances.get("celulas_energia", 0) + total_production.get("celulas_energia", 0),
-            "influencia": finances.get("influencia", 0) + total_production.get("influencia", 0)
+        # 5. Actualizar recursos del jugador
+        new_resources = {
+            "creditos": finances.get("creditos", 0) + result.total_income,
+            "materiales": finances.get("materiales", 0) + result.production.materiales,
+            "componentes": finances.get("componentes", 0) + result.production.componentes,
+            "celulas_energia": finances.get("celulas_energia", 0) + result.production.celulas_energia,
+            "influencia": finances.get("influencia", 0) + result.production.influencia
         }
 
-        update_player_resources(player_id, updates)
+        # Actualizar recursos de lujo si hay extracción
+        if luxury_extracted:
+            current_luxury = finances.get("recursos_lujo", {})
+            new_resources["recursos_lujo"] = merge_luxury_resources(current_luxury, luxury_extracted)
 
-        # Log resumen
+        update_player_resources(player_id, new_resources)
+
+        # 6. Log resumen
         log_event(
-            f"💰 Economía procesada: +{total_income} CI | "
-            f"Producción: M:{total_production['materiales']} "
-            f"C:{total_production['componentes']} "
-            f"E:{total_production['celulas_energia']} "
-            f"I:{total_production['influencia']}",
+            f"💰 Economía procesada: +{result.total_income} CI | "
+            f"Producción: M:{result.production.materiales} "
+            f"C:{result.production.componentes} "
+            f"E:{result.production.celulas_energia} "
+            f"I:{result.production.influencia}",
             player_id
         )
 
@@ -524,27 +472,80 @@ def run_economy_tick_for_player(player_id: int):
             luxury_summary = ", ".join([f"{k}:{v}" for k, v in luxury_extracted.items()])
             log_event(f"💎 Recursos de lujo extraídos: {luxury_summary}", player_id)
 
+        result.success = True
+
     except Exception as e:
+        result.success = False
+        result.errors.append(str(e))
         log_event(f"Error crítico en economía del jugador {player_id}: {e}", player_id, is_error=True)
 
+    return result
 
-def run_global_economy_tick():
+
+def run_global_economy_tick() -> List[EconomyTickResult]:
     """
     Ejecuta el tick económico para TODOS los jugadores activos.
     Se llama desde time_engine._phase_macroeconomics()
+
+    Returns:
+        Lista de resultados por jugador
     """
-    log_event("running fase económica global (MMFR)...")
+    log_event("🏛️ Iniciando fase económica global (MMFR)...")
+
+    results: List[EconomyTickResult] = []
 
     try:
         # Obtener todos los jugadores
-        response = supabase.table("players").select("id").execute()
-        players = response.data if response.data else []
+        players = get_all_players()
 
         for player in players:
             player_id = player["id"]
-            run_economy_tick_for_player(player_id)
+            result = run_economy_tick_for_player(player_id)
+            results.append(result)
 
-        log_event("✅ Fase económica completada.")
+        successful = sum(1 for r in results if r.success)
+        failed = len(results) - successful
+
+        log_event(f"✅ Fase económica completada. Jugadores: {successful} OK, {failed} errores.")
 
     except Exception as e:
         log_event(f"Error crítico en tick económico global: {e}", is_error=True)
+
+    return results
+
+
+# --- FUNCIONES AUXILIARES PARA UI ---
+
+def get_planet_economy_summary(planet: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Genera un resumen económico de un planeta para mostrar en UI.
+
+    Args:
+        planet: Datos del planeta con edificios
+
+    Returns:
+        Diccionario con resumen para UI
+    """
+    buildings = planet.get("buildings", [])
+    population = planet.get("poblacion", 0)
+    infrastructure = planet.get("infraestructura_defensiva", 0)
+    happiness = planet.get("felicidad", 1.0)
+
+    security = calculate_security_multiplier(infrastructure)
+    income = calculate_income(population, security, happiness)
+    production = calculate_planet_production(buildings)
+    maintenance = calculate_building_maintenance(buildings)
+
+    active_buildings = sum(1 for b in buildings if b.get("is_active", True))
+    total_buildings = len(buildings)
+
+    return {
+        "income": income,
+        "security": security,
+        "production": production.to_dict(),
+        "maintenance": maintenance,
+        "active_buildings": active_buildings,
+        "total_buildings": total_buildings,
+        "population": population,
+        "happiness": happiness
+    }

@@ -1,54 +1,69 @@
 # services/gemini_service.py
 """
-Gemini Service - Asistente Táctico IA (Implementation v2.2)
-Personalidad: Asistente Táctico (Estilo Jarvis/Cortana).
-Fix: Persistencia de logs de sistema y limpieza de flujo.
+Servicio de Asistente Táctico IA.
+Integración con Google Gemini para procesamiento de órdenes del comandante.
+
+Características:
+- Personalidad: Asistente Táctico (estilo Jarvis/Cortana/EDI)
+- Protocolo de Niebla de Guerra (conocimiento limitado)
+- Integración con Motor de Resolución Galáctico (MRG)
+- Manejo robusto de Function Calling
 """
 
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+from dataclasses import dataclass, field
 from google.genai import types
 
-from data.database import ai_client
+from data.database import get_service_container
 from data.log_repository import log_event
 from data.character_repository import get_commander_by_player_id
 from data.player_repository import get_player_finances
 from data.planet_repository import get_all_player_planets
 from data.world_repository import queue_player_action, get_world_state
 
-# Importar el motor de tiempo
 from core.time_engine import check_and_trigger_tick, is_lock_in_window
-
-# Importar Motor de Resolución Galáctico (MRG)
 from core.mrg_engine import resolve_action, ResultType
 from core.mrg_constants import DIFFICULTY_NORMAL
 from core.mrg_effects import apply_partial_success_complication
 
-# Importar herramientas AI
-from services.ai_tools import TOOL_DECLARATIONS, TOOL_FUNCTIONS
-
-# Importar constantes
-from config.app_constants import TEXT_MODEL_NAME, IMAGE_MODEL_NAME
+from services.ai_tools import TOOL_DECLARATIONS, execute_tool
+from config.app_constants import TEXT_MODEL_NAME
 
 
-# --- SYSTEM PROMPT (ASISTENTE TÁCTICO) ---
+# --- CONSTANTES DE CONFIGURACIÓN ---
 
-def _get_assistant_system_prompt(commander_name: str, faction_name: str) -> str:
-    return f"""
+MAX_TOOL_ITERATIONS = 10
+AI_TEMPERATURE = 0.7
+AI_MAX_TOKENS = 1024
+AI_TOP_P = 0.95
+
+# Palabras clave que indican consulta informativa (no requiere tirada MRG)
+QUERY_KEYWORDS = [
+    "cuantos", "cuántos", "que", "qué", "como", "cómo",
+    "donde", "dónde", "quien", "quién", "estado", "listar",
+    "ver", "info", "ayuda", "analisis", "análisis", "describir",
+    "explicar", "mostrar"
+]
+
+
+# --- SYSTEM PROMPT ---
+
+TACTICAL_AI_PROMPT_TEMPLATE = """
 Eres la UNIDAD DE INTELIGENCIA TÁCTICA asignada al Comandante {commander_name}.
 Tu lealtad es absoluta a la facción: {faction_name}.
 
 ## TU PERSONALIDAD
 - Actúas como un asistente avanzado (estilo Jarvis, Cortana, EDI).
 - Eres profesional, eficiente, proactivo y respetuoso.
-- NO tienes límite de caracteres forzado, pero valoras la precisión. Explica los detalles si el Comandante lo requiere.
+- NO tienes límite de caracteres forzado, pero valoras la precisión.
 - Usas terminología militar/sci-fi adecuada (ej: "Afirmativo", "Escaneando", "En proceso").
 
 ## PROTOCOLO DE CONOCIMIENTO LIMITADO (NIEBLA DE GUERRA)
 - **CRÍTICO:** NO ERES OMNISCIENTE.
 - Solo tienes acceso a:
   1. Los datos proporcionados en el [CONTEXTO TÁCTICO] actual.
-  2. Herramientas de base de datos explícitas (`execute_db_query`) para consultar inventarios propios.
+  2. Herramientas de base de datos explícitas para consultar inventarios propios.
 - Si el Comandante pregunta por la ubicación de enemigos, bases ocultas o recursos en sistemas no explorados, **DEBES RESPONDER QUE NO TIENES DATOS**.
 - No inventes coordenadas ni hechos sobre otros jugadores.
 
@@ -58,83 +73,282 @@ Tu lealtad es absoluta a la facción: {faction_name}.
 3. **Ejecutar:** Usa herramientas si es necesario (consultas SQL limitadas, cálculos).
 4. **Responder:** Informa el resultado con tu personalidad de IA Táctica.
 
-Si la orden requiere una tirada de habilidad (MRG), el sistema te proveerá el resultado. Nárralo épicamente basándote en el éxito o fracaso.
+Si la orden requiere una tirada de habilidad (MRG), el sistema te proveerá el resultado.
+Nárralo épicamente basándote en el éxito o fracaso.
 """
 
-# --- CONTEXTO DE CONOCIMIENTO (FOG OF WAR) ---
 
-def _build_player_context(player_id: int, commander_data: Dict) -> str:
-    """Construye el JSON de contexto limitado."""
+# --- MODELOS DE DATOS ---
+
+@dataclass
+class ActionResult:
+    """Resultado de la resolución de una acción del jugador."""
+    narrative: str
+    mrg_result: Any = None
+    function_calls_made: List[Dict[str, Any]] = field(default_factory=list)
+    success: bool = True
+    error: Optional[str] = None
+
+
+@dataclass
+class TacticalContext:
+    """Contexto táctico del comandante para la IA."""
+    commander_name: str
+    commander_location: str
+    attributes: Dict[str, int]
+    resources: Dict[str, Any]
+    known_planets: List[str]
+    system_alert: str = "Sensores nominales. Datos externos limitados a sectores explorados."
+
+    def to_json(self) -> str:
+        """Convierte el contexto a JSON para el prompt."""
+        context = {
+            "estado_comandante": {
+                "nombre": self.commander_name,
+                "ubicacion_actual": self.commander_location,
+                "atributos": self.attributes
+            },
+            "recursos_logisticos": self.resources,
+            "dominios_conocidos": self.known_planets,
+            "alerta_sistema": self.system_alert
+        }
+        return json.dumps(context, indent=2, ensure_ascii=False)
+
+
+# --- FUNCIONES AUXILIARES ---
+
+def _build_tactical_context(player_id: int, commander_data: Dict) -> TacticalContext:
+    """
+    Construye el contexto táctico para la IA.
+
+    Args:
+        player_id: ID del jugador
+        commander_data: Datos del comandante
+
+    Returns:
+        TacticalContext con información del estado actual
+    """
     try:
         finances = get_player_finances(player_id)
         planets = get_all_player_planets(player_id)
-        planet_summary = [f"{p['nombre_asentamiento']} (Pops: {p['poblacion']})" for p in planets]
+        planet_summary = [
+            f"{p['nombre_asentamiento']} (Pops: {p['poblacion']})"
+            for p in planets
+        ]
+
         stats = commander_data.get('stats_json', {})
         attributes = stats.get('atributos', {})
-        
-        context = {
-            "estado_comandante": {
-                "nombre": commander_data['nombre'],
-                "ubicacion_actual": commander_data.get('ubicacion', 'Desconocida'),
-                "atributos": attributes
-            },
-            "recursos_logisiticos": finances,
-            "dominios_conocidos": planet_summary,
-            "alerta_sistema": "Sensores nominales. Datos externos limitados a sectores explorados."
-        }
-        return json.dumps(context, indent=2, ensure_ascii=False)
+
+        return TacticalContext(
+            commander_name=commander_data['nombre'],
+            commander_location=commander_data.get('ubicacion', 'Desconocida'),
+            attributes=attributes,
+            resources=finances,
+            known_planets=planet_summary
+        )
+
     except Exception as e:
-        return json.dumps({"error_contexto": str(e)})
+        return TacticalContext(
+            commander_name=commander_data.get('nombre', 'Comandante'),
+            commander_location='Error de Sensores',
+            attributes={},
+            resources={},
+            known_planets=[],
+            system_alert=f"Error de contexto: {e}"
+        )
+
+
+def _get_system_prompt(commander_name: str, faction_name: str) -> str:
+    """Genera el system prompt personalizado."""
+    return TACTICAL_AI_PROMPT_TEMPLATE.format(
+        commander_name=commander_name,
+        faction_name=faction_name
+    )
+
+
+def _is_informational_query(action_text: str) -> bool:
+    """
+    Determina si una acción es una consulta informativa.
+
+    Args:
+        action_text: Texto de la acción
+
+    Returns:
+        True si es una consulta que no requiere tirada MRG
+    """
+    text_lower = action_text.lstrip().lower()
+
+    # Si tiene signo de interrogación, es consulta
+    if "?" in action_text:
+        return True
+
+    # Verificar palabras clave
+    return any(text_lower.startswith(keyword) for keyword in QUERY_KEYWORDS)
+
+
+def _process_function_calls(
+    chat: Any,
+    response: Any,
+    max_iterations: int = MAX_TOOL_ITERATIONS
+) -> tuple[Any, List[Dict[str, Any]]]:
+    """
+    Procesa las llamadas a funciones del modelo de forma iterativa.
+
+    Args:
+        chat: Sesión de chat activa
+        response: Respuesta inicial del modelo
+        max_iterations: Máximo de iteraciones permitidas
+
+    Returns:
+        Tupla (respuesta_final, lista_de_llamadas_realizadas)
+    """
+    function_calls_made: List[Dict[str, Any]] = []
+    current_response = response
+
+    for iteration in range(max_iterations):
+        # Verificar si hay candidatos válidos
+        if not current_response.candidates:
+            break
+
+        candidate = current_response.candidates[0]
+        if not candidate.content or not candidate.content.parts:
+            break
+
+        # Buscar function calls en las partes
+        function_call_found = False
+
+        for part in candidate.content.parts:
+            if not hasattr(part, 'function_call') or not part.function_call:
+                continue
+
+            function_call_found = True
+            fc = part.function_call
+            fname = fc.name
+            fargs = dict(fc.args) if fc.args else {}
+
+            # Registrar la llamada
+            function_calls_made.append({
+                "function": fname,
+                "args": fargs,
+                "iteration": iteration + 1
+            })
+
+            # Ejecutar la herramienta
+            result_str = execute_tool(fname, fargs)
+
+            # Enviar respuesta de la función al chat
+            current_response = chat.send_message([
+                types.Part.from_function_response(
+                    name=fname,
+                    response={"result": result_str}
+                )
+            ])
+
+            # Solo procesar una función por iteración
+            break
+
+        # Si no hubo function call, terminar el loop
+        if not function_call_found:
+            break
+
+    return current_response, function_calls_made
+
+
+def _extract_narrative(response: Any) -> str:
+    """
+    Extrae el texto narrativo de la respuesta del modelo.
+
+    Args:
+        response: Respuesta del modelo
+
+    Returns:
+        Texto narrativo o mensaje por defecto
+    """
+    if not response or not response.candidates:
+        return "Orden recibida, Comandante. Procesando datos tácticos..."
+
+    candidate = response.candidates[0]
+    if not candidate.content or not candidate.content.parts:
+        return "Afirmativo. Ejecutando protocolo de respuesta..."
+
+    text_parts = []
+    for part in candidate.content.parts:
+        if hasattr(part, 'text') and part.text:
+            text_parts.append(part.text)
+
+    narrative = "".join(text_parts).strip()
+
+    return narrative if narrative else "Orden procesada, Comandante."
 
 
 # --- FUNCIÓN PRINCIPAL ---
 
 def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str, Any]]:
-    # 0. Guardianes de Tiempo
+    """
+    Resuelve una acción/orden del comandante usando el Asistente Táctico.
+
+    Args:
+        action_text: Texto de la orden del comandante
+        player_id: ID del jugador
+
+    Returns:
+        Diccionario con narrative, mrg_result, y function_calls_made
+    """
+    # 0. Verificación de Estado del Mundo
     check_and_trigger_tick()
 
     world_state = get_world_state()
     if world_state.get("is_frozen", False):
         msg = "❄️ SISTEMA: Cronología congelada por administración."
-        log_event(msg, player_id) # FIX: Persistencia
-        return {"narrative": msg, "mrg_result": None}
+        log_event(msg, player_id)
+        return {"narrative": msg, "mrg_result": None, "function_calls_made": []}
 
     if is_lock_in_window():
         queue_player_action(player_id, action_text)
-        msg = "⏱️ SISTEMA: Ventana de Salto Temporal activa. Orden encolada."
-        log_event(msg, player_id) # FIX: Persistencia
-        return {"narrative": msg, "mrg_result": None}
+        msg = "⏱️ SISTEMA: Ventana de Salto Temporal activa. Orden encolada para el próximo ciclo."
+        log_event(msg, player_id)
+        return {"narrative": msg, "mrg_result": None, "function_calls_made": []}
 
-    # 1. Configuración
-    if not ai_client:
-        raise ConnectionError("Enlace neuronal con IA interrumpido.")
+    # 1. Verificar Disponibilidad de IA
+    container = get_service_container()
+    if not container.is_ai_available():
+        msg = "⚠️ Enlace neuronal con IA interrumpido. Intente nuevamente."
+        log_event(msg, player_id)
+        return {"narrative": msg, "mrg_result": None, "function_calls_made": []}
 
+    ai_client = container.ai
+
+    # 2. Obtener Datos del Comandante
     commander = get_commander_by_player_id(player_id)
     if not commander:
-        raise ValueError("Error: Identidad de Comandante no verificada.")
+        msg = "⚠️ Error: Identidad de Comandante no verificada en el sistema."
+        log_event(msg, player_id)
+        return {"narrative": msg, "mrg_result": None, "function_calls_made": []}
 
-    tactical_context = _build_player_context(player_id, commander)
-    faction_name = commander.get('faccion_id', 'Independiente')
-    system_prompt = _get_assistant_system_prompt(commander['nombre'], str(faction_name))
+    # 3. Construir Contexto
+    tactical_context = _build_tactical_context(player_id, commander)
+    faction_name = str(commander.get('faccion_id', 'Independiente'))
+    system_prompt = _get_system_prompt(commander['nombre'], faction_name)
 
-    # 2. Análisis de Consulta vs Acción
-    query_keywords = ["cuantos", "cuántos", "que", "qué", "como", "cómo", "donde", "dónde", "quien", "quién", "estado", "listar", "ver", "info", "ayuda", "analisis"]
-    is_informational_query = any(action_text.lstrip().lower().startswith(k) for k in query_keywords) or "?" in action_text
-
+    # 4. Resolver MRG (si no es consulta informativa)
     mrg_result = None
     mrg_info_block = ""
 
-    if is_informational_query:
+    if _is_informational_query(action_text):
+        # Crear un resultado dummy para consultas
+        @dataclass
         class DummyResult:
-            result_type = ResultType.TOTAL_SUCCESS
-            roll = None
+            result_type: ResultType = ResultType.TOTAL_SUCCESS
+            roll: Optional[int] = None
+
         mrg_result = DummyResult()
-        mrg_info_block = ">>> TIPO: SOLICITUD DE INFORMACIÓN. No requiere tirada."
+        mrg_info_block = ">>> TIPO: SOLICITUD DE INFORMACIÓN. No requiere tirada de habilidad."
     else:
+        # Calcular puntos de mérito y resolver acción
         stats = commander.get('stats_json', {})
         attributes = stats.get('atributos', {})
         merit_points = sum(attributes.values()) if attributes else 0
-        
+
         mrg_result = resolve_action(
             merit_points=merit_points,
             difficulty=DIFFICULTY_NORMAL,
@@ -142,21 +356,22 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
             entity_id=commander['id'],
             entity_name=commander['nombre']
         )
-        
+
+        # Aplicar complicaciones si es éxito parcial
         if mrg_result.result_type == ResultType.PARTIAL_SUCCESS:
             apply_partial_success_complication(mrg_result, player_id)
 
         mrg_info_block = f"""
 >>> REPORTE DE EJECUCIÓN FÍSICA (MRG):
 - Resultado: {mrg_result.result_type.value}
-- Detalle Técnico: Roll {mrg_result.roll}
-Usa este resultado para narrar el éxito o fracaso.
+- Detalle Técnico: Tirada {mrg_result.roll}
+Usa este resultado para narrar el éxito o fracaso de la acción.
 """
 
-    # 3. Mensaje Usuario
+    # 5. Construir Mensaje para el Usuario
     user_message = f"""
 [CONTEXTO TÁCTICO]
-{tactical_context}
+{tactical_context.to_json()}
 
 [ORDEN DEL COMANDANTE]
 "{action_text}"
@@ -165,75 +380,33 @@ Usa este resultado para narrar el éxito o fracaso.
 """
 
     try:
-        # 4. Iniciar Chat
+        # 6. Iniciar Chat con Gemini
         chat = ai_client.chats.create(
             model=TEXT_MODEL_NAME,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
                 tools=TOOL_DECLARATIONS,
                 tool_config=types.ToolConfig(
-                    function_calling_config=types.FunctionCallingConfig(mode="AUTO")
+                    function_calling_config=types.FunctionCallingConfig(
+                        mode=types.FunctionCallingConfigMode.AUTO
+                    )
                 ),
-                temperature=0.7,
-                max_output_tokens=1024,
-                top_p=0.95
+                temperature=AI_TEMPERATURE,
+                max_output_tokens=AI_MAX_TOKENS,
+                top_p=AI_TOP_P
             )
         )
 
         response = chat.send_message(user_message)
 
-        # 5. Bucle de Herramientas
-        max_iterations = 10
-        iteration = 0
-        function_calls_made = []
+        # 7. Procesar Function Calls
+        final_response, function_calls_made = _process_function_calls(chat, response)
 
-        while iteration < max_iterations:
-            iteration += 1
-            if response.candidates and response.candidates[0].content.parts:
-                parts = response.candidates[0].content.parts
-                has_function_call = False
-                for part in parts:
-                    if part.function_call:
-                        has_function_call = True
-                        fc = part.function_call
-                        fname = fc.name
-                        fargs = fc.args
+        # 8. Extraer Narrativa
+        narrative = _extract_narrative(final_response)
 
-                        function_calls_made.append({"function": fname, "args": fargs})
-
-                        result_str = ""
-                        if fname in TOOL_FUNCTIONS:
-                            try:
-                                args_dict = {k: v for k, v in fargs.items()}
-                                result_str = TOOL_FUNCTIONS[fname](**args_dict)
-                            except Exception as e:
-                                result_str = json.dumps({"error": str(e)})
-                        else:
-                            result_str = json.dumps({"error": "Función desconocida"})
-
-                        response = chat.send_message([
-                            types.Part.from_function_response(name=fname, response={"result": result_str})
-                        ])
-                        break
-                if not has_function_call:
-                    break
-            else:
-                break
-
-        # 6. Narrativa Final y Persistencia
-        narrative = ""
-        if response and response.candidates and len(response.candidates) > 0:
-            candidate = response.candidates[0]
-            if candidate.content and candidate.content.parts:
-                text_parts = [p.text for p in candidate.content.parts if hasattr(p, 'text') and p.text]
-                narrative = "".join(text_parts).strip()
-
-        if not narrative:
-            narrative = "Orden recibida, Comandante. Procesando datos tácticos..."
-
-        # Guardamos la narrativa REAL en los logs
-        log_display_text = f"🤖 [ASISTENTE] {narrative}"
-        log_event(log_display_text, player_id)
+        # 9. Persistir en Logs
+        log_event(f"🤖 [ASISTENTE] {narrative}", player_id)
 
         return {
             "narrative": narrative,
@@ -243,5 +416,26 @@ Usa este resultado para narrar el éxito o fracaso.
 
     except Exception as e:
         error_msg = f"⚠️ Error de enlace táctico: {str(e)}"
-        log_event(f"🤖 [ASISTENTE] {error_msg}", player_id)
-        return {"narrative": error_msg, "mrg_result": None}
+        log_event(error_msg, player_id, is_error=True)
+
+        return {
+            "narrative": error_msg,
+            "mrg_result": None,
+            "function_calls_made": []
+        }
+
+
+# --- FUNCIONES AUXILIARES PÚBLICAS ---
+
+def check_ai_status() -> Dict[str, Any]:
+    """
+    Verifica el estado del servicio de IA.
+
+    Returns:
+        Diccionario con estado de conexión
+    """
+    container = get_service_container()
+    return {
+        "available": container.is_ai_available(),
+        "error": container.status.ai_error
+    }

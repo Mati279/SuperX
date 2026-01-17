@@ -1,67 +1,123 @@
 # data/log_repository.py
-import datetime
-from typing import List, Dict, Any
-from .database import supabase
+"""
+Repositorio de Logs.
+Gestiona el registro de eventos del sistema.
+"""
 
-def log_event(message: str, player_id: int = None, event_type: str = "GENERAL"):
+import datetime
+from typing import List, Dict, Any, Optional
+
+from data.database import get_supabase
+
+
+def _get_db():
+    """Obtiene el cliente de Supabase de forma segura."""
+    return get_supabase()
+
+
+def log_event(
+    message: str,
+    player_id: Optional[int] = None,
+    event_type: str = "GENERAL",
+    is_error: bool = False
+) -> None:
     """
     Registra un evento en la tabla de logs de la base de datos.
+
+    Args:
+        message: Mensaje del evento
+        player_id: ID del jugador (opcional para eventos globales)
+        event_type: Tipo de evento (GENERAL, ERROR, ECONOMY, etc.)
+        is_error: Si es un error (para formateo de mensaje)
     """
-    # Validar tipos básicos para evitar fallos silenciosos
+    # Para eventos globales sin player_id, solo imprimir
     if player_id is None:
-        print("⚠️ Advertencia: Intento de loggear sin player_id")
+        prefix = "❌ ERROR: " if is_error else "📋 "
+        print(f"{prefix}{message}")
         return
 
-    # FIX: Ajuste al esquema real de la DB (ver db_setup.sql)
-    # message -> evento_texto
-    # created_at -> fecha_evento
-    # event_type -> NO EXISTE en la tabla logs, se ignora
+    # Formatear mensaje si es error
+    final_message = f"❌ {message}" if is_error else message
+
     log_data = {
-        "evento_texto": str(message),
-        "player_id": int(player_id), 
+        "evento_texto": str(final_message),
+        "player_id": int(player_id),
         "fecha_evento": datetime.datetime.now().isoformat()
     }
-    
+
     try:
-        supabase.table("logs").insert(log_data).execute()
+        _get_db().table("logs").insert(log_data).execute()
     except Exception as e:
-        # IMPORTANTE: Imprimir el error real
+        # Imprimir el error pero no fallar
         print(f"❌ ERROR CRÍTICO AL GUARDAR LOG: {e}")
-        # Opcional: re-lanzar si quieres que rompa la app para debuggear
-        # raise e 
+
 
 def get_recent_logs(player_id: int, limit: int = 20) -> List[Dict[str, Any]]:
     """
-    Obtiene los logs más recientes.
-    SIN CACHÉ y con reporte de errores explícito.
+    Obtiene los logs más recientes de un jugador.
+
+    Args:
+        player_id: ID del jugador
+        limit: Cantidad máxima de logs a retornar
+
+    Returns:
+        Lista de logs ordenados por fecha descendente
     """
     if player_id is None:
         return []
 
     try:
-        # FIX: 'descending' no es válido, se usa 'desc'
-        # FIX: 'created_at' no existe, se usa 'fecha_evento'
-        response = supabase.table("logs") \
+        response = _get_db().table("logs") \
             .select("*") \
             .eq("player_id", int(player_id)) \
             .order("fecha_evento", desc=True) \
             .limit(limit) \
             .execute()
-        
-        data = response.data
-        if data is None:
-            return []
-        return data
+
+        return response.data if response.data else []
 
     except Exception as e:
         print(f"❌ ERROR CRÍTICO AL LEER LOGS: {e}")
         return []
 
-def clear_player_logs(player_id: int):
+
+def clear_player_logs(player_id: int) -> bool:
     """
     Elimina el historial de logs de un jugador.
+
+    Args:
+        player_id: ID del jugador
+
+    Returns:
+        True si la operación fue exitosa
     """
     try:
-        supabase.table("logs").delete().eq("player_id", int(player_id)).execute()
+        _get_db().table("logs").delete().eq("player_id", int(player_id)).execute()
+        return True
     except Exception as e:
         print(f"Error al limpiar logs: {e}")
+        return False
+
+
+def get_global_logs(limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Obtiene los logs más recientes de todos los jugadores.
+
+    Args:
+        limit: Cantidad máxima de logs
+
+    Returns:
+        Lista de logs globales
+    """
+    try:
+        response = _get_db().table("logs") \
+            .select("*") \
+            .order("fecha_evento", desc=True) \
+            .limit(limit) \
+            .execute()
+
+        return response.data if response.data else []
+
+    except Exception as e:
+        print(f"❌ ERROR AL LEER LOGS GLOBALES: {e}")
+        return []
