@@ -113,3 +113,24 @@ BUILDING_TYPES = {
         "pops_required": 200
     }
 }
+
+BUILDING_SHUTDOWN_PRIORITY = {
+    "extraccion": 4,
+    "defensa": 3,
+    "industria": 2,
+    "tecnologia": 1
+}
+
+ECONOMY_RATES = {
+    "income_per_pop": 0.1,
+    "infrastructure_security_rate": 0.01,
+    "security_min": 0.5,
+    "security_max": 1.2,
+    "happiness_bonus_max": 0.5
+}
+
+BROKER_PRICES = {
+    "materiales": 10,
+    "componentes": 25,
+    "celulas_energia": 5
+}
