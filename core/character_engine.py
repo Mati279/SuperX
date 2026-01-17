@@ -1,76 +1,46 @@
 # core/character_engine.py
 """
 Motor de Personajes - Lógica pura de generación, progresión y level up.
-Basado en el Protocolo de Génesis v1.5 (Módulo 19 de las reglas).
-
-NO toca DB ni UI - Solo cálculos y transformaciones de datos.
+Refactorizado para generar la estructura completa del CharacterSchema V2.
 """
 
 import random
 from typing import Dict, Any, List, Tuple, Optional
 from core.constants import RACES, CLASSES, SKILL_MAPPING
 from core.rules import calculate_skills
+from core.models import BiologicalSex, CharacterRole
 
 # =============================================================================
 # CONSTANTES DE PROGRESIÓN (Basadas en Módulo 19)
 # =============================================================================
 
-# Tabla de XP por nivel (Nivel 6 = 3265 XP según reglas)
-# Fórmula aproximada: XP = (Nivel * (Nivel - 1) * 500) + 500
 XP_TABLE = {
-    1: 0,
-    2: 500,
-    3: 1500,
-    4: 3000,
-    5: 5000,
-    6: 7500,
-    7: 10500,
-    8: 14000,
-    9: 18000,
-    10: 22500,
-    11: 27500,
-    12: 33000,
-    13: 39000,
-    14: 45500,
-    15: 52500,
-    16: 60000,
-    17: 68000,
-    18: 76500,
-    19: 85500,
-    20: 95000,  # Nivel máximo
+    1: 0, 2: 500, 3: 1500, 4: 3000, 5: 5000, 6: 7500, 7: 10500, 8: 14000,
+    9: 18000, 10: 22500, 11: 27500, 12: 33000, 13: 39000, 14: 45500, 15: 52500,
+    16: 60000, 17: 68000, 18: 76500, 19: 85500, 20: 95000
 }
 
-# Bonificaciones por nivel (Módulo 19.2)
-SKILL_POINTS_PER_LEVEL = 4          # 24 puntos a nivel 6 = 4 por nivel
-ATTRIBUTE_POINT_LEVELS = [5, 10, 15, 20]  # Niveles que otorgan +1 atributo
-FEAT_LEVELS = [1, 5, 10, 15, 20]    # Niveles que otorgan un Feat
+SKILL_POINTS_PER_LEVEL = 4
+ATTRIBUTE_POINT_LEVELS = [5, 10, 15, 20]
+FEAT_LEVELS = [1, 5, 10, 15, 20]
 
-# Constantes de generación
 BASE_ATTRIBUTE_MIN = 8
 BASE_ATTRIBUTE_MAX = 12
-ATTRIBUTE_POOL_LEVEL_1 = 60         # Pool de puntos inicial
 MAX_ATTRIBUTE_VALUE = 20
 MIN_ATTRIBUTE_VALUE = 3
 
-# Rasgos/Feats disponibles
 AVAILABLE_FEATS = [
-    "Liderazgo Táctico",
-    "Logística Avanzada",
-    "Experto en Combate",
-    "Piloto As",
-    "Genio Técnico",
-    "Diplomático Nato",
-    "Infiltrador",
-    "Médico de Campo",
-    "Hacker Élite",
-    "Resistencia Sobrehumana",
-    "Reflejos Mejorados",
-    "Mente Analítica",
-    "Carisma Magnético",
-    "Voluntad de Hierro",
-    "Especialista en Armas"
+    "Liderazgo Táctico", "Logística Avanzada", "Experto en Combate", "Piloto As",
+    "Genio Técnico", "Diplomático Nato", "Infiltrador", "Médico de Campo",
+    "Hacker Élite", "Resistencia Sobrehumana", "Reflejos Mejorados",
+    "Mente Analítica", "Carisma Magnético", "Voluntad de Hierro", "Especialista en Armas"
 ]
 
+PERSONALITY_TRAITS = [
+    "Valiente", "Cauteloso", "Ambicioso", "Leal", "Traicionero", "Optimista",
+    "Cínico", "Pragmático", "Idealista", "Agresivo", "Pacífico", "Curioso",
+    "Tradicionalista", "Rebelde", "Disciplinado", "Caótico"
+]
 
 # =============================================================================
 # FUNCIONES DE GENERACIÓN DE PERSONAJES
@@ -82,144 +52,159 @@ def generate_random_character(
     existing_names: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
-    Genera un personaje completo con stats aleatorios siguiendo las reglas del juego.
-
-    Args:
-        min_level: Nivel mínimo del personaje generado.
-        max_level: Nivel máximo del personaje generado.
-        existing_names: Lista de nombres a evitar para duplicados.
-
-    Returns:
-        Diccionario completo del personaje listo para insertar en DB.
+    Genera un personaje completo siguiendo el nuevo CharacterSchema V2.
     """
     existing_names = existing_names or []
 
-    # 1. Determinar nivel
+    # 1. Determinar nivel y XP
     level = random.randint(min_level, max_level)
     xp = get_xp_for_level(level)
 
-    # 2. Seleccionar raza y clase
+    # 2. Selección de Raza
     race_name, race_data = random.choice(list(RACES.items()))
-    class_name, class_data = random.choice(list(CLASSES.items()))
 
-    # 3. Generar nombre único
-    name = _generate_unique_name(race_name, class_name, existing_names)
+    # 3. Selección de Clase (REGLA: Obligatoria a nivel 3, sino Novato)
+    if level >= 3:
+        class_name, class_data = random.choice(list(CLASSES.items()))
+    else:
+        class_name = "Novato"
+        class_data = {"desc": "Recién reclutado, aún sin especialización.", "bonus_attr": None}
 
-    # 4. Generar atributos base
+    # 4. Generar Bio (Nombre, Apellido, Edad, Sexo)
+    name, surname = _generate_full_name(race_name, existing_names)
+    age = random.randint(18, 50)
+    sex = random.choice([BiologicalSex.MALE, BiologicalSex.FEMALE])
+    
+    # 5. Generar Atributos
     attributes = _generate_base_attributes()
-
-    # 5. Aplicar bonus racial
+    
+    # Bonus Racial
     for attr, bonus in race_data.get("bonus", {}).items():
         if attr in attributes:
             attributes[attr] = min(attributes[attr] + bonus, MAX_ATTRIBUTE_VALUE)
+    
+    # Bonus Clase (si aplica)
+    if class_name != "Novato" and class_data.get("bonus_attr"):
+        bonus_attr = class_data["bonus_attr"]
+        if bonus_attr in attributes:
+            attributes[bonus_attr] = min(attributes[bonus_attr] + 1, MAX_ATTRIBUTE_VALUE)
 
-    # 6. Aplicar bonus de clase
-    bonus_attr = class_data.get("bonus_attr", "")
-    if bonus_attr in attributes:
-        attributes[bonus_attr] = min(attributes[bonus_attr] + 1, MAX_ATTRIBUTE_VALUE)
-
-    # 7. Aplicar puntos extra por nivel
+    # Puntos extra por nivel
     extra_attr_points = sum(1 for lvl in ATTRIBUTE_POINT_LEVELS if lvl <= level)
     _distribute_random_points(attributes, extra_attr_points)
 
-    # 8. Calcular habilidades
+    # 6. Habilidades y Feats
     skills = calculate_skills(attributes)
-
-    # 9. Distribuir puntos de habilidad por nivel
     skill_points = level * SKILL_POINTS_PER_LEVEL
     skills = _boost_skills(skills, skill_points)
 
-    # 10. Asignar feats por nivel
     num_feats = sum(1 for lvl in FEAT_LEVELS if lvl <= level)
     feats = random.sample(AVAILABLE_FEATS, min(num_feats, len(AVAILABLE_FEATS)))
 
-    # 11. Ensamblar el personaje
-    character = {
-        "nombre": name,
-        "nivel": level,
-        "xp": xp,
-        "raza": race_name,
-        "clase": class_name,
-        "stats_json": {
+    # 7. Personalidad y Comportamiento
+    traits = random.sample(PERSONALITY_TRAITS, k=2)
+
+    # 8. Ensamblar Estructura V2 (Mapping a CharacterSchema)
+    
+    stats_json = {
+        "bio": {
+            "nombre": name,
+            "apellido": surname,
+            "edad": age,
+            "sexo": sex.value,
+            "biografia_corta": f"{race_name} {class_name}. {traits[0]} y {traits[1]}."
+        },
+        "taxonomia": {
+            "raza": race_name,
+            "transformaciones": []
+        },
+        "progresion": {
             "nivel": level,
+            "clase": class_name,
             "xp": xp,
-            "bio": {
-                "raza": race_name,
-                "clase": class_name,
-                "descripcion_raza": race_data["desc"],
-                "descripcion_clase": class_data["desc"]
-            },
+            "xp_next": get_xp_for_level(level + 1) if level < 20 else xp,
+            "rango": "Recluta" if level < 5 else "Oficial"
+        },
+        "capacidades": {
             "atributos": attributes,
             "habilidades": skills,
             "feats": feats
+        },
+        "comportamiento": {
+            "rasgos_personalidad": traits,
+            "relaciones": []
+        },
+        "logistica": {
+            "equipo": [],
+            "slots_ocupados": 0,
+            "slots_maximos": 10
+        },
+        "estado": {
+            "estados_activos": ["Disponible"],
+            "sistema_actual": "Desconocido",
+            "ubicacion_local": "Barracones",
+            "rol_asignado": CharacterRole.NONE.value,
+            "accion_actual": "Esperando asignación"
         }
     }
 
-    return character
-
-
-def _generate_unique_name(race: str, char_class: str, existing: List[str]) -> str:
-    """Genera un nombre único para el personaje."""
-    prefixes = ["Kira", "Zane", "Nova", "Rex", "Luna", "Orion", "Vega", "Atlas",
-                "Cyrus", "Maya", "Echo", "Axel", "Jade", "Nero", "Lyra", "Cade",
-                "Ivy", "Dax", "Aria", "Koda", "Zara", "Finn", "Nyx", "Cole"]
-    suffixes = ["-7", "-X", "-9", "-V", "-3", "-K", "-Prime", "-Alpha", "-Zero"]
-
-    for _ in range(100):  # Máximo 100 intentos
-        prefix = random.choice(prefixes)
-        suffix = random.choice(suffixes) if random.random() > 0.5 else f"-{random.randint(1, 999)}"
-        name = f"{prefix}{suffix}"
-        if name not in existing:
-            return name
-
-    # Fallback con timestamp
-    return f"{race}-{char_class}-{random.randint(10000, 99999)}"
-
-
-def _generate_base_attributes() -> Dict[str, int]:
-    """Genera atributos base aleatorios."""
+    # Retorno compatible con lo que espera el repositorio para inserción
     return {
-        "fuerza": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
-        "agilidad": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
-        "intelecto": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
-        "tecnica": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
-        "presencia": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
-        "voluntad": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
+        "nombre": f"{name} {surname}",
+        "rango": stats_json["progresion"]["rango"],
+        "estado": "Disponible",
+        "ubicacion": "Barracones",
+        "stats_json": stats_json
     }
 
 
+def _generate_full_name(race: str, existing: List[str]) -> Tuple[str, str]:
+    """Genera nombre y apellido separados."""
+    names = ["Kira", "Zane", "Nova", "Rex", "Luna", "Orion", "Vega", "Atlas", "Cyrus", "Maya", "Dax", "Koda"]
+    surnames = ["Voss", "Riker", "Thorne", "Stark", "Chen", "Vale", "Kross", "Pike", "Sol", "Merrick"]
+    
+    for _ in range(50):
+        n = random.choice(names)
+        s = random.choice(surnames)
+        full = f"{n} {s}"
+        if full not in existing:
+            return n, s
+    return f"{race}", f"Unit-{random.randint(100,999)}"
+
+
+def _generate_base_attributes() -> Dict[str, int]:
+    return {
+        "fuerza": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
+        "destreza": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
+        "constitucion": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
+        "inteligencia": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
+        "sabiduria": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
+        "carisma": random.randint(BASE_ATTRIBUTE_MIN, BASE_ATTRIBUTE_MAX),
+    }
+
 def _distribute_random_points(attributes: Dict[str, int], points: int) -> None:
-    """Distribuye puntos aleatorios entre los atributos (in-place)."""
     attr_keys = list(attributes.keys())
     for _ in range(points):
         attr = random.choice(attr_keys)
         if attributes[attr] < MAX_ATTRIBUTE_VALUE:
             attributes[attr] += 1
 
-
 def _boost_skills(skills: Dict[str, int], points: int) -> Dict[str, int]:
-    """Distribuye puntos de habilidad adicionales."""
     skill_keys = list(skills.keys())
     boosted = skills.copy()
-
     for _ in range(points):
         skill = random.choice(skill_keys)
         boosted[skill] += 1
-
     return boosted
 
-
 # =============================================================================
-# FUNCIONES DE PROGRESIÓN Y LEVEL UP
+# FUNCIONES DE PROGRESIÓN (Helper)
 # =============================================================================
 
 def get_xp_for_level(level: int) -> int:
-    """Obtiene el XP necesario para alcanzar un nivel específico."""
     return XP_TABLE.get(level, XP_TABLE[20])
 
-
 def get_level_from_xp(xp: int) -> int:
-    """Calcula el nivel actual basado en el XP total."""
     current_level = 1
     for level, required_xp in sorted(XP_TABLE.items()):
         if xp >= required_xp:
@@ -228,257 +213,115 @@ def get_level_from_xp(xp: int) -> int:
             break
     return current_level
 
-
 def calculate_level_progress(current_xp: int, stored_level: Optional[int] = None) -> Dict[str, Any]:
-    """
-    Calcula el progreso hacia el siguiente nivel.
-
-    Args:
-        current_xp: XP actual del personaje.
-        stored_level: Nivel almacenado en la DB (opcional). Si se proporciona,
-                      se usa para determinar si hay un ascenso pendiente.
-
-    Returns:
-        Diccionario con información de progreso:
-        - current_level: Nivel actual (almacenado o calculado)
-        - next_level: Siguiente nivel
-        - xp_current: XP para el nivel actual
-        - xp_next: XP necesario para el siguiente nivel
-        - xp_progress: XP acumulado hacia el siguiente nivel
-        - xp_needed: XP faltante para subir
-        - progress_percent: Porcentaje de progreso (0-100)
-        - can_level_up: Si puede subir de nivel ahora
-    """
-    # Calcular el nivel que debería tener según XP
     level_from_xp = get_level_from_xp(current_xp)
-
-    # Si se proporciona nivel almacenado, usarlo como base
-    # Esto permite detectar "ascensos pendientes"
+    
     if stored_level is not None:
         current_level = stored_level
-        # Puede subir si el nivel por XP es mayor que el almacenado
         can_level_up = level_from_xp > stored_level and stored_level < 20
     else:
         current_level = level_from_xp
         can_level_up = False
 
-    # Nivel máximo
     if current_level >= 20:
-        return {
-            "current_level": 20,
-            "next_level": 20,
-            "xp_current": XP_TABLE[20],
-            "xp_next": XP_TABLE[20],
-            "xp_progress": 0,
-            "xp_needed": 0,
-            "progress_percent": 100,
-            "can_level_up": False
-        }
+        return {"current_level": 20, "can_level_up": False, "progress_percent": 100}
 
-    xp_current_level = XP_TABLE[current_level]
-    xp_next_level = XP_TABLE[current_level + 1]
-    xp_for_next = xp_next_level - xp_current_level
-    xp_progress = current_xp - xp_current_level
-    xp_needed = xp_next_level - current_xp
-    progress_percent = min(100, int((xp_progress / xp_for_next) * 100)) if xp_for_next > 0 else 100
-
-    # Si no se proporcionó stored_level, determinar can_level_up de forma tradicional
-    if stored_level is None:
-        can_level_up = current_xp >= xp_next_level
-
+    xp_current = XP_TABLE[current_level]
+    xp_next = XP_TABLE[current_level + 1]
+    xp_progress = current_xp - xp_current
+    xp_total_needed = xp_next - xp_current
+    
+    percent = min(100, int((xp_progress / xp_total_needed) * 100)) if xp_total_needed > 0 else 100
+    
     return {
         "current_level": current_level,
         "next_level": current_level + 1,
-        "xp_current": xp_current_level,
-        "xp_next": xp_next_level,
-        "xp_progress": xp_progress,
-        "xp_needed": max(0, xp_needed),
-        "progress_percent": progress_percent,
-        "can_level_up": can_level_up
+        "progress_percent": percent,
+        "can_level_up": can_level_up or (current_xp >= xp_next)
     }
-
 
 def apply_level_up(character_data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    Aplica el level up a un personaje si tiene suficiente XP.
-
-    Args:
-        character_data: Diccionario completo del personaje (de la DB).
-
-    Returns:
-        Tupla con:
-        - Nuevo stats_json actualizado
-        - Diccionario con los cambios aplicados (para mostrar al jugador)
-
-    Raises:
-        ValueError: Si el personaje no tiene suficiente XP para subir.
+    Aplica level up sobre la estructura V2.
     """
     stats = character_data.get("stats_json", {})
-    current_xp = stats.get("xp", 0)
-    current_level = stats.get("nivel", 1)
-
-    # Pasar el nivel almacenado para detectar ascensos pendientes
+    # Adaptar acceso a la nueva estructura
+    prog = stats.get("progresion", {})
+    caps = stats.get("capacidades", {})
+    
+    current_level = prog.get("nivel", 1)
+    current_xp = prog.get("xp", 0)
+    
     progress = calculate_level_progress(current_xp, stored_level=current_level)
+    if not progress.get("can_level_up"):
+        raise ValueError("XP insuficiente para ascender.")
 
-    if not progress["can_level_up"]:
-        raise ValueError(f"XP insuficiente. Necesitas {progress['xp_needed']} XP más para ascender.")
+    new_level = current_level + 1
+    changes = {"bonificaciones": []}
 
-    # Calcular nuevo nivel (el nivel que debería tener según XP)
-    level_from_xp = get_level_from_xp(current_xp)
-    new_level = current_level + 1  # Subir un nivel a la vez
-
-    # Preparar cambios
-    changes = {
-        "nivel_anterior": current_level,
-        "nivel_nuevo": new_level,
-        "bonificaciones": []
-    }
-
-    # Copiar stats para modificar
+    # Copias para modificar
     new_stats = stats.copy()
-    new_stats["nivel"] = new_level
+    new_prog = prog.copy()
+    new_caps = caps.copy()
+    
+    new_attributes = new_caps.get("atributos", {}).copy()
+    new_skills = new_caps.get("habilidades", {}).copy()
+    new_feats = new_caps.get("feats", []).copy()
 
-    # Copiar atributos y habilidades
-    new_attributes = stats.get("atributos", {}).copy()
-    new_skills = stats.get("habilidades", {}).copy()
-    new_feats = stats.get("feats", []).copy()
+    # 1. Clase a Nivel 3 (Lógica especial)
+    # Si sube a nivel 3, debería elegir clase. Aquí simulamos o dejamos pendiente.
+    if new_level == 3 and new_prog.get("clase") == "Novato":
+        changes["bonificaciones"].append("¡ELECCIÓN DE CLASE DISPONIBLE!")
+        # Por defecto asignamos una random si no hay input (o se manejaría en UI)
+        new_class_name, _ = random.choice(list(CLASSES.items()))
+        new_prog["clase"] = new_class_name 
+        changes["bonificaciones"].append(f"Clase asignada: {new_class_name}")
 
-    # 1. Otorgar puntos de habilidad
-    skill_points_gained = SKILL_POINTS_PER_LEVEL
-    changes["bonificaciones"].append(f"+{skill_points_gained} puntos de habilidad")
-
-    # Distribuir automáticamente (el jugador puede redistribuir después)
+    # 2. Skill Points
+    changes["bonificaciones"].append(f"+{SKILL_POINTS_PER_LEVEL} puntos de habilidad")
     skill_keys = list(new_skills.keys())
-    for _ in range(skill_points_gained):
-        skill = random.choice(skill_keys)
-        new_skills[skill] += 1
+    if skill_keys:
+        for _ in range(SKILL_POINTS_PER_LEVEL):
+            skill = random.choice(skill_keys)
+            new_skills[skill] += 1
 
-    # 2. Verificar si otorga punto de atributo
+    # 3. Attribute Points
     if new_level in ATTRIBUTE_POINT_LEVELS:
         changes["bonificaciones"].append("+1 punto de atributo")
-        # Añadir a un atributo aleatorio (el jugador puede redistribuir)
         attr_keys = list(new_attributes.keys())
-        chosen_attr = random.choice(attr_keys)
-        if new_attributes[chosen_attr] < MAX_ATTRIBUTE_VALUE:
-            new_attributes[chosen_attr] += 1
-            changes["bonificaciones"].append(f"+1 {chosen_attr.capitalize()}")
+        if attr_keys:
+            chosen = random.choice(attr_keys)
+            if new_attributes[chosen] < MAX_ATTRIBUTE_VALUE:
+                new_attributes[chosen] += 1
+                changes["bonificaciones"].append(f"+1 {chosen.capitalize()}")
 
-    # 3. Verificar si otorga feat
+    # 4. Feats
     if new_level in FEAT_LEVELS:
-        changes["bonificaciones"].append("+1 Rasgo/Feat")
         available = [f for f in AVAILABLE_FEATS if f not in new_feats]
         if available:
             new_feat = random.choice(available)
             new_feats.append(new_feat)
             changes["bonificaciones"].append(f"Nuevo rasgo: {new_feat}")
 
-    # Actualizar stats
-    new_stats["atributos"] = new_attributes
-    new_stats["habilidades"] = new_skills
-    new_stats["feats"] = new_feats
+    # Actualizar estructura
+    new_prog["nivel"] = new_level
+    new_prog["xp_next"] = get_xp_for_level(new_level + 1) if new_level < 20 else current_xp
+    
+    new_caps["atributos"] = new_attributes
+    new_caps["habilidades"] = new_skills
+    new_caps["feats"] = new_feats
+    
+    new_stats["progresion"] = new_prog
+    new_stats["capacidades"] = new_caps
 
     return new_stats, changes
 
-
-def add_xp(stats_json: Dict[str, Any], xp_amount: int) -> Dict[str, Any]:
-    """
-    Añade XP a un personaje y actualiza su stats_json.
-
-    Args:
-        stats_json: El JSON de stats actual del personaje.
-        xp_amount: Cantidad de XP a añadir.
-
-    Returns:
-        Nuevo stats_json con XP actualizado.
-    """
-    new_stats = stats_json.copy()
-    current_xp = new_stats.get("xp", 0)
-    new_stats["xp"] = current_xp + xp_amount
-    return new_stats
-
-
-def reroll_character_stats(character_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Regenera los atributos de un personaje manteniendo nivel, XP y clase.
-    Útil para debug/testing.
-
-    Args:
-        character_data: Diccionario del personaje.
-
-    Returns:
-        Nuevo stats_json con atributos regenerados.
-    """
-    stats = character_data.get("stats_json", {})
-    level = stats.get("nivel", 1)
-    xp = stats.get("xp", 0)
-    bio = stats.get("bio", {})
-    feats = stats.get("feats", [])
-
-    race_name = bio.get("raza", "Humano")
-    class_name = bio.get("clase", "Soldado")
-
-    race_data = RACES.get(race_name, {"bonus": {}})
-    class_data = CLASSES.get(class_name, {"bonus_attr": ""})
-
-    # Regenerar atributos
-    new_attributes = _generate_base_attributes()
-
-    # Aplicar bonus racial
-    for attr, bonus in race_data.get("bonus", {}).items():
-        if attr in new_attributes:
-            new_attributes[attr] = min(new_attributes[attr] + bonus, MAX_ATTRIBUTE_VALUE)
-
-    # Aplicar bonus de clase
-    bonus_attr = class_data.get("bonus_attr", "")
-    if bonus_attr in new_attributes:
-        new_attributes[bonus_attr] = min(new_attributes[bonus_attr] + 1, MAX_ATTRIBUTE_VALUE)
-
-    # Aplicar puntos extra por nivel
-    extra_attr_points = sum(1 for lvl in ATTRIBUTE_POINT_LEVELS if lvl <= level)
-    _distribute_random_points(new_attributes, extra_attr_points)
-
-    # Recalcular habilidades
-    new_skills = calculate_skills(new_attributes)
-    skill_points = level * SKILL_POINTS_PER_LEVEL
-    new_skills = _boost_skills(new_skills, skill_points)
-
-    return {
-        "nivel": level,
-        "xp": xp,
-        "bio": bio,
-        "atributos": new_attributes,
-        "habilidades": new_skills,
-        "feats": feats
-    }
-
-
-# =============================================================================
-# FUNCIONES DE CÁLCULO DE COSTOS
-# =============================================================================
-
 def calculate_recruitment_cost(character: Dict[str, Any]) -> int:
-    """
-    Calcula el costo de reclutamiento basado en nivel y atributos.
-
-    Args:
-        character: Diccionario del personaje.
-
-    Returns:
-        Costo en créditos.
-    """
+    """Calcula costo basado en estructura V2."""
     stats = character.get("stats_json", {})
-    level = stats.get("nivel", 1)
-    attributes = stats.get("atributos", {})
-
-    # Costo base por nivel
+    level = stats.get("progresion", {}).get("nivel", 1)
+    attrs = stats.get("capacidades", {}).get("atributos", {})
+    
     base_cost = level * 200
-
-    # Bonus por suma de atributos
-    attr_sum = sum(attributes.values())
-    attr_bonus = attr_sum * 5
-
-    # Varianza aleatoria
-    variance = random.uniform(0.85, 1.15)
-
-    total_cost = int((base_cost + attr_bonus) * variance)
-    return max(100, total_cost)  # Mínimo 100 créditos
+    attr_sum = sum(attrs.values()) if attrs else 30
+    return int((base_cost + attr_sum * 5) * random.uniform(0.9, 1.1))

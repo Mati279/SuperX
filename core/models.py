@@ -3,6 +3,7 @@
 Modelos de Dominio Tipados.
 Define las estructuras de datos centrales del juego usando Pydantic
 para garantizar validación y serialización consistente.
+Refactorizado para cumplir con el esquema V2 de Personajes.
 """
 
 from typing import Dict, Any, Optional, List
@@ -18,63 +19,125 @@ class PlayerStatus(str, Enum):
     INACTIVE = "inactive"
     BANNED = "banned"
 
-
 class CharacterStatus(str, Enum):
-    """Estados posibles de un personaje."""
+    """Estados dinámicos del personaje."""
     AVAILABLE = "Disponible"
     ON_MISSION = "En Misión"
     INJURED = "Herido"
     DECEASED = "Fallecido"
+    TRAINING = "Entrenando"
+    TRANSIT = "En Tránsito"
 
+class BiologicalSex(str, Enum):
+    MALE = "Masculino"
+    FEMALE = "Femenino"
+    ANDROGYNOUS = "Andrógino"
+    ASEXUAL = "Asexual"
+    UNKNOWN = "Desconocido"
 
-class CharacterClass(str, Enum):
-    """Clases de personajes disponibles."""
-    OPERACIONES = "Operaciones"
-    CIENCIA = "Ciencia"
-    INGENIERIA = "Ingeniería"
-    TACTICO = "Táctico"
-    DIPLOMATICO = "Diplomático"
-    EXPLORADOR = "Explorador"
+class CharacterRole(str, Enum):
+    """Roles operativos asignables."""
+    COMMANDER = "Comandante"
+    PILOT = "Piloto"
+    GUNNER = "Artillero"
+    ENGINEER = "Ingeniero"
+    MEDIC = "Médico"
+    SCIENTIST = "Científico"
+    DIPLOMAT = "Diplomático"
+    MARINE = "Infante"
+    NONE = "Sin Asignar"
 
+# --- SUB-MODELOS DE PERSONAJE (COMPOSICIÓN) ---
 
-# --- MODELOS DE ATRIBUTOS ---
+class CharacterBio(BaseModel):
+    """Identificadores de Entidad."""
+    model_config = ConfigDict(extra='allow')
+    nombre: str
+    apellido: str
+    edad: int
+    sexo: BiologicalSex = BiologicalSex.UNKNOWN
+    biografia_corta: str = Field(default="Sin biografía registrada.")
+
+class CharacterTaxonomy(BaseModel):
+    """Taxonomía Biológica y Evolutiva."""
+    raza: str
+    transformaciones: List[str] = Field(default_factory=list)
+
+class CharacterProgression(BaseModel):
+    """Progresión y Jerarquía."""
+    nivel: int = Field(default=1, ge=1)
+    clase: str = Field(default="Novato")  # "Novato" para niveles 1-2
+    xp: int = Field(default=0, ge=0)
+    xp_next: int = Field(default=500)
+    rango: str = Field(default="Recluta")
 
 class CharacterAttributes(BaseModel):
-    """Atributos base de un personaje."""
+    """Atributos Primarios."""
     model_config = ConfigDict(extra='allow')
+    fuerza: int = Field(default=5, ge=1, le=20)
+    destreza: int = Field(default=5, ge=1, le=20)
+    constitucion: int = Field(default=5, ge=1, le=20)
+    inteligencia: int = Field(default=5, ge=1, le=20)
+    sabiduria: int = Field(default=5, ge=1, le=20)
+    carisma: int = Field(default=5, ge=1, le=20)
 
-    fuerza: int = Field(default=5, ge=1, le=20, description="Fuerza física")
-    destreza: int = Field(default=5, ge=1, le=20, description="Agilidad y reflejos")
-    constitucion: int = Field(default=5, ge=1, le=20, description="Resistencia física")
-    inteligencia: int = Field(default=5, ge=1, le=20, description="Capacidad analítica")
-    sabiduria: int = Field(default=5, ge=1, le=20, description="Percepción y juicio")
-    carisma: int = Field(default=5, ge=1, le=20, description="Liderazgo y persuasión")
-
-
-class CharacterStats(BaseModel):
-    """Estadísticas completas de un personaje."""
-    model_config = ConfigDict(extra='allow')
-
-    nivel: int = Field(default=1, ge=1)
-    xp: int = Field(default=0, ge=0)
-    xp_next: int = Field(default=100, ge=0)
+class CharacterCapabilities(BaseModel):
+    """Núcleo de Capacidades."""
     atributos: CharacterAttributes = Field(default_factory=CharacterAttributes)
     habilidades: Dict[str, int] = Field(default_factory=dict)
-    talentos: List[str] = Field(default_factory=list)
+    feats: List[str] = Field(default_factory=list)
+
+class CharacterBehavior(BaseModel):
+    """Perfiles de Comportamiento y Capas Sociales."""
+    rasgos_personalidad: List[str] = Field(default_factory=list)
+    relaciones: List[Dict[str, Any]] = Field(default_factory=list) # Lista de nodos de relación
+
+class CharacterLogistics(BaseModel):
+    """Logística y Equipamiento."""
+    equipo: List[Dict[str, Any]] = Field(default_factory=list)
+    slots_ocupados: int = 0
+    slots_maximos: int = 10
+
+class CharacterLocation(BaseModel):
+    """Geolocalización."""
+    sistema_actual: str = "Desconocido"
+    ubicacion_local: str = "Base Principal" # Planeta o Estación
+    coordenadas: Optional[Dict[str, float]] = None
+
+class CharacterDynamicState(BaseModel):
+    """Estado Dinámico y Simulación."""
+    estados_activos: List[str] = Field(default_factory=list) # Ej: "Herido", "Motivado"
+    ubicacion: CharacterLocation = Field(default_factory=CharacterLocation)
+    rol_asignado: CharacterRole = CharacterRole.NONE
+    accion_actual: str = "Esperando órdenes"
+
+class CharacterSchema(BaseModel):
+    """
+    ESQUEMA MAESTRO DEL PERSONAJE.
+    Representa la estructura completa almacenada en 'stats_json'.
+    """
+    model_config = ConfigDict(extra='allow')
+    
+    bio: CharacterBio
+    taxonomia: CharacterTaxonomy
+    progresion: CharacterProgression
+    capacidades: CharacterCapabilities
+    comportamiento: CharacterBehavior
+    logistica: CharacterLogistics
+    estado: CharacterDynamicState
 
 
-# --- MODELOS DE RECURSOS ---
+# --- MODELOS DE RECURSOS JUGADOR ---
 
 class PlayerResources(BaseModel):
     """Recursos económicos del jugador."""
-    creditos: int = Field(default=0, ge=0, description="Créditos Imperiales")
-    materiales: int = Field(default=0, ge=0, description="Materiales base")
-    componentes: int = Field(default=0, ge=0, description="Componentes manufacturados")
-    celulas_energia: int = Field(default=0, ge=0, description="Células de energía")
-    influencia: int = Field(default=0, ge=0, description="Influencia política")
+    creditos: int = Field(default=0, ge=0)
+    materiales: int = Field(default=0, ge=0)
+    componentes: int = Field(default=0, ge=0)
+    celulas_energia: int = Field(default=0, ge=0)
+    influencia: int = Field(default=0, ge=0)
 
     def to_dict(self) -> Dict[str, int]:
-        """Convierte a diccionario para actualizaciones de DB."""
         return {
             "creditos": self.creditos,
             "materiales": self.materiales,
@@ -85,7 +148,6 @@ class PlayerResources(BaseModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'PlayerResources':
-        """Crea instancia desde diccionario de DB."""
         return cls(
             creditos=data.get("creditos", 0),
             materiales=data.get("materiales", 0),
@@ -116,7 +178,6 @@ class PlayerData(BaseModel):
 
     @property
     def resources(self) -> PlayerResources:
-        """Obtiene los recursos como objeto tipado."""
         return PlayerResources(
             creditos=self.creditos,
             materiales=self.materiales,
@@ -127,16 +188,18 @@ class PlayerData(BaseModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'PlayerData':
-        """Crea instancia desde diccionario de DB (maneja claves faltantes)."""
         if not data:
             raise ValueError("No se puede crear PlayerData desde datos vacíos")
         return cls(**{k: v for k, v in data.items() if v is not None})
 
 
-# --- MODELOS DE COMANDANTE ---
+# --- MODELOS DE COMANDANTE / PERSONAJE (API) ---
 
 class CommanderData(BaseModel):
-    """Datos del comandante (personaje principal del jugador)."""
+    """
+    Datos del comandante o personaje recuperados de la DB.
+    Actúa como wrapper sobre la tabla 'characters'.
+    """
     model_config = ConfigDict(extra='allow')
 
     id: int
@@ -144,26 +207,56 @@ class CommanderData(BaseModel):
     nombre: str
     rango: str = "Comandante"
     es_comandante: bool = True
-    clase: str = "Operaciones"
-    nivel: int = 1
-    xp: int = 0
-    ubicacion: str = "Puesto de Mando"
-    estado: str = "Disponible"
+    ubicacion: str = "Base Principal" # Columna DB legacy/sync
+    estado: str = "Disponible" # Columna DB legacy/sync
     stats_json: Dict[str, Any] = Field(default_factory=dict)
     faccion_id: Optional[int] = None
 
     @property
-    def stats(self) -> CharacterStats:
-        """Obtiene las estadísticas como objeto tipado."""
-        return CharacterStats(**self.stats_json) if self.stats_json else CharacterStats()
+    def sheet(self) -> CharacterSchema:
+        """
+        Devuelve el esquema completo del personaje validado.
+        Si falla la validación (datos viejos), intenta migrar al vuelo o devuelve defecto.
+        """
+        try:
+            return CharacterSchema(**self.stats_json)
+        except Exception:
+            # Fallback para datos antiguos o corruptos, intenta reconstruir un mínimo viable
+            # Esto evita crashes si la DB tiene esquemas viejos
+            return CharacterSchema(
+                bio=CharacterBio(nombre=self.nombre, apellido="", edad=30, biografia_corta="Datos migrados"),
+                taxonomia=CharacterTaxonomy(raza="Humano"),
+                progresion=CharacterProgression(),
+                capacidades=CharacterCapabilities(),
+                comportamiento=CharacterBehavior(),
+                logistica=CharacterLogistics(),
+                estado=CharacterDynamicState()
+            )
 
     @property
     def attributes(self) -> CharacterAttributes:
         """Acceso directo a atributos."""
-        return self.stats.atributos
+        # Intenta obtener de la estructura nueva, fallback a la vieja si es necesario
+        if "capacidades" in self.stats_json and "atributos" in self.stats_json["capacidades"]:
+             return CharacterAttributes(**self.stats_json["capacidades"]["atributos"])
+        # Fallback estructura vieja (directamente en raiz o bajo stats)
+        if "atributos" in self.stats_json:
+            return CharacterAttributes(**self.stats_json["atributos"])
+        return CharacterAttributes()
+
+    @property
+    def nivel(self) -> int:
+        if "progresion" in self.stats_json:
+            return self.stats_json["progresion"].get("nivel", 1)
+        return self.stats_json.get("nivel", 1)
+
+    @property
+    def clase(self) -> str:
+        if "progresion" in self.stats_json:
+            return self.stats_json["progresion"].get("clase", "Novato")
+        return self.stats_json.get("clase", "Novato")
 
     def get_merit_points(self) -> int:
-        """Calcula los puntos de mérito totales (suma de atributos)."""
         attrs = self.attributes
         return (
             attrs.fuerza + attrs.destreza + attrs.constitucion +
@@ -172,13 +265,12 @@ class CommanderData(BaseModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'CommanderData':
-        """Crea instancia desde diccionario de DB."""
         if not data:
             raise ValueError("No se puede crear CommanderData desde datos vacíos")
         return cls(**{k: v for k, v in data.items() if v is not None})
 
 
-# --- MODELOS DE PLANETA ---
+# --- MODELOS DE PLANETA Y EDIFICIOS ---
 
 class PlanetAsset(BaseModel):
     """Activo planetario (colonia del jugador)."""
@@ -198,7 +290,6 @@ class PlanetAsset(BaseModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'PlanetAsset':
-        """Crea instancia desde diccionario de DB."""
         if not data:
             raise ValueError("No se puede crear PlanetAsset desde datos vacíos")
         return cls(**{k: v for k, v in data.items() if v is not None})
@@ -220,7 +311,6 @@ class Building(BaseModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Building':
-        """Crea instancia desde diccionario de DB."""
         if not data:
             raise ValueError("No se puede crear Building desde datos vacíos")
         return cls(**{k: v for k, v in data.items() if v is not None})
@@ -229,7 +319,7 @@ class Building(BaseModel):
 # --- MODELO DE PRODUCCIÓN ---
 
 class ProductionSummary(BaseModel):
-    """Resumen de producción de un planeta o jugador."""
+    """Resumen de producción."""
     materiales: int = 0
     componentes: int = 0
     celulas_energia: int = 0
@@ -237,7 +327,6 @@ class ProductionSummary(BaseModel):
     creditos: int = 0
 
     def add(self, other: 'ProductionSummary') -> 'ProductionSummary':
-        """Suma dos resúmenes de producción."""
         return ProductionSummary(
             materiales=self.materiales + other.materiales,
             componentes=self.componentes + other.componentes,
@@ -247,7 +336,6 @@ class ProductionSummary(BaseModel):
         )
 
     def to_dict(self) -> Dict[str, int]:
-        """Convierte a diccionario."""
         return {
             "materiales": self.materiales,
             "componentes": self.componentes,
@@ -256,11 +344,10 @@ class ProductionSummary(BaseModel):
             "creditos": self.creditos
         }
 
-
 # --- RESULTADOS DE OPERACIONES ---
 
 class EconomyTickResult(BaseModel):
-    """Resultado del procesamiento económico de un jugador."""
+    """Resultado del procesamiento económico."""
     player_id: int
     total_income: int = 0
     production: ProductionSummary = Field(default_factory=ProductionSummary)
