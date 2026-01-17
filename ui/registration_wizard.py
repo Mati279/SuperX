@@ -6,6 +6,10 @@ from data.character_repository import update_commander_profile, get_commander_by
 from core.constants import RACES, CLASSES, POINTS_AVAILABLE_FOR_ATTRIBUTES
 from core.rules import calculate_attribute_cost
 
+# --- CAMBIO CLAVE AQUÍ ---
+# Importamos el protocolo completo, no la función interna
+from core.genesis_engine import genesis_protocol 
+
 def render_registration_wizard():
     """
     Renderiza el wizard de creación de personaje de múltiples pasos.
@@ -117,26 +121,26 @@ def _render_step_3_attributes():
         if st.button("Finalizar Creación y Desplegar", type="primary", disabled=(remaining < 0)):
             try:
                 with st.spinner("Estableciendo base de operaciones y protocolos iniciales..."):
-                    # 1. Actualizar el comandante (Perfil y Stats)
+                    # 1. Guardar Stats
                     commander = update_commander_profile(
                         st.session_state.temp_player['id'],
                         st.session_state.temp_char_bio,
                         final_attrs
                     )
                     
-                    # 2. EJECUTAR PROTOCOLO GÉNESIS (Creación de Base y Ubicación)
-                    from core.genesis_engine import genesis_protocol
+                    # 2. EJECUTAR EL PROTOCOLO GÉNESIS (Aquí estaba el error)
+                    # Ahora llamamos a la función maestra, no a la interna.
                     genesis_success = genesis_protocol(st.session_state.temp_player['id'])
                     
                     if not genesis_success:
-                        st.error("Error crítico estableciendo la base planetaria. El usuario se creó pero no tiene ubicación.")
+                        st.error("Error crítico estableciendo la base planetaria. Contacta soporte.")
                         return
 
                 if commander:
                     st.balloons()
                     login_user(st.session_state.temp_player, commander)
                 else:
-                    # Fallback de seguridad
+                    # Fallback por seguridad
                     commander = get_commander_by_player_id(st.session_state.temp_player['id'])
                     if commander:
                         st.balloons()
