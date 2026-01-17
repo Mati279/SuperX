@@ -54,3 +54,9 @@ MALUS_EXPOSURE_RISK = True        # Revela posición o secretos
 # Fórmula: Bono = Max * (Puntos / (Puntos + K))
 ASYMPTOTIC_MAX_BONUS = 100
 ASYMPTOTIC_K_FACTOR = 50
+
+# --- ESTADOS DE ENTIDAD (Restaurados para compatibilidad) ---
+# Se alinean con los valores usados en CharacterStatus (core/models.py)
+ENTITY_STATUS_ACTIVE = "Disponible"
+ENTITY_STATUS_INCAPACITATED = "Herido"  # Mapeado a 'Herido' para consistencia en DB
+ENTITY_STATUS_EXPOSED = "Expuesto"      # Estado temporal lógico
