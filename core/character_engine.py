@@ -229,16 +229,18 @@ def get_level_from_xp(xp: int) -> int:
     return current_level
 
 
-def calculate_level_progress(current_xp: int) -> Dict[str, Any]:
+def calculate_level_progress(current_xp: int, stored_level: Optional[int] = None) -> Dict[str, Any]:
     """
     Calcula el progreso hacia el siguiente nivel.
 
     Args:
         current_xp: XP actual del personaje.
+        stored_level: Nivel almacenado en la DB (opcional). Si se proporciona,
+                      se usa para determinar si hay un ascenso pendiente.
 
     Returns:
         Diccionario con información de progreso:
-        - current_level: Nivel actual
+        - current_level: Nivel actual (almacenado o calculado)
         - next_level: Siguiente nivel
         - xp_current: XP para el nivel actual
         - xp_next: XP necesario para el siguiente nivel
@@ -247,7 +249,18 @@ def calculate_level_progress(current_xp: int) -> Dict[str, Any]:
         - progress_percent: Porcentaje de progreso (0-100)
         - can_level_up: Si puede subir de nivel ahora
     """
-    current_level = get_level_from_xp(current_xp)
+    # Calcular el nivel que debería tener según XP
+    level_from_xp = get_level_from_xp(current_xp)
+
+    # Si se proporciona nivel almacenado, usarlo como base
+    # Esto permite detectar "ascensos pendientes"
+    if stored_level is not None:
+        current_level = stored_level
+        # Puede subir si el nivel por XP es mayor que el almacenado
+        can_level_up = level_from_xp > stored_level and stored_level < 20
+    else:
+        current_level = level_from_xp
+        can_level_up = False
 
     # Nivel máximo
     if current_level >= 20:
@@ -269,6 +282,10 @@ def calculate_level_progress(current_xp: int) -> Dict[str, Any]:
     xp_needed = xp_next_level - current_xp
     progress_percent = min(100, int((xp_progress / xp_for_next) * 100)) if xp_for_next > 0 else 100
 
+    # Si no se proporcionó stored_level, determinar can_level_up de forma tradicional
+    if stored_level is None:
+        can_level_up = current_xp >= xp_next_level
+
     return {
         "current_level": current_level,
         "next_level": current_level + 1,
@@ -277,7 +294,7 @@ def calculate_level_progress(current_xp: int) -> Dict[str, Any]:
         "xp_progress": xp_progress,
         "xp_needed": max(0, xp_needed),
         "progress_percent": progress_percent,
-        "can_level_up": current_xp >= xp_next_level
+        "can_level_up": can_level_up
     }
 
 
@@ -300,13 +317,15 @@ def apply_level_up(character_data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict
     current_xp = stats.get("xp", 0)
     current_level = stats.get("nivel", 1)
 
-    progress = calculate_level_progress(current_xp)
+    # Pasar el nivel almacenado para detectar ascensos pendientes
+    progress = calculate_level_progress(current_xp, stored_level=current_level)
 
     if not progress["can_level_up"]:
-        raise ValueError(f"XP insuficiente. Necesitas {progress['xp_needed']} XP más.")
+        raise ValueError(f"XP insuficiente. Necesitas {progress['xp_needed']} XP más para ascender.")
 
-    # Calcular nuevo nivel
-    new_level = progress["next_level"]
+    # Calcular nuevo nivel (el nivel que debería tener según XP)
+    level_from_xp = get_level_from_xp(current_xp)
+    new_level = current_level + 1  # Subir un nivel a la vez
 
     # Preparar cambios
     changes = {

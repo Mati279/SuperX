@@ -258,8 +258,8 @@ def render_character_card(char: Dict[str, Any], player_id: int, is_commander: bo
     nivel = stats.get('nivel', 1)
     xp = stats.get('xp', 0)
 
-    # Calcular progreso de nivel
-    progress = calculate_level_progress(xp)
+    # Calcular progreso de nivel (pasando el nivel almacenado para detectar ascensos pendientes)
+    progress = calculate_level_progress(xp, stored_level=nivel)
 
     # Header de la tarjeta
     rank_icon = "👑" if is_commander else "🎖️"
@@ -410,7 +410,8 @@ def _render_debug_panel(char: Dict[str, Any], player_id: int):
                 # Dar XP suficiente para el siguiente nivel
                 stats = char.get("stats_json", {})
                 current_xp = stats.get("xp", 0)
-                progress = calculate_level_progress(current_xp)
+                current_level = stats.get("nivel", 1)
+                progress = calculate_level_progress(current_xp, stored_level=current_level)
 
                 if progress["can_level_up"]:
                     new_stats, changes = apply_level_up(char)
@@ -422,7 +423,7 @@ def _render_debug_panel(char: Dict[str, Any], player_id: int):
                     # Dar XP para alcanzar el siguiente nivel
                     xp_needed = progress["xp_next"] - current_xp
                     add_xp_to_character(char['id'], xp_needed, player_id)
-                    st.info(f"+{xp_needed} XP")
+                    st.info(f"+{xp_needed} XP (ahora puedes ascender)")
                     st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
