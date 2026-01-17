@@ -64,18 +64,20 @@ def genesis_protocol(player_id: int) -> bool:
         
         # 3. Crear el Asset (La Base)
         base_name = f"{random.choice(BASE_NAMES_PREFIX)} {random.choice(BASE_NAMES_SUFFIX)}"
-        
+
         asset_data = {
             "player_id": player_id,
             "system_id": system_id,
             "planet_id": target_planet['id'],
             "nombre_asentamiento": base_name,
-            "tipo": "Base Principal",
-            "poblacion": 100, # Población inicial (Colonizadores)
-            "nivel_infraestructura": 1,
-            "defensa_base": 10
+            "poblacion": 100,
+            "pops_activos": 100,
+            "pops_desempleados": 0,
+            "seguridad": 1.0,
+            "infraestructura_defensiva": 0,
+            "felicidad": 1.0
         }
-        
+
         supabase.table("planet_assets").insert(asset_data).execute()
         
         # 4. Recursos Iniciales

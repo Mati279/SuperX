@@ -4,7 +4,6 @@ import time
 from data.database import supabase
 from core.galaxy_generator import GalaxyGenerator
 from data.player_repository import register_player_account
-from core.genesis_engine import genesis_protocol
 
 def populate_database():
     print("🚀 Iniciando población de la galaxia...")
@@ -32,18 +31,11 @@ def populate_database():
         pin = "1234"
         
         try:
-            # Crear cuenta
+            # Crear cuenta (register_player_account ya ejecuta génesis completo)
             player = register_player_account(username, pin, faction_name, None)
             if player:
                 print(f"   ✅ Facción creada: {faction_name} (ID: {player['id']})")
-                
-                # EJECUTAR PROTOCOLO GÉNESIS PARA EL BOT
-                # Esto le dará base, recursos y ubicación segura
-                if genesis_protocol(player['id']):
-                    print(f"      📍 Base establecida correctamente.")
-                else:
-                    print(f"      ❌ Error estableciendo base.")
-                    
+                print(f"      📍 Base establecida correctamente.")
         except Exception as e:
             print(f"   ⚠️ Error creando {faction_name}: {e}")
             
