@@ -66,7 +66,7 @@ def render_main_game_page(cookie_manager):
 def _render_sticky_top_hud(player, commander):
     """
     Renderiza la barra superior STICKY (siempre visible).
-    FIX: Recursos centrados, fuente más chica y reloj posicionado a la derecha.
+    FIX: Reloj a la derecha absoluta, recursos centrados y separados, fuente ajustada.
     """
     
     finances = get_player_finances(player.id)
@@ -82,7 +82,7 @@ def _render_sticky_top_hud(player, commander):
     if status["is_lock_in"]: time_color = "#f9ca24" 
     if status["is_frozen"]: time_color = "#ff6b6b" 
 
-    # Convertimos el tiempo a string explícitamente para evitar errores
+    # Aseguramos que sea string para evitar renderizado de código
     clock_time = str(status.get('time', '00:00'))
     clock_tick = str(status.get('tick', 0))
 
@@ -94,21 +94,21 @@ def _render_sticky_top_hud(player, commander):
             top: 0;
             left: 0;
             right: 0;
-            height: 50px; /* Un poco más delgada */
+            height: 55px; /* Altura compacta */
             z-index: 999999;
             background-color: #262730;
             border-bottom: 1px solid #444;
             display: flex;
             align-items: center;
-            justify-content: center; /* CENTRAR LOS RECURSOS */
+            justify-content: center; /* CENTRA LOS RECURSOS EN LA PANTALLA */
             padding: 0 20px;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
         }}
 
-        /* Grupo de Recursos (Centrado) */
+        /* Grupo de Recursos */
         .hud-resource-group {{
             display: flex;
-            gap: 25px; /* Más espacio entre items */
+            gap: 40px; /* MÁS SEPARADOS (Antes era menos) */
             align-items: center;
             height: 100%;
         }}
@@ -117,9 +117,9 @@ def _render_sticky_top_hud(player, commander):
         .hud-metric {{
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
             cursor: help;
-            padding: 2px 8px;
+            padding: 2px 5px;
             border-radius: 4px;
         }}
         
@@ -128,26 +128,25 @@ def _render_sticky_top_hud(player, commander):
         }}
 
         .hud-icon {{ 
-            font-size: 1.1em; /* Iconos más chicos */
+            font-size: 1.0em; /* FUENTE UN POCO MÁS CHICA */
             line-height: 1;
-            opacity: 0.8;
+            opacity: 0.9;
         }}
         
         .hud-value {{ 
             font-family: 'Source Code Pro', monospace; 
             font-weight: 600; 
             color: #e0e0e0 !important;
-            font-size: 0.95em; /* Fuente numérica más chica */
+            font-size: 0.95em; /* NÚMEROS MÁS DISCRETOS */
             white-space: nowrap;
         }}
 
-        /* Contenedor del Reloj (Posicionado Absolutamente a la derecha) */
-        .hud-clock-container {{
+        /* Contenedor del Reloj - POSICIÓN ABSOLUTA A LA DERECHA */
+        .hud-clock-wrapper {{
             position: absolute;
-            right: 20px;
+            right: 30px; /* AQUI ESTÁ EL CUADRO ROJO APROX */
             display: flex;
             align-items: center;
-            gap: 10px;
         }}
 
         /* Reloj Digital */
@@ -155,7 +154,7 @@ def _render_sticky_top_hud(player, commander):
             font-family: 'Orbitron', monospace;
             color: {time_color} !important;
             font-weight: bold;
-            font-size: 1.1em; /* Reloj legible pero no gigante */
+            font-size: 1.1em;
             letter-spacing: 1px;
             background: rgba(0,0,0,0.3);
             padding: 4px 12px;
@@ -165,11 +164,12 @@ def _render_sticky_top_hud(player, commander):
         }}
         
         /* Ajuste para móviles */
-        @media (max-width: 800px) {{
-            .hud-value {{ font-size: 0.8em; }}
-            .hud-icon {{ font-size: 1.0em; }}
+        @media (max-width: 900px) {{
+            .hud-resource-group {{ gap: 15px; }}
+            .hud-value {{ font-size: 0.8em; display: none; }} /* Ocultar valores en pantallas muy chicas */
+            .hud-value-mobile {{ display: inline; font-size: 0.8em; }}
             .top-hud-sticky {{ justify-content: space-between; padding-left: 60px; }}
-            .hud-clock-container {{ position: static; }} /* En móvil, vuelve al flujo normal */
+            .hud-clock-wrapper {{ position: static; }}
         }}
         </style>
 
@@ -197,7 +197,7 @@ def _render_sticky_top_hud(player, commander):
                 </div>
             </div>
 
-            <div class="hud-clock-container" title="Ciclo Galáctico Actual: {clock_tick}">
+            <div class="hud-clock-wrapper" title="Ciclo Galáctico Actual: {clock_tick}">
                 <span class="hud-clock">{clock_time}</span>
             </div>
         </div>
@@ -245,8 +245,12 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             ("Ficha del Comandante", "primary" if st.session_state.current_page == "Ficha del Comandante" else "secondary"),
             ("Comando de Facción", "primary" if st.session_state.current_page == "Comando de Facción" else "secondary"),
             ("Centro de Reclutamiento", "primary" if st.session_state.current_page == "Centro de Reclutamiento" else "secondary"),
+            ("Diplomacia", "primary" if st.session_state.current_page == "Diplomacia" else "secondary"), # Asegurando que Diplomacia esté si existe
         ]
 
+        # Verificar si la página de diplomacia fue importada, si no, filtrarla o manejarla
+        # En este snippet asumo que las páginas se manejan por string en el main
+        
         for label, btn_type in nav_options:
             if st.button(label, width='stretch', type=btn_type):
                 st.session_state.current_page = label
@@ -326,7 +330,6 @@ def _render_war_room_page():
         st.warning("⚠️ VENTANA DE BLOQUEO ACTIVA")
     
     # --- CONTENEDOR DE CHAT (SCROLLABLE) ---
-    # Usamos st.container con altura fija para crear la "caja" contenida
     chat_box = st.container(height=500, border=True)
 
     logs = get_recent_logs(player_id, limit=30) 
