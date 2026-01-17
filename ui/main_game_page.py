@@ -52,7 +52,7 @@ def render_main_game_page(cookie_manager):
         "Comando de Facción": show_faction_roster,
         "Centro de Reclutamiento": show_recruitment_center,
         "Mapa de la Galaxia": show_galaxy_map_page,
-        "Estado de la Nave": show_ship_status_page,
+        "Flota": show_ship_status_page,
     }
     
     # Contenedor principal con margen superior para no quedar bajo el HUD
@@ -307,8 +307,8 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         # --- SECCIÓN: NAVEGACIÓN ---
         st.divider()
         
-        pages = ["Puente de Mando", "Mapa de la Galaxia", "Estado de la Nave", 
-                 "Ficha del Comandante", "Comando de Facción", "Centro de Reclutamiento"]
+        pages = ["Puente de Mando", "Mapa de la Galaxia", 
+                 "Ficha del Comandante", "Comando de Facción", "Centro de Reclutamiento", "Flota"]
         
         for p in pages:
             if st.button(p, use_container_width=True, type="primary" if st.session_state.current_page == p else "secondary"):
