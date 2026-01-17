@@ -4,7 +4,7 @@ from .state import cancel_registration, next_registration_step, login_user
 from data.player_repository import register_player_account
 from data.character_repository import update_commander_profile, get_commander_by_player_id
 from core.constants import RACES, CLASSES, POINTS_AVAILABLE_FOR_ATTRIBUTES
-from core.rules import calculate_attribute_cost
+from core.rules import calculate_attribute_cost, get_color_for_level
 
 
 def render_registration_wizard():
@@ -80,16 +80,15 @@ def _render_step_2_bio():
 def _render_step_3_attributes():
     st.header("Paso 3: Matriz de Atributos")
     st.markdown(f"""
-    - Todos los atributos comienzan en **5** (más bonos de raza y clase).
-    - Tienes **{POINTS_AVAILABLE_FOR_ATTRIBUTES} Puntos** (Nivel 6) para distribuir.
-    - Subir un atributo por encima de **15** cuesta el doble (2:1).
+    - Todos los atributos comienzan en **5** (más bonos).
+    - Tienes **{POINTS_AVAILABLE_FOR_ATTRIBUTES} Puntos** para distribuir.
+    - El costo se duplica a partir de **15**.
     """)
     
     bio = st.session_state.temp_char_bio
     raza_bonus = RACES[bio['raza']]['bonus']
     clase_bonus_attr = CLASSES[bio['clase']]['bonus_attr']
     
-    # Ajustado a Base 5 según Módulo 19.2
     base_stats = { "fuerza": 5, "agilidad": 5, "intelecto": 5, "tecnica": 5, "presencia": 5, "voluntad": 5 }
     for attr, val in raza_bonus.items():
         base_stats[attr] += val
@@ -106,6 +105,10 @@ def _render_step_3_attributes():
             cost = calculate_attribute_cost(base, val)
             total_spent += cost
             final_attrs[attr] = val
+            
+            # Mostrar color según el nivel actual
+            color = get_color_for_level(val)
+            st.markdown(f"<div style='height:4px; background:{color}; width:100%; border-radius:2px; margin-bottom:5px'></div>", unsafe_allow_html=True)
             if cost > 0: st.caption(f"Costo: {cost} pts")
 
     remaining = POINTS_AVAILABLE_FOR_ATTRIBUTES - total_spent

@@ -55,6 +55,59 @@ def get_all_player_planets(player_id: int) -> List[Dict[str, Any]]:
         return []
 
 
+def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]]:
+    """
+    Obtiene todos los planetas del jugador con sus edificios precargados.
+    Optimizado para el tick económico (una sola query).
+
+    Args:
+        player_id: ID del jugador
+
+    Returns:
+        Lista de planetas con campo 'buildings' incluido
+    """
+    try:
+        # Obtener planetas
+        planets_response = _get_db().table("planet_assets")\
+            .select("*")\
+            .eq("player_id", player_id)\
+            .execute()
+
+        planets = planets_response.data if planets_response.data else []
+
+        if not planets:
+            return []
+
+        # Obtener IDs de planetas
+        planet_ids = [p["id"] for p in planets]
+
+        # Obtener todos los edificios de todos los planetas en una sola query
+        buildings_response = _get_db().table("planet_buildings")\
+            .select("*")\
+            .in_("planet_asset_id", planet_ids)\
+            .execute()
+
+        buildings = buildings_response.data if buildings_response.data else []
+
+        # Agrupar edificios por planeta
+        buildings_by_planet: Dict[int, List[Dict]] = {}
+        for building in buildings:
+            pid = building["planet_asset_id"]
+            if pid not in buildings_by_planet:
+                buildings_by_planet[pid] = []
+            buildings_by_planet[pid].append(building)
+
+        # Añadir edificios a cada planeta
+        for planet in planets:
+            planet["buildings"] = buildings_by_planet.get(planet["id"], [])
+
+        return planets
+
+    except Exception as e:
+        log_event(f"Error obteniendo planetas con edificios: {e}", player_id, is_error=True)
+        return []
+
+
 def create_planet_asset(
     planet_id: int,
     system_id: int,
