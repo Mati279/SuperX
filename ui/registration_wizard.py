@@ -6,8 +6,6 @@ from data.character_repository import update_commander_profile, get_commander_by
 from core.constants import RACES, CLASSES, POINTS_AVAILABLE_FOR_ATTRIBUTES
 from core.rules import calculate_attribute_cost
 
-# --- CORRECCIÓN: Importamos el protocolo completo ---
-from core.genesis_engine import genesis_protocol
 
 def render_registration_wizard():
     """
@@ -120,20 +118,13 @@ def _render_step_3_attributes():
         if st.button("Finalizar Creación y Desplegar", type="primary", disabled=(remaining < 0)):
             try:
                 with st.spinner("Estableciendo base de operaciones y protocolos iniciales..."):
-                    # 1. Actualizar el comandante con sus Stats
+                    # Actualizar el comandante con sus Stats finales
+                    # (La base planetaria ya fue creada en register_player_account)
                     commander = update_commander_profile(
                         st.session_state.temp_player['id'],
                         st.session_state.temp_char_bio,
                         final_attrs
                     )
-                    
-                    # 2. EJECUTAR EL PROTOCOLO GÉNESIS
-                    # Esta es la llamada nueva que busca el lugar seguro y crea la base
-                    genesis_success = genesis_protocol(st.session_state.temp_player['id'])
-                    
-                    if not genesis_success:
-                        st.error("Error crítico estableciendo la base planetaria. Contacta soporte.")
-                        return
 
                 if commander:
                     st.balloons()
