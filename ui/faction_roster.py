@@ -1,6 +1,7 @@
 # ui/faction_roster.py
 import streamlit as st
 from .state import get_player
+from .character_sheet import show_character_sheet
 from data.character_repository import get_all_characters_by_player_id
 
 class CharacterAdapter:
@@ -115,35 +116,8 @@ def show_faction_roster():
             st.caption(resumen_display)
         with c7:
             if st.button("Ver", key=f"btn_char_{char.id}"):
-                _show_character_detail_modal(char)
+                show_character_sheet(char.id)
 
         st.markdown("---")
 
 
-@st.dialog("Expediente de Personal")
-def _show_character_detail_modal(char):
-    """Muestra un modal con los detalles completos del personaje."""
-    st.header(f"{char.nombre}")
-    st.caption(f"ID: {char.id} | Rango: {char.rango}")
-    
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("#### Atributos")
-        st.write(f"**Fuerza:** {char.fuerza}")
-        st.write(f"**Destreza:** {char.destreza}")
-        st.write(f"**Inteligencia:** {char.inteligencia}")
-        st.write(f"**Constitución:** {char.constitucion}")
-    
-    with c2:
-        st.markdown("#### Estado")
-        st.write(f"**Nivel:** {char.nivel}")
-        st.write(f"**XP:** {char.experiencia}")
-        st.write(f"**Salud:** {char.hp_actual}/{char.hp_maximo}")
-        st.write(f"**Energía:** {char.energia}")
-
-    st.divider()
-    st.markdown("#### Habilidades")
-    if char.habilidades:
-        st.json(char.habilidades)
-    else:
-        st.caption("Sin habilidades registradas.")
