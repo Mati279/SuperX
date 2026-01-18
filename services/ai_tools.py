@@ -5,6 +5,7 @@ Define las funciones que Gemini puede invocar mediante function calling.
 """
 
 import json
+import re
 from typing import Dict, Any, Callable
 from google.genai import types
 
@@ -164,10 +165,15 @@ def scan_system_data(system_identifier: str) -> str:
         db = _get_db()
         query = db.table("systems").select("*")
 
-        if str(system_identifier).isdigit():
-            query = query.eq("id", int(system_identifier))
+        # Sanitize input - remove SQL-dangerous characters for ILIKE queries
+        sanitized = re.sub(r'[%_\'"\\;]', '', str(system_identifier).strip())
+        if not sanitized:
+            return json.dumps({"error": "Identificador de sistema invalido."})
+
+        if sanitized.isdigit():
+            query = query.eq("id", int(sanitized))
         else:
-            query = query.ilike("name", f"%{system_identifier}%")
+            query = query.ilike("name", f"%{sanitized}%")
 
         sys_res = query.execute()
 

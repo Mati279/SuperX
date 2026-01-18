@@ -6,13 +6,75 @@ Incluye recursos, tipos de estrellas y definiciones de edificios/módulos.
 
 # Tipos de estrellas y sus colores para el mapa
 STAR_TYPES = {
-    "O": {"color": "#9bb0ff", "size": 1.2},
-    "B": {"color": "#aabfff", "size": 1.1},
-    "A": {"color": "#cad7ff", "size": 1.05},
-    "F": {"color": "#f8f7ff", "size": 1.02},
-    "G": {"color": "#fff4ea", "size": 1.0},
-    "K": {"color": "#ffd2a1", "size": 0.95},
-    "M": {"color": "#ffcc6f", "size": 0.9},
+    "O": {"color": "#9bb0ff", "size": 1.2, "rarity": "legendary", "energy_modifier": 2.0, "special_rule": "Radiation Zone", "class": "O"},
+    "B": {"color": "#aabfff", "size": 1.1, "rarity": "epic", "energy_modifier": 1.5, "special_rule": None, "class": "B"},
+    "A": {"color": "#cad7ff", "size": 1.05, "rarity": "rare", "energy_modifier": 1.2, "special_rule": None, "class": "A"},
+    "F": {"color": "#f8f7ff", "size": 1.02, "rarity": "uncommon", "energy_modifier": 1.1, "special_rule": None, "class": "F"},
+    "G": {"color": "#fff4ea", "size": 1.0, "rarity": "common", "energy_modifier": 1.0, "special_rule": None, "class": "G"},
+    "K": {"color": "#ffd2a1", "size": 0.95, "rarity": "common", "energy_modifier": 0.9, "special_rule": None, "class": "K"},
+    "M": {"color": "#ffcc6f", "size": 0.9, "rarity": "common", "energy_modifier": 0.7, "special_rule": "Low Light", "class": "M"},
+}
+
+# Pesos de rareza de estrellas para generacion procedural
+STAR_RARITY_WEIGHTS = {
+    "O": 0.01,  # Gigantes azules muy raras
+    "B": 0.05,
+    "A": 0.10,
+    "F": 0.15,
+    "G": 0.25,  # Estrellas tipo Sol comunes
+    "K": 0.24,
+    "M": 0.20,  # Enanas rojas comunes
+}
+
+# Biomas planetarios para generacion procedural
+PLANET_BIOMES = {
+    "Desertico": {"bonuses": {"materiales": 1}, "construction_slots": 4, "maintenance_mod": 1.2},
+    "Oceanico": {"bonuses": {"energia": 1}, "construction_slots": 3, "maintenance_mod": 1.0},
+    "Templado": {"bonuses": {"poblacion": 1}, "construction_slots": 6, "maintenance_mod": 0.8},
+    "Glacial": {"bonuses": {"componentes": 1}, "construction_slots": 3, "maintenance_mod": 1.3},
+    "Volcanico": {"bonuses": {"materiales": 2}, "construction_slots": 2, "maintenance_mod": 1.5},
+    "Toxico": {"bonuses": {"quimicos": 1}, "construction_slots": 2, "maintenance_mod": 1.8},
+    "Gaseoso": {"bonuses": {"combustible": 2}, "construction_slots": 0, "maintenance_mod": 2.0},
+    "Arido": {"bonuses": {}, "construction_slots": 4, "maintenance_mod": 1.1},
+}
+
+# Configuracion de zonas orbitales
+ORBITAL_ZONES = {
+    "inner": {
+        "rings": [1, 2],
+        "planet_weights": {
+            "Volcanico": 3, "Desertico": 2, "Toxico": 1, "Arido": 1,
+            "Oceanico": 0, "Templado": 0, "Glacial": 0, "Gaseoso": 0
+        }
+    },
+    "habitable": {
+        "rings": [3, 4],
+        "planet_weights": {
+            "Templado": 4, "Oceanico": 3, "Desertico": 2, "Arido": 2,
+            "Volcanico": 0, "Toxico": 0, "Glacial": 1, "Gaseoso": 0
+        }
+    },
+    "outer": {
+        "rings": [5, 6],
+        "planet_weights": {
+            "Glacial": 3, "Gaseoso": 4, "Arido": 2, "Toxico": 1,
+            "Volcanico": 0, "Desertico": 0, "Oceanico": 0, "Templado": 0
+        }
+    },
+}
+
+# Probabilidad de cinturon de asteroides
+ASTEROID_BELT_CHANCE = 0.15
+
+# Pesos de recursos por clase de estrella
+RESOURCE_STAR_WEIGHTS = {
+    "O": {"Platino": 3, "Uranio": 4, "Oro": 2, "Titanio": 1},
+    "B": {"Platino": 2, "Uranio": 3, "Oro": 2, "Titanio": 2},
+    "A": {"Oro": 3, "Platino": 1, "Titanio": 2, "Hierro": 2},
+    "F": {"Titanio": 3, "Oro": 2, "Hierro": 2, "Cobre": 2},
+    "G": {"Hierro": 4, "Titanio": 2, "Cobre": 3, "Aluminio": 3},
+    "K": {"Hierro": 3, "Cobre": 3, "Aluminio": 4, "Titanio": 1},
+    "M": {"Hierro": 2, "Aluminio": 3, "Cobre": 2},
 }
 
 # Recursos metálicos (para generación de planetas y filtros de mapa)
@@ -74,28 +136,36 @@ BUILDING_TYPES = {
         "energy_cost": 0,
         "description": "Sede administrativa. Nivel 3 permite Multitasking.",
         "max_tier": 5,
-        "pops_required": 0
+        "pops_required": 0,
+        "category": "administracion",
+        "production": {}
     },
     "barracks": {
         "name": "Barracas",
         "material_cost": 300,
         "energy_cost": 2,
         "description": "Alojamiento militar. Aumenta límite de reclutas.",
-        "pops_required": 50
+        "pops_required": 50,
+        "category": "defensa",
+        "production": {}
     },
     "mine_basic": {
         "name": "Mina de Superficie",
         "material_cost": 150,
         "energy_cost": 5,
         "description": "Extracción básica de minerales locales.",
-        "pops_required": 100
+        "pops_required": 100,
+        "category": "extraccion",
+        "production": {"materiales": 10}
     },
     "solar_plant": {
         "name": "Planta Solar",
         "material_cost": 100,
         "energy_cost": 0,
         "description": "Generación de energía pasiva.",
-        "pops_required": 20
+        "pops_required": 20,
+        "category": "energia",
+        "production": {"celulas_energia": 15}
     },
     "fusion_reactor": {
         "name": "Reactor de Fusión",
@@ -103,14 +173,18 @@ BUILDING_TYPES = {
         "energy_cost": 0,
         "description": "Generación masiva de energía (Tier 2).",
         "pops_required": 50,
-        "min_tier": 2
+        "min_tier": 2,
+        "category": "energia",
+        "production": {"celulas_energia": 50}
     },
     "factory": {
         "name": "Fundición Industrial",
         "material_cost": 400,
         "energy_cost": 10,
         "description": "Procesa minerales en aleaciones.",
-        "pops_required": 200
+        "pops_required": 200,
+        "category": "industria",
+        "production": {"componentes": 5}
     }
 }
 

@@ -193,7 +193,8 @@ def _grant_visibility(player_id: int, system_id: int, level: int):
         print(f"Error granting visibility: {e}")
 
 def generate_genesis_commander_stats(name: str) -> Dict[str, Any]:
-    base_attrs = {"fuerza": 5, "destreza": 5, "constitucion": 5, "inteligencia": 5, "sabiduria": 5, "carisma": 5}
+    """Generate starting stats for a new commander using correct attribute names."""
+    base_attrs = {"fuerza": 5, "agilidad": 5, "tecnica": 5, "intelecto": 5, "voluntad": 5, "presencia": 5}
     stats = {
         "nivel": 6,
         "xp": GENESIS_XP,

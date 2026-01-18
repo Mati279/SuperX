@@ -1,7 +1,12 @@
 # data/character_repository.py
 from typing import Dict, Any, Optional
-from .database import supabase
+from data.database import get_supabase
 from data.log_repository import log_event
+
+
+def _get_db():
+    """Obtiene el cliente de Supabase de forma segura."""
+    return get_supabase()
 from core.rules import calculate_skills
 from config.app_constants import (
     COMMANDER_RANK,
@@ -50,7 +55,7 @@ def _ensure_v2_structure(stats_json: Dict, name: str = "") -> Dict:
 
 def get_commander_by_player_id(player_id: int) -> Optional[Dict[str, Any]]:
     try:
-        response = supabase.table("characters").select("*").eq("player_id", player_id).eq("es_comandante", True).single().execute()
+        response = _get_db().table("characters").select("*").eq("player_id", player_id).eq("es_comandante", True).single().execute()
         return response.data
     except Exception:
         return None
@@ -127,7 +132,7 @@ def create_commander(
             "ubicacion": COMMANDER_LOCATION
         }
 
-        response = supabase.table("characters").insert(new_char_data).execute()
+        response = _get_db().table("characters").insert(new_char_data).execute()
         if response.data:
             log_event(f"Nuevo comandante V2 '{name}' creado.", player_id)
             return response.data[0]
@@ -167,7 +172,7 @@ def update_commander_profile(
         new_stats["capacidades"]["atributos"] = attributes
         new_stats["capacidades"]["habilidades"] = habilidades
 
-        response = supabase.table("characters")\
+        response = _get_db().table("characters")\
             .update({"stats_json": new_stats})\
             .eq("player_id", player_id)\
             .eq("es_comandante", True)\
@@ -188,7 +193,7 @@ def create_character(player_id: int, character_data: Dict[str, Any]) -> Optional
     try:
         character_data["player_id"] = player_id
         
-        response = supabase.table("characters").insert(character_data).execute()
+        response = _get_db().table("characters").insert(character_data).execute()
         
         if response.data:
             nombre = character_data.get('nombre', 'Unit')
@@ -202,7 +207,7 @@ def create_character(player_id: int, character_data: Dict[str, Any]) -> Optional
 
 def get_all_characters_by_player_id(player_id: int) -> list[Dict[str, Any]]:
     try:
-        response = supabase.table("characters").select("*").eq("player_id", player_id).execute()
+        response = _get_db().table("characters").select("*").eq("player_id", player_id).execute()
         return response.data if response.data else []
     except Exception:
         return []
@@ -212,7 +217,7 @@ get_all_player_characters = get_all_characters_by_player_id
 
 def update_character(character_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     try:
-        response = supabase.table("characters").update(data).eq("id", character_id).execute()
+        response = _get_db().table("characters").update(data).eq("id", character_id).execute()
         return response.data[0] if response.data else None
     except Exception as e:
         log_event(f"Error update char {character_id}: {e}", is_error=True)
@@ -220,7 +225,7 @@ def update_character(character_id: int, data: Dict[str, Any]) -> Optional[Dict[s
 
 def get_character_by_id(character_id: int) -> Optional[Dict[str, Any]]:
     try:
-        response = supabase.table("characters").select("*").eq("id", character_id).single().execute()
+        response = _get_db().table("characters").select("*").eq("id", character_id).single().execute()
         return response.data
     except Exception:
         return None

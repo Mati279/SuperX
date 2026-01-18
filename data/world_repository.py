@@ -1,13 +1,18 @@
 # data/world_repository.py
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-from .database import supabase
+from data.database import get_supabase
 from data.log_repository import log_event
+
+
+def _get_db():
+    """Obtiene el cliente de Supabase de forma segura."""
+    return get_supabase()
 
 def get_world_state() -> Dict[str, Any]:
     """Obtiene el estado actual del mundo (ticks, freeze)."""
     try:
-        response = supabase.table("world_state").select("*").single().execute()
+        response = _get_db().table("world_state").select("*").single().execute()
         return response.data
     except Exception as e:
         log_event(f"Error obteniendo world_state: {e}", is_error=True)
@@ -21,7 +26,7 @@ def queue_player_action(player_id: int, action_text: str) -> bool:
             "action_text": action_text,
             "status": "PENDING"
         }
-        supabase.table("action_queue").insert(data).execute()
+        _get_db().table("action_queue").insert(data).execute()
         log_event(f"Acción encolada para el siguiente ciclo.", player_id)
         return True
     except Exception as e:
@@ -42,7 +47,7 @@ def force_db_tick() -> bool:
     try:
         current = get_world_state()
         new_tick = current.get('current_tick', 1) + 1
-        supabase.table("world_state").update({
+        _get_db().table("world_state").update({
             "current_tick": new_tick,
             "last_tick_processed_at": datetime.utcnow().isoformat()
         }).eq("id", 1).execute()
@@ -53,7 +58,7 @@ def force_db_tick() -> bool:
 
 def get_pending_actions_count(player_id: int) -> int:
     try:
-        response = supabase.table("action_queue").select("id", count="exact")\
+        response = _get_db().table("action_queue").select("id", count="exact")\
             .eq("player_id", player_id).eq("status", "PENDING").execute()
         return response.count if response.count else 0
     except Exception:
@@ -61,7 +66,7 @@ def get_pending_actions_count(player_id: int) -> int:
 
 def get_all_pending_actions() -> List[Dict[str, Any]]:
     try:
-        response = supabase.table("action_queue").select("*").eq("status", "PENDING").execute()
+        response = _get_db().table("action_queue").select("*").eq("status", "PENDING").execute()
         return response.data if response.data else []
     except Exception as e:
         log_event(f"Error recuperando cola de acciones: {e}", is_error=True)
@@ -69,7 +74,7 @@ def get_all_pending_actions() -> List[Dict[str, Any]]:
 
 def mark_action_processed(action_id: int, result_status: str) -> None:
     try:
-        supabase.table("action_queue").update({
+        _get_db().table("action_queue").update({
             "status": result_status,
             "processed_at": datetime.utcnow().isoformat()
         }).eq("id", action_id).execute()
@@ -90,7 +95,7 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
 
     try:
         # 1. Obtener el player_id asociado al comandante
-        char_res = supabase.table("characters").select("player_id").eq("id", commander_id).maybe_single().execute()
+        char_res = _get_db().table("characters").select("player_id").eq("id", commander_id).maybe_single().execute()
         if not char_res.data:
             return default_loc
         
@@ -98,7 +103,7 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
 
         # 2. Buscar el ASENTAMIENTO PRINCIPAL (Base) en planet_assets
         # Priorizamos por población o fecha de creación
-        asset_res = supabase.table("planet_assets")\
+        asset_res = _get_db().table("planet_assets")\
             .select("system_id, planet_id, nombre_asentamiento")\
             .eq("player_id", player_id)\
             .order("poblacion", desc=True)\
@@ -119,7 +124,7 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
         # 3. Obtener Nombre Real del Sistema
         if asset.get("system_id"):
             try:
-                sys_res = supabase.table("systems").select("name").eq("id", asset["system_id"]).single().execute()
+                sys_res = _get_db().table("systems").select("name").eq("id", asset["system_id"]).single().execute()
                 if sys_res.data:
                     loc_data["system"] = sys_res.data.get("name")
             except Exception:
@@ -128,7 +133,7 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
         # 4. Obtener Nombre Real del Planeta
         if asset.get("planet_id"):
             try:
-                pl_res = supabase.table("planets").select("name").eq("id", asset["planet_id"]).single().execute()
+                pl_res = _get_db().table("planets").select("name").eq("id", asset["planet_id"]).single().execute()
                 if pl_res.data:
                     loc_data["planet"] = pl_res.data.get("name")
             except Exception:
@@ -151,7 +156,7 @@ def get_all_systems_from_db() -> List[Dict[str, Any]]:
         Lista de sistemas con id, name, x, y, star_class
     """
     try:
-        response = supabase.table("systems").select("*").execute()
+        response = _get_db().table("systems").select("*").execute()
         return response.data if response.data else []
     except Exception as e:
         log_event(f"Error obteniendo sistemas de BD: {e}", is_error=True)
@@ -169,7 +174,7 @@ def get_system_by_id(system_id: int) -> Optional[Dict[str, Any]]:
         Diccionario con datos del sistema o None
     """
     try:
-        response = supabase.table("systems").select("*").eq("id", system_id).single().execute()
+        response = _get_db().table("systems").select("*").eq("id", system_id).single().execute()
         return response.data if response.data else None
     except Exception:
         return None
@@ -186,7 +191,7 @@ def get_planets_by_system_id(system_id: int) -> List[Dict[str, Any]]:
         Lista de planetas del sistema
     """
     try:
-        response = supabase.table("planets").select("*").eq("system_id", system_id).order("orbital_ring").execute()
+        response = _get_db().table("planets").select("*").eq("system_id", system_id).order("orbital_ring").execute()
         return response.data if response.data else []
     except Exception as e:
         log_event(f"Error obteniendo planetas del sistema {system_id}: {e}", is_error=True)
@@ -201,7 +206,7 @@ def get_starlanes_from_db() -> List[Dict[str, Any]]:
         Lista de starlanes con system_a_id, system_b_id, distance
     """
     try:
-        response = supabase.table("starlanes").select("*").execute()
+        response = _get_db().table("starlanes").select("*").execute()
         return response.data if response.data else []
     except Exception as e:
         log_event(f"Error obteniendo starlanes: {e}", is_error=True)

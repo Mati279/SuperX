@@ -12,8 +12,13 @@ from data.world_repository import (
 )
 from data.player_repository import get_all_players
 # Imports para la lógica del MRG (Misiones)
-from data.database import supabase
+from data.database import get_supabase
 from data.character_repository import update_character
+
+
+def _get_db():
+    """Obtiene el cliente de Supabase de forma segura."""
+    return get_supabase()
 from data.player_repository import get_player_credits, update_player_credits
 from data.log_repository import log_event, clear_player_logs
 
@@ -120,8 +125,54 @@ def _phase_decrement_and_persistence():
     - Facciones: Decremento de buffs/debuffs (Hegemónico, Paria).
     """
     log_event("running phase 1: Decremento y Persistencia...")
-    # TODO: Implementar lógica de decremento de días de misión.
-    pass
+
+    try:
+        db = _get_db()
+
+        # 1. Decrement mission remaining days for characters on missions
+        missions_res = db.table("characters")\
+            .select("id, player_id, nombre, stats_json")\
+            .eq("estado", "En Mision")\
+            .execute()
+
+        for char in (missions_res.data or []):
+            stats = char.get('stats_json', {})
+            mission = stats.get('active_mission', {})
+            remaining = mission.get('remaining_days', 0)
+
+            if remaining > 0:
+                mission['remaining_days'] = remaining - 1
+                stats['active_mission'] = mission
+                update_character(char['id'], {"stats_json": stats})
+
+                if mission['remaining_days'] == 0:
+                    log_event(f"Mission ready for resolution: {char['nombre']}", char.get('player_id'))
+
+        # 2. Heal wounded characters (reduce wound duration)
+        wounded_res = db.table("characters")\
+            .select("id, player_id, nombre, stats_json")\
+            .eq("estado", "Herido")\
+            .execute()
+
+        for char in (wounded_res.data or []):
+            stats = char.get('stats_json', {})
+            wound_ticks = stats.get('wound_ticks_remaining', 2)
+
+            if wound_ticks > 1:
+                stats['wound_ticks_remaining'] = wound_ticks - 1
+                update_character(char['id'], {"stats_json": stats})
+            else:
+                # Fully healed
+                stats.pop('wound_ticks_remaining', None)
+                update_character(char['id'], {
+                    "estado": "Disponible",
+                    "ubicacion": "Barracones",
+                    "stats_json": stats
+                })
+                log_event(f"{char['nombre']} has recovered from injuries.", char.get('player_id'))
+
+    except Exception as e:
+        log_event(f"Error in decrement phase: {e}", is_error=True)
 
 def _phase_concurrency_resolution():
     """
@@ -163,8 +214,45 @@ def _phase_prestige_calculation():
     - Transferencias por conflictos resueltos.
     - Aplicación de 'Fricción': Redistribución pasiva hacia el centro.
     """
-    # log_event("running phase 3: Prestigio...")
-    pass
+    log_event("running phase 3: Prestigio...")
+
+    try:
+        from data.faction_repository import get_all_factions, update_faction_prestige
+
+        factions = get_all_factions()
+        if not factions or len(factions) < 2:
+            return
+
+        # Constants for friction
+        FRICTION_RATE = 0.005  # 0.5% per tick
+        HIGH_THRESHOLD = 0.20  # 20% prestige
+        LOW_THRESHOLD = 0.05   # 5% prestige
+
+        # Calculate friction: redistribute from high to low
+        high_factions = [f for f in factions if f.get('prestige', 0) > HIGH_THRESHOLD]
+        low_factions = [f for f in factions if f.get('prestige', 0) < LOW_THRESHOLD]
+
+        if high_factions and low_factions:
+            # Calculate total friction to redistribute
+            total_friction = sum(f.get('prestige', 0) * FRICTION_RATE for f in high_factions)
+            share_per_low = total_friction / len(low_factions) if low_factions else 0
+
+            for faction in high_factions:
+                current = faction.get('prestige', 0)
+                new_prestige = current * (1 - FRICTION_RATE)
+                update_faction_prestige(faction['id'], new_prestige)
+
+            for faction in low_factions:
+                current = faction.get('prestige', 0)
+                new_prestige = current + share_per_low
+                update_faction_prestige(faction['id'], new_prestige)
+
+            log_event(f"Prestige friction applied: {len(high_factions)} sources, {len(low_factions)} recipients")
+
+    except ImportError:
+        pass  # Faction repository not available
+    except Exception as e:
+        log_event(f"Error in prestige phase: {e}", is_error=True)
 
 def _phase_macroeconomics():
     """
@@ -192,14 +280,47 @@ def _phase_social_logistics():
     """
     log_event("running phase 5: Logística Social y POPs...")
 
-    # NOTA: La desactivación en cascada ya se maneja en economy_engine
-    # Esta fase puede usarse para:
-    # - Crecimiento/declive de población
-    # - Eventos de felicidad
-    # - Migraciones entre planetas
+    try:
+        from data.planet_repository import get_all_player_planets, update_planet_asset
 
-    # TODO: Implementar mecánicas de demografía avanzada
-    pass
+        # Population growth constants
+        GROWTH_RATE_BASE = 0.01  # 1% per tick
+        HAPPINESS_GROWTH_BONUS = 0.02  # +2% at max happiness
+        MIN_POPULATION = 10
+
+        players = get_all_players()
+
+        for player in players:
+            player_id = player['id']
+            planets = get_all_player_planets(player_id)
+
+            for planet in planets:
+                pop = planet.get('poblacion', 0)
+                happiness = planet.get('felicidad', 1.0)
+
+                if pop <= 0:
+                    continue
+
+                # Calculate growth rate based on happiness
+                growth_rate = GROWTH_RATE_BASE
+                if happiness > 1.0:
+                    growth_rate += (happiness - 1.0) * HAPPINESS_GROWTH_BONUS
+                elif happiness < 0.8:
+                    growth_rate = -abs(growth_rate)  # Population decline
+
+                new_pop = int(pop * (1 + growth_rate))
+                new_pop = max(MIN_POPULATION, new_pop)
+
+                if new_pop != pop:
+                    update_planet_asset(planet['id'], {
+                        "poblacion": new_pop,
+                        "pops_activos": new_pop
+                    })
+
+    except ImportError:
+        pass  # Planet repository not available
+    except Exception as e:
+        log_event(f"Error in social logistics phase: {e}", is_error=True)
 
 def _phase_mission_resolution():
     """
@@ -210,7 +331,7 @@ def _phase_mission_resolution():
     
     try:
         # 1. Obtener operativos en misión
-        response = supabase.table("characters").select("*").eq("estado", "En Misión").execute()
+        response = _get_db().table("characters").select("*").eq("estado", "En Misión").execute()
         active_operatives = response.data if response.data else []
         
         if not active_operatives:
@@ -306,9 +427,46 @@ def _phase_cleanup_and_audit():
     - Cobro de upkeep (costos de mantenimiento).
     - Archivar logs viejos.
     """
-    # log_event("running phase 7: Limpieza...")
-    # TODO: Restar créditos por mantenimiento de naves/edificios.
-    pass
+    log_event("running phase 7: Limpieza...")
+
+    try:
+        db = _get_db()
+        MAX_LOGS_PER_PLAYER = 100
+
+        # Clean old logs - keep last MAX_LOGS_PER_PLAYER per player
+        players = get_all_players()
+
+        for player in players:
+            player_id = player['id']
+
+            try:
+                # Get count of logs for this player
+                count_res = db.table("logs")\
+                    .select("id", count="exact")\
+                    .eq("player_id", player_id)\
+                    .execute()
+
+                total_logs = count_res.count if hasattr(count_res, 'count') else 0
+
+                if total_logs > MAX_LOGS_PER_PLAYER:
+                    # Get IDs of oldest logs to delete
+                    excess = total_logs - MAX_LOGS_PER_PLAYER
+                    old_logs = db.table("logs")\
+                        .select("id")\
+                        .eq("player_id", player_id)\
+                        .order("fecha_evento", desc=False)\
+                        .limit(excess)\
+                        .execute()
+
+                    if old_logs.data:
+                        old_ids = [log['id'] for log in old_logs.data]
+                        db.table("logs").delete().in_("id", old_ids).execute()
+
+            except Exception:
+                pass  # Log cleanup is non-critical
+
+    except Exception as e:
+        log_event(f"Error in cleanup phase: {e}", is_error=True)
 
 def get_world_status_display() -> dict:
     """Genera la información para el widget del reloj en la UI."""

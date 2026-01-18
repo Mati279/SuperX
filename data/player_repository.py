@@ -12,11 +12,55 @@ from data.database import get_supabase
 from data.log_repository import log_event
 from utils.security import hash_password, verify_password
 from utils.helpers import encode_image
+from core.exceptions import GenesisProtocolError
 
 
 def _get_db():
     """Obtiene el cliente de Supabase de forma segura."""
     return get_supabase()
+
+
+def _rollback_genesis(db, player_id: int) -> None:
+    """
+    Comprehensive rollback of all resources created during failed Genesis.
+    Deletes in reverse order of creation to respect FK constraints.
+
+    Args:
+        db: Database client
+        player_id: ID of the player to clean up
+    """
+    if not player_id:
+        return
+
+    print(f"Executing Genesis rollback for player ID {player_id}...")
+
+    # 1. Delete exploration/FOW entries
+    try:
+        db.table("player_exploration").delete().eq("player_id", player_id).execute()
+        print(f"  - Cleaned player_exploration")
+    except Exception as e:
+        print(f"  - Rollback warning (exploration): {e}")
+
+    # 2. Delete characters
+    try:
+        db.table("characters").delete().eq("player_id", player_id).execute()
+        print(f"  - Cleaned characters")
+    except Exception as e:
+        print(f"  - Rollback warning (characters): {e}")
+
+    # 3. Delete planet assets
+    try:
+        db.table("planet_assets").delete().eq("player_id", player_id).execute()
+        print(f"  - Cleaned planet_assets")
+    except Exception as e:
+        print(f"  - Rollback warning (planet_assets): {e}")
+
+    # 4. Delete player record (last, as other tables may have FK to it)
+    try:
+        db.table("players").delete().eq("id", player_id).execute()
+        print(f"  - Cleaned players")
+    except Exception as e:
+        print(f"  - Rollback CRITICAL (player): {e}")
 
 
 # --- CONSULTAS DE JUGADORES ---
@@ -200,17 +244,14 @@ def register_player_account(
         return player
 
     except Exception as e:
-        # --- ROLLBACK ATÓMICO ---
-        print(f"🔥 FALLO CRÍTICO GENESIS: {e}")
+        # --- COMPREHENSIVE ROLLBACK ---
+        print(f"GENESIS CRITICAL FAILURE: {e}")
+        log_event(f"Genesis Protocol FAILED: {e}", player_id, is_error=True)
 
         if player_id:
-            print(f"🧹 Ejecutando limpieza para ID {player_id}...")
-            try:
-                db.table("players").delete().eq("id", player_id).execute()
-            except Exception as del_err:
-                print(f"❌ Falló la limpieza DB: {del_err}")
+            _rollback_genesis(db, player_id)
 
-        raise Exception(f"Registro fallido: {e}")
+        raise GenesisProtocolError(f"Registration failed: {e}", {"player_id": player_id})
 
 
 # --- GESTIÓN DE RECURSOS ---

@@ -260,10 +260,11 @@ class CommanderData(BaseModel):
         return self.stats_json.get("clase", "Novato")
 
     def get_merit_points(self) -> int:
+        """Calculate total merit points from all six attributes."""
         attrs = self.attributes
         return (
-            attrs.fuerza + attrs.destreza + attrs.constitucion +
-            attrs.inteligencia + attrs.sabiduria + attrs.carisma
+            attrs.fuerza + attrs.agilidad + attrs.tecnica +
+            attrs.intelecto + attrs.voluntad + attrs.presencia
         )
 
     @classmethod

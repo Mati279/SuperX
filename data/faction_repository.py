@@ -10,11 +10,16 @@ Este módulo maneja todas las operaciones de base de datos relacionadas con:
 """
 
 from typing import Dict, Any, List, Optional
-from .database import supabase
+from data.database import get_supabase
 from data.log_repository import log_event
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _get_db():
+    """Obtiene el cliente de Supabase de forma segura."""
+    return get_supabase()
 
 
 # ============================================================
@@ -29,7 +34,7 @@ def get_all_factions() -> List[Dict[str, Any]]:
         Lista de diccionarios con datos de facciones
     """
     try:
-        response = supabase.table("factions").select("*").order("prestigio", desc=True).execute()
+        response = _get_db().table("factions").select("*").order("prestigio", desc=True).execute()
         return response.data if response.data else []
     except Exception as e:
         log_event(f"Error obteniendo facciones: {e}", is_error=True)
@@ -47,7 +52,7 @@ def get_faction_by_id(faction_id: int) -> Optional[Dict[str, Any]]:
         Diccionario con datos de la facción o None si no existe
     """
     try:
-        response = supabase.table("factions").select("*").eq("id", faction_id).single().execute()
+        response = _get_db().table("factions").select("*").eq("id", faction_id).single().execute()
         return response.data
     except Exception:
         return None
@@ -64,7 +69,7 @@ def get_faction_by_name(name: str) -> Optional[Dict[str, Any]]:
         Diccionario con datos de la facción o None si no existe
     """
     try:
-        response = supabase.table("factions").select("*").eq("nombre", name).single().execute()
+        response = _get_db().table("factions").select("*").eq("nombre", name).single().execute()
         return response.data
     except Exception:
         return None
@@ -99,7 +104,7 @@ def update_faction_prestige(faction_id: int, new_prestige: float) -> bool:
         bool: True si la actualización fue exitosa
     """
     try:
-        supabase.table("factions").update({
+        _get_db().table("factions").update({
             "prestigio": round(new_prestige, 2)
         }).eq("id", faction_id).execute()
         return True
@@ -126,7 +131,7 @@ def batch_update_prestige(prestige_map: Dict[int, float]) -> bool:
     """
     try:
         for faction_id, new_prestige in prestige_map.items():
-            supabase.table("factions").update({
+            _get_db().table("factions").update({
                 "prestigio": round(new_prestige, 2)
             }).eq("id", faction_id).execute()
         return True
@@ -162,7 +167,7 @@ def set_hegemony_status(faction_id: int, is_hegemon: bool, victory_counter: int 
             log_event(f"Error: Facción {faction_id} no encontrada", is_error=True)
             return False
 
-        supabase.table("factions").update({
+        _get_db().table("factions").update({
             "es_hegemon": is_hegemon,
             "hegemonia_contador": victory_counter
         }).eq("id", faction_id).execute()
@@ -202,7 +207,7 @@ def decrement_hegemony_counters() -> List[Dict[str, Any]]:
     winners = []
     try:
         # Obtener hegemones activos
-        response = supabase.table("factions").select("*").eq("es_hegemon", True).execute()
+        response = _get_db().table("factions").select("*").eq("es_hegemon", True).execute()
 
         for faction in response.data or []:
             current_counter = faction.get("hegemonia_contador", 0)
@@ -214,13 +219,13 @@ def decrement_hegemony_counters() -> List[Dict[str, Any]]:
                 log_event(f"🏆🏆🏆 ¡¡¡{faction['nombre']} HA GANADO POR HEGEMONÍA TEMPORAL!!!")
 
                 # Marcar en BD (mantener es_hegemon=True pero contador=0)
-                supabase.table("factions").update({
+                _get_db().table("factions").update({
                     "hegemonia_contador": 0
                 }).eq("id", faction["id"]).execute()
 
             else:
                 # Decrementar normalmente
-                supabase.table("factions").update({
+                _get_db().table("factions").update({
                     "hegemonia_contador": new_counter
                 }).eq("id", faction["id"]).execute()
 
@@ -245,7 +250,7 @@ def get_current_hegemon() -> Optional[Dict[str, Any]]:
         Si hay múltiples (error de BD), retorna el primero.
     """
     try:
-        response = supabase.table("factions").select("*").eq("es_hegemon", True).limit(1).execute()
+        response = _get_db().table("factions").select("*").eq("es_hegemon", True).limit(1).execute()
         return response.data[0] if response.data else None
     except Exception:
         return None
@@ -280,7 +285,7 @@ def record_prestige_transfer(
         bool: True si el registro fue exitoso
     """
     try:
-        supabase.table("prestige_history").insert({
+        _get_db().table("prestige_history").insert({
             "tick": tick,
             "attacker_faction_id": attacker_faction_id,
             "defender_faction_id": defender_faction_id,
@@ -309,7 +314,7 @@ def get_prestige_history(
         Lista de transferencias ordenadas por fecha (más recientes primero)
     """
     try:
-        query = supabase.table("prestige_history").select("*")
+        query = _get_db().table("prestige_history").select("*")
 
         if faction_id:
             # Filtrar por facción (como atacante O defensor)
@@ -338,12 +343,12 @@ def get_faction_statistics(faction_id: int) -> Dict[str, Any]:
     """
     try:
         # Obtener transferencias donde fue atacante (ganancias)
-        gains_response = supabase.table("prestige_history").select("amount")\
+        gains_response = _get_db().table("prestige_history").select("amount")\
             .eq("attacker_faction_id", faction_id).execute()
         total_gained = sum(float(t["amount"]) for t in (gains_response.data or []))
 
         # Obtener transferencias donde fue defensor (pérdidas)
-        losses_response = supabase.table("prestige_history").select("amount")\
+        losses_response = _get_db().table("prestige_history").select("amount")\
             .eq("defender_faction_id", faction_id).execute()
         total_lost = sum(float(t["amount"]) for t in (losses_response.data or []))
 

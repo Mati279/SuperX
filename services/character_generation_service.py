@@ -9,6 +9,7 @@ import json
 import re
 import traceback
 import time
+import uuid
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from google.genai import types
@@ -348,15 +349,28 @@ def generate_random_character_with_ai(
 
     full_name = f"{identity.nombre} {identity.apellido}"
     attempts = 0
-    while full_name in existing_names and attempts < 5:
+    max_attempts = 10
+
+    while full_name in existing_names and attempts < max_attempts:
         fallback_id = _generate_fallback_identity(race_name, sex)
-        # Preservar biografías si son válidas
+        # Add numeric suffix after first few attempts
+        suffix = f"-{random.randint(100, 999)}" if attempts > 3 else ""
         identity = GeneratedIdentity(
-            fallback_id.nombre, fallback_id.apellido, 
+            fallback_id.nombre, fallback_id.apellido + suffix,
             identity.bio_superficial, identity.bio_conocida, identity.bio_profunda
         )
         full_name = f"{identity.nombre} {identity.apellido}"
         attempts += 1
+
+    # Final fallback: add UUID suffix to guarantee uniqueness
+    if full_name in existing_names:
+        uuid_suffix = str(uuid.uuid4())[:4].upper()
+        identity = GeneratedIdentity(
+            identity.nombre, f"{identity.apellido}-{uuid_suffix}",
+            identity.bio_superficial, identity.bio_conocida, identity.bio_profunda
+        )
+        full_name = f"{identity.nombre} {identity.apellido}"
+        log_event(f"Character name collision resolved with UUID: {full_name}", context.player_id)
 
     location = "Barracones"
     system = "Desconocido"
