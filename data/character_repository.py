@@ -223,8 +223,8 @@ def create_character(player_id: int, character_data: Dict[str, Any]) -> Optional
             if initial_knowledge:
                 set_character_knowledge_level(new_char_id, player_id, initial_knowledge)
             else:
-                # REGLA DE ORO: Si no se especifica (p.ej. generación directa), 
-                # por defecto es UNKNOWN.
+                # REGLA DE ORO: Si no se especifica, por defecto es UNKNOWN.
+                # Esto asegura que los generados por "Cuadrilla" empiecen en 0.
                 set_character_knowledge_level(new_char_id, player_id, KnowledgeLevel.UNKNOWN)
 
             log_event(f"Reclutado: {nombre}", player_id)
@@ -384,10 +384,7 @@ def get_character_knowledge_level(
     Por defecto UNKNOWN si no existe registro.
     """
     try:
-        # 1. Regla de Oro: Si es el dueño, es FRIEND automáticamente (ahorra query o sirve de fallback)
-        # Nota: Idealmente esto se chequearía antes, pero necesitamos saber quién es el dueño.
-        # Hacemos la query de conocimiento directa, es rápida.
-        
+        # 1. Consulta Directa a DB
         response = _get_db().table("character_knowledge")\
             .select("knowledge_level")\
             .eq("character_id", character_id)\
@@ -398,18 +395,18 @@ def get_character_knowledge_level(
         if response.data:
             return KnowledgeLevel(response.data["knowledge_level"])
             
-        # 2. Fallback: Chequear si es el dueño (si no hay registro en knowledge table)
-        # Esto requiere traer el personaje, lo cual puede ser costoso si solo queríamos el nivel.
-        # Asumimos que si no está en la tabla de conocimiento y no preguntamos en contexto de "my_characters", es desconocido.
-        # PERO, para seguridad, podemos hacer un chequeo rápido si el caller no tiene el objeto character.
+        # 2. Fallback: CORREGIDO. 
+        # Si no hay registro en la tabla knowledge, asumimos UNKNOWN.
+        # Anteriormente se asumía KNOWN si eras el dueño, pero eso causaba que
+        # los reclutas nuevos (cuyo registro SQL puede tardar ms) aparecieran con 
+        # nivel más alto del debido (Gold).
         
+        # Excepción lógica: Si el personaje es Comandante y es del jugador, es FRIEND.
+        # (Aunque esto debería estar cubierto por el insert en create_commander, es un seguro)
         char = get_character_by_id(character_id)
-        if char and char.get("player_id") == observer_player_id:
-            # CORRECCION: Si es el dueño pero NO tiene registro en knowledge,
-            # DEBE ser KNOWN (Conocido), no FRIEND.
-            # (Aunque idealmente siempre debería haber registro al crearse)
-            return KnowledgeLevel.KNOWN
-            
+        if char and char.get("es_comandante") and char.get("player_id") == observer_player_id:
+            return KnowledgeLevel.FRIEND
+
         return KnowledgeLevel.UNKNOWN
 
     except Exception:

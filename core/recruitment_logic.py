@@ -50,20 +50,16 @@ def process_recruitment(
     new_credits = player_credits - candidate['costo']
     
     # 3. Determinar nivel de conocimiento inicial
-    # REGLA ESTRICTA: Por defecto UNKNOWN.
-    # SOLO si hubo investigación previa (investigation_outcome existe y no es None), pasa a KNOWN.
+    # Default: UNKNOWN
     initial_knowledge = KnowledgeLevel.UNKNOWN
 
+    # Lógica corregida: Verificar si existe un resultado de investigación.
+    # investigation_outcome suele ser "SUCCESS", "CRIT_SUCCESS", etc.
     outcome = candidate.get("investigation_outcome")
-    if outcome:
-        # Si tiene un resultado de investigación (SUCCESS, CRIT_SUCCESS, FAIL, etc),
-        # asumimos que el jugador ya "conoce" al personaje gracias a esa investigación.
-        # Por tanto, al reclutarlo, mantiene ese nivel de 'Conocido'.
+    
+    if outcome and outcome is not None:
+        # Si hubo cualquier resultado de investigación registrado, el jugador conoce al personaje.
         initial_knowledge = KnowledgeLevel.KNOWN
-        
-        # Nota: Si se quisiera distinguir entre éxito y fallo de investigación para dar o no acceso,
-        # se podría filtrar por if outcome in ["SUCCESS", "CRIT_SUCCESS"].
-        # Por ahora, asumimos que el acto de investigar (y obtener resultado) otorga conocimiento básico.
 
     # 4. Preparar el registro del nuevo personaje para la base de datos
     new_character_data = {
