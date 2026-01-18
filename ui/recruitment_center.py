@@ -1,13 +1,13 @@
 # ui/recruitment_center.py
 """
 Centro de Reclutamiento Galactico - Contratacion de nuevos operativos.
-Genera candidatos aleatorios con stats completos usando character_engine.
+Genera candidatos aleatorios con stats completos usando character_engine o IA.
 """
 
 import streamlit as st
 from typing import Dict, Any, List
 from ui.state import get_player
-# IMPORTANTE: Se usa el servicio con IA por defecto, con fallback al motor básico
+# IMPORTANTE: Usamos el servicio de generación robusto (con IA y fallback)
 from services.character_generation_service import generate_random_character_with_ai, RecruitmentContext
 from core.recruitment_logic import can_recruit
 from data.player_repository import get_player_credits, update_player_credits
@@ -17,22 +17,19 @@ from config.app_constants import DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS, D
 
 def _generate_recruitment_pool(player_id: int, pool_size: int, existing_names: List[str], min_level: int = 1, max_level: int = 3) -> List[Dict[str, Any]]:
     """
-    Genera una piscina de candidatos para reclutamiento usando el servicio de IA (o fallback).
-
+    Genera una piscina de candidatos para reclutamiento.
+    
     Args:
-        player_id: ID del jugador para contexto.
-        pool_size: Cantidad de candidatos a generar.
-        existing_names: Nombres existentes para evitar duplicados.
-        min_level: Nivel minimo de los candidatos.
-        max_level: Nivel maximo de los candidatos.
-
-    Returns:
-        Lista de candidatos con stats completos y costo calculado.
+        player_id: ID del jugador (para contexto de generación).
+        pool_size: Cantidad de candidatos.
+        existing_names: Lista de nombres para evitar duplicados.
+        min_level: Nivel mínimo.
+        max_level: Nivel máximo.
     """
     candidates = []
     names_in_use = list(existing_names)
 
-    # Crear contexto para el generador
+    # Contexto para el generador
     context = RecruitmentContext(
         player_id=player_id,
         min_level=min_level,
@@ -40,49 +37,45 @@ def _generate_recruitment_pool(player_id: int, pool_size: int, existing_names: L
     )
 
     for _ in range(pool_size):
-        # Generar personaje con el servicio (retorna dict compatible con DB)
+        # 1. Generar datos crudos del personaje (Dict compatible con DB)
         char_data = generate_random_character_with_ai(
             context=context,
             existing_names=names_in_use
         )
-        
-        # Extraer stats para calcular costo y mostrar en UI
+
+        # 2. Extraer datos de forma segura desde stats_json
+        # La estructura puede variar, así que buscamos en las rutas correctas
         stats = char_data.get("stats_json", {})
         
-        # FIX: Obtener datos de las rutas correctas en stats_json
-        # Estructura esperada: stats_json['progresion']['nivel'], stats_json['taxonomia']['raza'], etc.
-        try:
-            nivel = stats.get("progresion", {}).get("nivel", 1)
-            raza = stats.get("taxonomia", {}).get("raza", "Humano")
-            clase = stats.get("progresion", {}).get("clase", "Recluta")
-        except Exception:
-            # Fallback por si la estructura es plana (legacy)
-            nivel = char_data.get("nivel", 1)
-            raza = char_data.get("raza", "Humano")
+        # Extracción robusta de Nivel
+        nivel = stats.get("progresion", {}).get("nivel")
+        if nivel is None:
+            nivel = char_data.get("nivel", 1) # Fallback nivel top-level
+
+        # Extracción robusta de Raza
+        raza = stats.get("taxonomia", {}).get("raza")
+        if raza is None:
+            raza = char_data.get("raza", "Desconocido")
+
+        # Extracción robusta de Clase
+        clase = stats.get("progresion", {}).get("clase")
+        if clase is None:
             clase = char_data.get("clase", "Recluta")
 
-        # Calcular costo (se necesita pasar un dict con 'nivel' y 'raza' o el objeto completo)
-        # La función calculate_recruitment_cost espera un dict con claves planas o acceso a atributos
-        # Simulamos un objeto simple para el cálculo de costo
-        temp_char_for_cost = {
-            "nivel": nivel,
-            "raza": raza,
-            "stats_json": stats
-        }
-        
-        # Import local para evitar circular si es necesario, o usar la lógica simple
-        # Costo base simplificado: (Nivel * 100) + (Suma Atributos * 10)
-        attrs = stats.get("capacidades", {}).get("atributos", {})
-        total_attrs = sum(attrs.values()) if attrs else 0
+        # 3. Calcular Costo
+        # Fórmula simple basada en nivel y atributos totales
+        atributos = stats.get("capacidades", {}).get("atributos", {})
+        total_attrs = sum(atributos.values()) if atributos else 0
         costo = (nivel * 250) + (total_attrs * 5)
+        if costo < 100: costo = 100 # Costo mínimo
 
-        # Preparar candidato para la UI
+        # 4. Construir objeto candidato para la UI
         candidate = {
             "nombre": char_data["nombre"],
             "nivel": nivel,
             "raza": raza,
             "clase": clase,
-            "costo": costo,
+            "costo": int(costo),
             "stats_json": stats
         }
 
@@ -98,16 +91,17 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
     stats = candidate.get("stats_json", {})
     bio = stats.get("bio", {})
     
-    # Rutas seguras a los datos en la nueva estructura JSON
-    atributos = stats.get("capacidades", {}).get("atributos", {})
-    habilidades = stats.get("capacidades", {}).get("habilidades", {})
-    feats = stats.get("capacidades", {}).get("feats", [])
+    # Rutas seguras a las capacidades
+    capacidades = stats.get("capacidades", {})
+    atributos = capacidades.get("atributos", {})
+    habilidades = capacidades.get("habilidades", {})
+    feats = capacidades.get("feats", [])
 
     can_afford = player_credits >= candidate["costo"]
     border_color = "#26de81" if can_afford else "#ff6b6b"
 
     with st.container(border=True):
-        # Header
+        # --- Header ---
         st.markdown(f"""
             <div style="
                 background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
@@ -131,38 +125,49 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
             </div>
         """, unsafe_allow_html=True)
 
-        # Descripcion (Bio superficial)
+        # --- Bio ---
+        # Priorizar bio_superficial, luego biografia_corta, luego fallback
         bio_text = bio.get('bio_superficial') or bio.get('biografia_corta') or "Sin datos biométricos."
         st.caption(f"*{bio_text}*")
 
-        # Atributos en grid compacto
+        # --- Atributos ---
         with st.expander("Ver Atributos", expanded=False):
-            cols = st.columns(3)
-            for i, (attr, value) in enumerate(atributos.items()):
-                with cols[i % 3]:
-                    color = "#26de81" if value >= 12 else "#888"
-                    st.markdown(f"<span style='color:{color};'>{attr.upper()}: **{value}**</span>", unsafe_allow_html=True)
+            if atributos:
+                cols = st.columns(3)
+                for i, (attr, value) in enumerate(atributos.items()):
+                    with cols[i % 3]:
+                        color = "#26de81" if value >= 12 else "#888"
+                        st.markdown(f"<span style='color:{color};'>{attr.upper()}: **{value}**</span>", unsafe_allow_html=True)
+            else:
+                st.write("Datos de atributos no disponibles.")
 
-        # Habilidades
-        # Muestra las Top 5 con colores escalados
+        # --- Habilidades (Top 5 con colores) ---
         with st.expander("Ver Habilidades", expanded=False):
             if habilidades:
+                # Ordenar por valor descendente
                 sorted_skills = sorted(habilidades.items(), key=lambda x: -x[1])
-                for skill, val in sorted_skills[:5]:  # Top 5 habilidades
-                    color = "#ffd700" if val >= 25 else "#45b7d1" if val >= 18 else "#888"
+                
+                # Mostrar top 5
+                for skill, val in sorted_skills[:5]:
+                    # Escala de colores
+                    if val >= 25: color = "#ffd700" # Oro (Legendario)
+                    elif val >= 18: color = "#45b7d1" # Azul (Experto)
+                    elif val >= 12: color = "#26de81" # Verde (Competente)
+                    else: color = "#888" # Gris (Básico)
+                    
                     st.markdown(f"<span style='color:{color};'>{skill}: **{val}**</span>", unsafe_allow_html=True)
             else:
-                st.caption("Sin habilidades calculadas")
+                st.caption("Sin habilidades especializadas.")
 
-        # Feats/Rasgos
+        # --- Rasgos/Feats ---
         if feats:
             with st.expander("Ver Rasgos", expanded=False):
                 for feat in feats:
                     st.markdown(f"- {feat}")
 
-        # Costo y boton de contratacion
         st.markdown("---")
 
+        # --- Footer: Costo y Botón ---
         col_cost, col_btn = st.columns([2, 1])
 
         with col_cost:
@@ -176,25 +181,25 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
 
         with col_btn:
             if can_afford:
-                if st.button(f"CONTRATAR", key=f"recruit_{index}", type="primary", width='stretch'):
+                if st.button(f"CONTRATAR", key=f"recruit_{index}", type="primary", use_container_width=True):
                     _process_recruitment(player_id, candidate, player_credits)
             else:
-                st.button("FONDOS INSUFICIENTES", key=f"recruit_{index}", disabled=True, width='stretch')
+                st.button("FONDOS INSUFICIENTES", key=f"recruit_{index}", disabled=True, use_container_width=True)
 
 
 def _process_recruitment(player_id: int, candidate: Dict[str, Any], player_credits: int):
-    """Procesa la contratacion de un candidato."""
+    """Procesa la transacción de reclutamiento."""
     try:
-        # Verificar fondos
+        # 1. Verificar fondos nuevamente (backend check)
         can_afford, message = can_recruit(player_credits, candidate['costo'])
         if not can_afford:
             st.error(message)
             return
 
-        # Calcular nuevo balance
+        # 2. Calcular nuevo balance
         new_credits = player_credits - candidate['costo']
 
-        # Preparar datos del personaje para la DB
+        # 3. Preparar datos finales para DB
         new_character_data = {
             "player_id": player_id,
             "nombre": candidate["nombre"],
@@ -205,41 +210,41 @@ def _process_recruitment(player_id: int, candidate: Dict[str, Any], player_credi
             "ubicacion": DEFAULT_RECRUIT_LOCATION
         }
 
-        # Ejecutar transacciones
+        # 4. Ejecutar operaciones DB
         update_ok = update_player_credits(player_id, new_credits)
         char_ok = create_character(player_id, new_character_data)
 
         if update_ok and char_ok:
-            st.success(f"¡{candidate['nombre']} se ha unido a tu faccion!")
-
-            # Limpiar el candidato de la sesion
+            st.success(f"¡{candidate['nombre']} se ha unido a tu facción!")
+            
+            # Limpiar piscina para evitar re-contratación del mismo
             if 'recruitment_pool' in st.session_state:
                 st.session_state.recruitment_pool = [
                     c for c in st.session_state.recruitment_pool if c['nombre'] != candidate['nombre']
                 ]
             st.rerun()
         else:
-            st.error("Error al completar el reclutamiento.")
+            st.error("Error crítico al procesar el reclutamiento en la base de datos.")
 
     except Exception as e:
         st.error(f"Error inesperado: {e}")
 
 
 def show_recruitment_center():
-    """Pagina principal del Centro de Reclutamiento."""
+    """Página principal del Centro de Reclutamiento."""
 
     st.title("Centro de Reclutamiento")
-    st.caption("Encuentra y contrata nuevos operativos para tu faccion")
+    st.caption("Encuentra y contrata nuevos operativos para tu facción")
     st.markdown("---")
 
     player = get_player()
     if not player:
-        st.warning("Error de sesion. Por favor, inicie sesion de nuevo.")
+        st.warning("Error de sesión. Por favor, inicie sesión de nuevo.")
         return
 
     player_id = player.id
 
-    # --- Header con creditos ---
+    # --- Panel de Créditos ---
     player_credits = get_player_credits(player_id)
 
     col_credits, col_refresh = st.columns([3, 1])
@@ -252,13 +257,13 @@ def show_recruitment_center():
                 border-radius: 10px;
                 border: 1px solid #333;
             ">
-                <span style="color: #888; font-size: 0.85em;">CREDITOS DISPONIBLES</span><br>
+                <span style="color: #888; font-size: 0.85em;">CRÉDITOS DISPONIBLES</span><br>
                 <span style="font-size: 2em; font-weight: bold; color: #ffd700;">{player_credits:,} C</span>
             </div>
         """, unsafe_allow_html=True)
 
     with col_refresh:
-        st.write("")  # Espaciado
+        st.write("") 
         refresh_cost = 50
         can_refresh = player_credits >= refresh_cost
 
@@ -266,66 +271,71 @@ def show_recruitment_center():
             f"Buscar Nuevos\n({refresh_cost} C)",
             disabled=not can_refresh,
             type="secondary",
-            width='stretch'
+            use_container_width=True
         ):
             if update_player_credits(player_id, player_credits - refresh_cost):
+                # Limpiar pool para forzar regeneración
                 if 'recruitment_pool' in st.session_state:
                     del st.session_state.recruitment_pool
                 st.rerun()
             else:
-                st.error("Error al actualizar creditos")
+                st.error("Error al actualizar créditos.")
 
     st.markdown("---")
 
-    # --- Opciones de nivel ---
-    with st.expander("Opciones de Busqueda"):
+    # --- Filtros de Búsqueda ---
+    with st.expander("Opciones de Búsqueda"):
         col_min, col_max = st.columns(2)
         with col_min:
-            min_level = st.number_input("Nivel Minimo", min_value=1, max_value=10, value=1)
+            min_level = st.number_input("Nivel Mínimo", min_value=1, max_value=10, value=st.session_state.get('recruit_min_level', 1))
         with col_max:
-            max_level = st.number_input("Nivel Maximo", min_value=1, max_value=10, value=3)
+            max_level = st.number_input("Nivel Máximo", min_value=1, max_value=10, value=st.session_state.get('recruit_max_level', 3))
 
         if max_level < min_level:
             max_level = min_level
 
-        # Guardar en session para regenerar con estos parametros
         if st.button("Aplicar Filtros"):
+            # Borrar pool actual para regenerar con nuevos filtros
             if 'recruitment_pool' in st.session_state:
                 del st.session_state.recruitment_pool
             st.session_state.recruit_min_level = min_level
             st.session_state.recruit_max_level = max_level
             st.rerun()
 
-    # --- Generar/Obtener piscina de candidatos ---
+    # --- Generación/Obtención de Candidatos ---
     if 'recruitment_pool' not in st.session_state or not st.session_state.recruitment_pool:
-        # Obtener nombres existentes
+        # Obtener nombres existentes para evitar duplicados
         all_chars = get_all_characters_by_player_id(player_id)
         existing_names = []
-        for c in all_chars:
-            if hasattr(c, 'nombre'): 
-                existing_names.append(c.nombre)
-            elif isinstance(c, dict): 
-                existing_names.append(c.get('nombre'))
+        
+        # Manejo seguro de la respuesta de DB (puede ser objeto o dict)
+        if all_chars:
+            for c in all_chars:
+                if isinstance(c, dict):
+                    existing_names.append(c.get('nombre', ''))
+                elif hasattr(c, 'nombre'):
+                    existing_names.append(c.nombre)
 
-        # Obtener parametros de nivel
+        # Params de sesión
         min_lvl = st.session_state.get('recruit_min_level', 1)
         max_lvl = st.session_state.get('recruit_max_level', 3)
 
-        # Generar candidatos usando la función corregida
-        st.session_state.recruitment_pool = _generate_recruitment_pool(
-            player_id=player_id,
-            pool_size=3,
-            existing_names=existing_names,
-            min_level=min_lvl,
-            max_level=max_lvl
-        )
+        with st.spinner("Contactando red de informantes..."):
+            # Generar
+            st.session_state.recruitment_pool = _generate_recruitment_pool(
+                player_id=player_id, # FIX: Pasar player_id
+                pool_size=3,
+                existing_names=existing_names,
+                min_level=min_lvl,
+                max_level=max_lvl
+            )
 
     candidates = st.session_state.recruitment_pool
 
-    # --- Mostrar candidatos ---
+    # --- Renderizado ---
     if not candidates:
-        st.info("No hay candidatos disponibles. Pulsa 'Buscar Nuevos' para generar mas.")
-        if st.button("Generar Candidatos Gratis"):
+        st.info("No hay candidatos disponibles en este momento.")
+        if st.button("Reintentar conexión"):
             if 'recruitment_pool' in st.session_state:
                 del st.session_state.recruitment_pool
             st.rerun()
@@ -333,13 +343,10 @@ def show_recruitment_center():
 
     st.subheader(f"Candidatos Disponibles ({len(candidates)})")
 
-    # Mostrar en columnas
     cols = st.columns(len(candidates))
-
     for i, candidate in enumerate(candidates):
         with cols[i]:
             _render_candidate_card(candidate, i, player_credits, player_id)
 
-    # --- Footer con info ---
     st.markdown("---")
-    st.caption("Los candidatos son generados proceduralmente. El costo se basa en nivel y atributos.")
+    st.caption("Los candidatos son generados proceduralmente por la IA central.")
