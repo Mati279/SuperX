@@ -5,6 +5,7 @@ from config.app_constants import (
     DEFAULT_RECRUIT_STATUS,
     DEFAULT_RECRUIT_LOCATION
 )
+from core.models import KnowledgeLevel
 
 def can_recruit(player_credits: int, candidate_cost: int) -> Tuple[bool, str]:
     """
@@ -48,7 +49,27 @@ def process_recruitment(
     # 2. Calcular el nuevo balance de créditos
     new_credits = player_credits - candidate['costo']
     
-    # 3. Preparar el registro del nuevo personaje para la base de datos
+    # 3. Determinar nivel de conocimiento inicial basado en investigación previa
+    # Si hubo investigación exitosa, el jugador ya conoce al personaje.
+    initial_knowledge = None
+    outcome = candidate.get("investigation_outcome")
+    
+    if outcome == "CRIT_SUCCESS":
+        # Éxito crítico revela todo (rasgos ocultos, etc) -> FRIEND/FULL
+        initial_knowledge = KnowledgeLevel.FRIEND
+    elif outcome == "SUCCESS":
+        # Éxito normal revela stats -> BASIC
+        # Nota: Asumimos que KnowledgeLevel tiene un nivel BASIC o similar. 
+        # Si no, usamos FRIEND como fallback para asegurar acceso.
+        try:
+            initial_knowledge = KnowledgeLevel.BASIC
+        except AttributeError:
+            initial_knowledge = KnowledgeLevel.FRIEND 
+    elif outcome: 
+        # Cualquier otro outcome positivo que no sea fallo
+        initial_knowledge = KnowledgeLevel.BASIC
+
+    # 4. Preparar el registro del nuevo personaje para la base de datos
     new_character_data = {
         "player_id": player_id,
         "nombre": candidate["nombre"],
@@ -57,7 +78,9 @@ def process_recruitment(
         "stats_json": candidate["stats_json"],
         "costo": candidate["costo"],
         "estado": DEFAULT_RECRUIT_STATUS,
-        "ubicacion": DEFAULT_RECRUIT_LOCATION
+        "ubicacion": DEFAULT_RECRUIT_LOCATION,
+        # Campo temporal para transportar esta info al repositorio
+        "initial_knowledge_level": initial_knowledge 
     }
 
     return new_credits, new_character_data

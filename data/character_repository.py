@@ -140,6 +140,10 @@ def create_commander(
 
         response = _get_db().table("characters").insert(new_char_data).execute()
         if response.data:
+            # El comandante siempre es conocido por el jugador (es él mismo)
+            cmd_id = response.data[0]["id"]
+            set_character_knowledge_level(cmd_id, player_id, KnowledgeLevel.FRIEND)
+            
             log_event(f"Nuevo comandante V2 '{name}' creado en tick {current_tick}.", player_id)
             return response.data[0]
         return None
@@ -205,12 +209,29 @@ def create_character(player_id: int, character_data: Dict[str, Any]) -> Optional
         if "recruited_at_tick" not in character_data:
             character_data["recruited_at_tick"] = get_current_tick()
 
+        # Extraer nivel de conocimiento inicial si existe (proviene de process_recruitment)
+        initial_knowledge = character_data.pop("initial_knowledge_level", None)
+
         response = _get_db().table("characters").insert(character_data).execute()
         
         if response.data:
+            new_char = response.data[0]
+            new_char_id = new_char["id"]
             nombre = character_data.get('nombre', 'Unit')
+            
+            # Persistir conocimiento inicial si fue provisto
+            if initial_knowledge:
+                set_character_knowledge_level(new_char_id, player_id, initial_knowledge)
+                # Log opcional para debug
+                # log_event(f"Conocimiento transferido: {initial_knowledge.value}", player_id)
+            else:
+                # Si es un recluta fresco (sin investigación previa), por defecto
+                # al ser tripulación propia se asume FRIEND/FULL en la lógica de negocio,
+                # pero guardarlo explícitamente evita ambigüedades.
+                set_character_knowledge_level(new_char_id, player_id, KnowledgeLevel.FRIEND)
+
             log_event(f"Reclutado: {nombre}", player_id)
-            return response.data[0]
+            return new_char
         return None
 
     except Exception as e:
