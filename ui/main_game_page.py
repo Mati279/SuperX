@@ -11,7 +11,7 @@ from data.world_repository import get_commander_location_display
 from data.player_repository import get_player_finances, delete_player_account, add_player_credits
 
 # --- Importar las vistas del juego ---
-from .faction_roster import show_faction_roster
+from .faction_roster import render_faction_roster
 from .recruitment_center import show_recruitment_center
 from .galaxy_map_page import show_galaxy_map_page
 from .ship_status_page import show_ship_status_page
@@ -49,7 +49,7 @@ def render_main_game_page(cookie_manager):
     # --- 3. Renderizar la página seleccionada ---
     PAGES = {
         "Puente de Mando": _render_war_room_page,
-        "Cuadrilla": show_faction_roster,  # Renombrado de Comando de Facción
+        "Cuadrilla": render_faction_roster,  # Renombrado de Comando de Facción
         "Centro de Reclutamiento": show_recruitment_center,
         "Mapa de la Galaxia": show_galaxy_map_page,
         "Flota": show_ship_status_page,
