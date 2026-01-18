@@ -6,7 +6,8 @@ from data.database import get_supabase
 from data.world_repository import get_world_state, get_system_by_id, get_planets_by_system_id
 from data.player_repository import get_player_by_id, get_player_finances
 from core.galaxy_generator import get_galaxy
-from core.models import Planet, System, KnowledgeLevel  # Importamos KnowledgeLevel
+from core.models import KnowledgeLevel
+from core.world_models import Planet, System
 from data.log_repository import log_event
 from core.mrg_engine import resolve_action, DIFFICULTY_NORMAL
 
