@@ -10,6 +10,7 @@ from typing import Dict, Any, List
 from data.database import supabase
 from data.log_repository import log_event
 from core.world_constants import STAR_TYPES
+from core.constants import MIN_ATTRIBUTE_VALUE
 
 # --- CONSTANTES DEL PROTOCOLO ---
 GENESIS_XP = 3265
@@ -194,7 +195,16 @@ def _grant_visibility(player_id: int, system_id: int, level: int):
 
 def generate_genesis_commander_stats(name: str) -> Dict[str, Any]:
     """Generate starting stats for a new commander using correct attribute names."""
-    base_attrs = {"fuerza": 5, "agilidad": 5, "tecnica": 5, "intelecto": 5, "voluntad": 5, "presencia": 5}
+    # Usamos la constante MIN_ATTRIBUTE_VALUE en lugar de harcodear 5
+    v = MIN_ATTRIBUTE_VALUE
+    base_attrs = {
+        "fuerza": v, 
+        "agilidad": v, 
+        "tecnica": v, 
+        "intelecto": v, 
+        "voluntad": v, 
+        "presencia": v
+    }
     stats = {
         "nivel": 6,
         "xp": GENESIS_XP,

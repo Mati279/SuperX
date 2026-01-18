@@ -19,9 +19,9 @@ LOGIN_SUCCESS_DELAY_SECONDS = 0.5  # Delay para asegurar escritura de cookie
 # --- Configuración de Generación Procedural ---
 CANDIDATE_NAME_SUFFIX_MIN = 100
 CANDIDATE_NAME_SUFFIX_MAX = 999
-# Ajustado para cumplir con el rango base del diseño (5-9)
+# Ajustado para cumplir con el rango base del diseño (5-20)
 ATTRIBUTE_BASE_MIN = 5
-ATTRIBUTE_BASE_MAX = 9
+ATTRIBUTE_BASE_MAX = 20
 RECRUITMENT_BASE_COST_MULTIPLIER = 25
 RECRUITMENT_COST_VARIANCE_MIN = 0.8
 RECRUITMENT_COST_VARIANCE_MAX = 1.2

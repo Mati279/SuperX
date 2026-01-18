@@ -1,6 +1,12 @@
 # core/rules.py
 from typing import Dict
-from .constants import SKILL_MAPPING, ATTRIBUTE_SOFT_CAP, ATTRIBUTE_COST_MULTIPLIER
+from .constants import (
+    SKILL_MAPPING, 
+    ATTRIBUTE_SOFT_CAP, 
+    ATTRIBUTE_COST_MULTIPLIER,
+    MIN_ATTRIBUTE_VALUE,
+    MAX_ATTRIBUTE_VALUE
+)
 
 def calculate_skills(attributes: Dict[str, int]) -> Dict[str, int]:
     """
@@ -35,12 +41,25 @@ def calculate_skills(attributes: Dict[str, int]) -> Dict[str, int]:
 def calculate_attribute_cost(start_val: int, target_val: int) -> int:
     """
     Calcula el costo total en puntos para aumentar un atributo.
-    REGLA: Subir un punto por encima del Soft Cap (15) cuesta el doble.
+    
+    REGLAS:
+    - Rango 5 a 15: Costo 1 punto por nivel.
+    - Rango 16 a 20: Costo 2 puntos por nivel (Soft Cap).
+    - Máximo absoluto: 20.
     """
+    # Validaciones de integridad
+    if start_val < MIN_ATTRIBUTE_VALUE:
+        # En teoría no debería pasar, pero asumimos costo desde el mínimo si está bugueado
+        start_val = MIN_ATTRIBUTE_VALUE
+        
+    if target_val > MAX_ATTRIBUTE_VALUE:
+        raise ValueError(f"El atributo no puede superar el máximo de {MAX_ATTRIBUTE_VALUE}")
+
     if target_val <= start_val:
         return 0
 
     cost = 0
+    # Iteramos por cada punto que se quiere subir
     for v in range(start_val + 1, target_val + 1):
         if v > ATTRIBUTE_SOFT_CAP:
             cost += ATTRIBUTE_COST_MULTIPLIER

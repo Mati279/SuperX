@@ -75,5 +75,9 @@ SKILL_MAPPING: Dict[str, Tuple[str, str]] = {
 
 # Unificado con Módulo 19.2: Pool de 60 puntos para un personaje Nivel 6 de inicio
 POINTS_AVAILABLE_FOR_ATTRIBUTES: int = 60
-ATTRIBUTE_SOFT_CAP: int = 15
+
+# Reglas de Costos y Límites
+MIN_ATTRIBUTE_VALUE: int = 5
+MAX_ATTRIBUTE_VALUE: int = 20
+ATTRIBUTE_SOFT_CAP: int = 15     # A partir de aquí cuesta el doble
 ATTRIBUTE_COST_MULTIPLIER: int = 2
