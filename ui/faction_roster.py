@@ -1,123 +1,109 @@
-# ui/faction_roster.py
 import streamlit as st
-from .state import get_player
-from .character_sheet import show_character_sheet
-from data.character_repository import get_all_characters_by_player_id
+from data.character_repository import (
+    get_all_player_characters, 
+    update_character_stats, 
+    get_character_knowledge_level,
+    set_character_knowledge_level
+)
+from core.models import CharacterRole, KnowledgeLevel
+from core.constants import SKILL_MAPPING
+from core.mrg_engine import resolve_action, DIFFICULTY_NORMAL
+from ui.character_sheet import render_character_sheet
+from data.player_repository import get_player_by_id
 
-class CharacterAdapter:
-    """
-    Adapta el diccionario crudo de la base de datos a un objeto estructurado
-    para facilitar el acceso en la UI (dot notation) y manejar datos anidados.
-    """
-    def __init__(self, data):
-        self.raw_data = data
-        self.id = data.get('id')
-        self.nombre = data.get('nombre', 'Sin Nombre')
-        self.rango = data.get('rango', 'Recluta')
-        self.estado = data.get('estado', 'Activo')
-        
-        # Extraer datos anidados de stats_json
-        stats = data.get('stats_json') or {}
-        
-        self.nivel = stats.get('nivel', 1)
-        self.experiencia = stats.get('xp', 0)
-        self.hp_actual = stats.get('hp_actual', 100)
-        self.hp_maximo = stats.get('hp_maximo', 100)
-        self.energia = stats.get('energia', 10)
-        
-        # Acciones (valores por defecto si no existen)
-        self.acciones_actuales = stats.get('acciones_actuales', 2)
-        self.acciones_maximas = stats.get('acciones_maximas', 3)
-        
-        self.habilidades = stats.get('habilidades', {})
-        
-        # Atributos (dentro de stats_json -> atributos)
-        atributos = stats.get('atributos', {})
-        self.fuerza = atributos.get('Fuerza', 0)
-        self.destreza = atributos.get('Destreza', 0)
-        self.inteligencia = atributos.get('Inteligencia', 0)
-        self.constitucion = atributos.get('Constitución', 0)
-        
-        # Biografía (dentro de stats_json -> bio)
-        bio = stats.get('bio', {})
-        self.clase = bio.get('clase', 'Especialista')
-        self.trasfondo = bio.get('trasfondo', '')
+def render_faction_roster(player_id: int):
+    st.title("📋 Personal de la Facción")
 
-def show_faction_roster():
-    """
-    Muestra la lista de miembros de la cuadrilla (facción).
-    Formato: Rango - Nv. - Nombre - Estado - Acciones - Resumen - Botón Detalle.
-    """
-    player = get_player()
-    if not player:
-        st.error("No se pudo identificar al jugador.")
+    # Obtener personajes
+    characters = get_all_player_characters(player_id)
+    
+    # Obtener datos del jugador para tiradas (Intelecto/Técnica)
+    player_data = get_player_by_id(player_id)
+    # Valor base competente (60) si no hay stat, o promedio de Int/Tec del jugador
+    # Asumimos que el jugador actúa como 'Director' usando la red de inteligencia de la facción
+    player_intellect = 60 # Default
+    # Si tuviéramos stats del jugador (PlayerData), los usaríamos aquí. 
+    # Por ahora usamos un valor fijo competente para la acción de gestión.
+
+    if not characters:
+        st.info("No hay personal reclutado en tu facción.")
         return
 
-    # Header principal con el botón de reclutamiento integrado
-    c_head, c_btn = st.columns([3, 1])
-    with c_head:
-        st.markdown("## 👥 Cuadrilla Operativa")
-        st.caption("Personal bajo su mando directo.")
-    
-    with c_btn:
-        st.write("") # Spacer vertical para alinear con el título
-        if st.button("➕ Reclutar Personal", type="primary", use_container_width=True):
-            st.session_state.current_page = "Centro de Reclutamiento"
-            st.rerun()
+    # Filtros y Ordenamiento
+    col1, col2 = st.columns(2)
+    with col1:
+        sort_by = st.selectbox("Ordenar por", ["Rango", "Clase", "Nombre", "Nivel"])
+    with col2:
+        filter_role = st.selectbox("Filtrar por Rol", ["Todos"] + [r.value for r in CharacterRole])
 
-    st.write("")
+    # Aplicar filtros
+    filtered_chars = characters
+    if filter_role != "Todos":
+        filtered_chars = [c for c in filtered_chars if c.get("stats_json", {}).get("estado", {}).get("rol_asignado") == filter_role]
 
-    # Obtener personajes del jugador usando la función correcta del repositorio
-    raw_characters = get_all_characters_by_player_id(player.id)
+    # Aplicar orden
+    if sort_by == "Nombre":
+        filtered_chars.sort(key=lambda x: x["nombre"])
+    elif sort_by == "Nivel":
+        filtered_chars.sort(key=lambda x: x.get("stats_json", {}).get("progresion", {}).get("nivel", 0), reverse=True)
+    elif sort_by == "Clase":
+        filtered_chars.sort(key=lambda x: x.get("stats_json", {}).get("progresion", {}).get("clase", ""))
 
-    if not raw_characters:
-        st.info("No tienes miembros en tu cuadrilla actualmente.")
-        return
+    # Mostrar lista
+    for char in filtered_chars:
+        with st.expander(f"{char['rango']} {char['nombre']} - {char.get('stats_json', {}).get('progresion', {}).get('clase', 'Sin Clase')}"):
+            
+            # --- SECCIÓN DE GESTIÓN DE CONOCIMIENTO ---
+            char_id = char['id']
+            knowledge_level = get_character_knowledge_level(char_id, player_id)
+            
+            # Botón de Investigar (Solo para UNKNOWN)
+            if knowledge_level == KnowledgeLevel.UNKNOWN:
+                st.warning(f"⚠️ Nivel de Conocimiento: {knowledge_level.value.upper()}")
+                st.write("No tienes acceso a los datos completos de este personal. Puedes ordenar una investigación interna.")
+                
+                col_btn, col_info = st.columns([1, 3])
+                with col_btn:
+                    if st.button(f"🕵️ Investigar", key=f"investigate_{char_id}", help="Realiza una tirada de Inteligencia para desbloquear la ficha completa."):
+                        # Tirada MRG sin efectos críticos (House Rule para Roster)
+                        result = resolve_action(merit_points=player_intellect, difficulty=DIFFICULTY_NORMAL)
+                        
+                        if result.is_success:
+                            # Éxito (Crítico o Normal) -> Pasa a Conocido
+                            success = set_character_knowledge_level(char_id, player_id, KnowledgeLevel.KNOWN)
+                            if success:
+                                st.toast(f"✅ Investigación exitosa: Datos de {char['nombre']} actualizados.", icon="📂")
+                                st.rerun()
+                        else:
+                            # Fallo (Crítico o Normal) -> Solo falla, no se va.
+                            msg = "Fallo Crítico: La investigación atrajo atención no deseada, pero no se obtuvo información." if result.is_critical_failure else "Fallo: No se encontró información relevante."
+                            st.error(msg)
+            else:
+                # Si ya es Conocido o Amigo, mostramos el indicador discreto
+                color = "blue" if knowledge_level == KnowledgeLevel.KNOWN else "gold"
+                st.markdown(f"**Nivel de Acceso:** :{color}[{knowledge_level.value.upper()}]")
 
-    # Adaptar los diccionarios a objetos
-    characters = [CharacterAdapter(c) for c in raw_characters]
+            # --- FICHA DE PERSONAJE ---
+            # Renderizamos la ficha completa (que internamente decide qué mostrar según el nivel)
+            render_character_sheet(char, player_id)
 
-    # --- ENCABEZADOS DE LA TABLA ---
-    # Ajustamos las proporciones de las columnas para que quepan los datos
-    # Rango(1.5) - Nv(0.8) - Nombre(2) - Estado(1.2) - Acciones(1) - Resumen(2.5) - Botón(1)
-    cols = st.columns([1.5, 0.8, 2, 1.2, 1, 2.5, 1])
-    
-    headers = ["RANGO", "NV.", "NOMBRE", "ESTADO", "AP", "RESUMEN", "FICHA"]
-    for col, header in zip(cols, headers):
-        col.markdown(f"**{header}**")
-    
-    st.divider()
-
-    # --- LISTADO DE PERSONAJES ---
-    for char in characters:
-        c1, c2, c3, c4, c5, c6, c7 = st.columns([1.5, 0.8, 2, 1.2, 1, 2.5, 1])
-        
-        # Estado con color
-        estado_color = "green" if char.estado == "Activo" else "orange" if char.estado == "Misión" else "red"
-        
-        # Acciones (AP)
-        ap_display = f"{char.acciones_actuales}/{char.acciones_maximas}"
-        
-        # Resumen
-        trasfondo_str = f" ({char.trasfondo})" if char.trasfondo else ""
-        resumen_display = f"{char.clase}{trasfondo_str}"
-
-        with c1:
-            st.write(f"🎖️ {char.rango}")
-        with c2:
-            st.write(f"{char.nivel}")
-        with c3:
-            st.write(f"**{char.nombre}**")
-        with c4:
-            st.markdown(f":{estado_color}[{char.estado}]")
-        with c5:
-            st.write(ap_display)
-        with c6:
-            st.caption(resumen_display)
-        with c7:
-            if st.button("Ver", key=f"btn_char_{char.id}"):
-                show_character_sheet(char.id)
-
-        st.markdown("---")
-
-
+            st.divider()
+            
+            # --- ACCIONES DE GESTIÓN (Roles, Despido, etc.) ---
+            c1, c2 = st.columns(2)
+            with c1:
+                current_role = char.get("stats_json", {}).get("estado", {}).get("rol_asignado", "Sin Asignar")
+                new_role = st.selectbox(
+                    "Asignar Rol", 
+                    [r.value for r in CharacterRole], 
+                    index=[r.value for r in CharacterRole].index(current_role) if current_role in [r.value for r in CharacterRole] else 0,
+                    key=f"role_{char['id']}"
+                )
+                
+                if new_role != current_role:
+                    if st.button("Confirmar Cambio de Rol", key=f"btn_role_{char['id']}"):
+                        stats = char.get("stats_json", {})
+                        stats["estado"]["rol_asignado"] = new_role
+                        update_character_stats(char['id'], stats)
+                        st.success(f"Rol actualizado a {new_role}")
+                        st.rerun()
