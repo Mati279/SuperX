@@ -15,6 +15,8 @@ from data.character_repository import create_character, get_all_characters_by_pl
 from data.world_repository import queue_player_action # NECESARIO para el botón Investigar
 from config.app_constants import DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS, DEFAULT_RECRUIT_LOCATION
 
+# --- CONSTANTES ---
+INVESTIGATION_COST = 150  # Costo por investigar antecedentes
 
 def _generate_recruitment_pool(player_id: int, pool_size: int, existing_names: List[str], min_level: int = 1, max_level: int = 3) -> List[Dict[str, Any]]:
     """
@@ -88,6 +90,8 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
     feats = capacidades.get("feats", [])
 
     can_afford = player_credits >= candidate["costo"]
+    can_afford_investigation = player_credits >= INVESTIGATION_COST
+    
     border_color = "#26de81" if can_afford else "#ff6b6b"
 
     with st.container(border=True):
@@ -152,7 +156,6 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
         st.markdown("---")
 
         # --- Footer: Acciones (Investigar / Contratar) ---
-        # MODIFICADO: Restaurado el botón Investigar y ajustadas las columnas
         col_cost, col_inv, col_recruit = st.columns([2, 1, 1])
 
         with col_cost:
@@ -166,13 +169,25 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
 
         # Botón Investigar (Antecedentes)
         with col_inv:
-            if st.button("🕵️ Investigar", key=f"inv_{index}", help="Inicia protocolo de inteligencia. Tarda 1 Tick.", use_container_width=True):
-                 # Encolamos la orden natural para que la IA la procese, programe y notifique.
-                 cmd = f"Inicia protocolo de investigación de antecedentes sobre el candidato {candidate['nombre']}."
-                 if queue_player_action(player_id, cmd):
-                     st.toast(f"⏳ Solicitud enviada. Inteligencia procesará los datos de {candidate['nombre']} en el próximo ciclo.")
-                 else:
-                     st.error("Error al encolar orden.")
+            if can_afford_investigation:
+                if st.button("🕵️ Investigar", key=f"inv_{index}", help=f"Inicia protocolo de inteligencia. Costo: {INVESTIGATION_COST} C. Tarda 1 Tick.", use_container_width=True):
+                     # 1. Cobrar
+                     if update_player_credits(player_id, player_credits - INVESTIGATION_COST):
+                         # 2. Encolar la orden
+                         # Intentamos pasar la Bio Real oculta en el prompt para que la IA pueda "descubrirla" si tiene éxito
+                         real_bio = bio.get('bio_profunda') or bio.get('bio_conocida') or "Sin secretos."
+                         cmd = f"Inicia protocolo de investigación de antecedentes (Investigar) sobre el candidato '{candidate['nombre']}'. (DATOS OCULTOS REALES DEL OBJETIVO PARA USO INTERNO DE IA: {real_bio})"
+                         
+                         if queue_player_action(player_id, cmd):
+                             st.toast(f"✅ -{INVESTIGATION_COST} C. Solicitud enviada. Inteligencia procesará a {candidate['nombre']} en el próximo ciclo.")
+                             st.rerun()
+                         else:
+                             st.error("Error al encolar orden. Se han reembolsado los créditos.")
+                             update_player_credits(player_id, player_credits) # Reembolso
+                     else:
+                         st.error("Error en transacción financiera.")
+            else:
+                 st.button(f"INV ({INVESTIGATION_COST})", key=f"inv_{index}", disabled=True, help="Créditos insuficientes para investigación", use_container_width=True)
 
         # Botón Contratar
         with col_recruit:

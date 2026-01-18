@@ -73,7 +73,7 @@ TOOL_DECLARATIONS = [
             ),
              types.FunctionDeclaration(
                 name="investigar",
-                description="Inicia una operación de inteligencia para obtener datos ocultos de un objetivo. Tarda 1 Ciclo.",
+                description="Inicia una operación de inteligencia para obtener datos ocultos de un objetivo. IMPORTANTE: Extrae siempre el 'player_id' del contexto.",
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
@@ -212,12 +212,13 @@ def investigar(target_name: str, player_id: int, focus: str = "general", executi
     Modo SCHEDULE: Programa la acción para el Tick (wait 1 tick).
     Modo EXECUTE: Ejecuta la lógica MRG y revela información.
     """
+    print(f"🕵️ DEBUG: llamada a investigar() - Target: {target_name}, Mode: {execution_mode}, PID: {player_id}")
     try:
         # MODO 1: PROGRAMACIÓN (Default)
         # El usuario ordena investigar. La IA programa la acción.
         if execution_mode == "SCHEDULE":
             # Crear el comando interno que disparará el modo EXECUTE en el próximo tick
-            internal_command = f"[INTERNAL_EXECUTE_INVESTIGATION] target='{target_name}' focus='{focus}'"
+            internal_command = f"[INTERNAL_EXECUTE_INVESTIGATION] target='{target_name}' focus='{focus}' player_id={player_id}"
             
             queue_ok = queue_player_action(player_id, internal_command)
             
@@ -235,6 +236,7 @@ def investigar(target_name: str, player_id: int, focus: str = "general", executi
         elif execution_mode == "EXECUTE":
             commander = get_commander_by_player_id(player_id)
             if not commander:
+                print(f"❌ DEBUG: Comandante no encontrado para PID {player_id}")
                 return json.dumps({"error": "Comandante no encontrado."})
 
             # Obtener stats y habilidad nueva
@@ -247,28 +249,34 @@ def investigar(target_name: str, player_id: int, focus: str = "general", executi
             skill_bonus = skills.get('Recopilación de Información', 0) # NUEVA HABILIDAD
             total_merit = base_merit + skill_bonus
 
+            print(f"🎲 DEBUG: Tirada MRG. Mérito total: {total_merit}")
+
             # Resolución MRG
             result = resolve_action(
                 merit_points=total_merit,
                 difficulty=DIFFICULTY_NORMAL, # 50
                 action_description=f"Investigación de {target_name}"
             )
+            
+            print(f"🎲 DEBUG: Resultado MRG: {result.result_type} (Roll: {result.roll.total})")
 
             # Generar resultado basado en éxito/fracaso
             if result.result_type in [ResultType.CRITICAL_SUCCESS, ResultType.TOTAL_SUCCESS, ResultType.PARTIAL_SUCCESS]:
-                # Éxito: Revelar lore (Simulado por ahora)
-                lore_fragment = f"Datos clasificados recuperados sobre {target_name}: Análisis de patrones sugiere movimiento de activos en el sector periférico."
-                if result.result_type == ResultType.CRITICAL_SUCCESS:
-                    lore_fragment += " [CRÍTICO] ¡Se han interceptado claves de encriptación enemigas!"
+                # Éxito: Revelar lore
+                # NOTA: Si el target_name tiene datos ocultos pasados en el prompt (workaround), la IA los usará para narrar.
+                lore_fragment = f"INFORME DE INTELIGENCIA SOBRE: {target_name}\n"
+                lore_fragment += "------------------------------------------------\n"
+                lore_fragment += "Los agentes han logrado infiltrarse en las bases de datos locales. "
+                lore_fragment += "Se ha confirmado la identidad y antecedentes del sujeto."
                 
-                # Efecto en Bio: Podríamos guardar esto en la DB, por ahora solo notificamos.
-                # log_event(f"Investigación Exitosa: {lore_fragment}", player_id) # Ya se logueará por la narrativa de la IA
+                if result.result_type == ResultType.CRITICAL_SUCCESS:
+                    lore_fragment += " [CRÍTICO] ¡Se han interceptado comunicaciones privadas que revelan sus verdaderas intenciones!"
                 
                 return json.dumps({
                     "status": "SUCCESS",
                     "mrg_roll": result.roll.total,
                     "resultado": lore_fragment,
-                    "analisis": f"Éxito en recopilación (Margen: {result.margin}). Información añadida a los archivos."
+                    "analisis": f"Éxito en recopilación (Margen: {result.margin}). El perfil del objetivo ha sido esclarecido."
                 }, ensure_ascii=False)
             
             else:
@@ -284,6 +292,7 @@ def investigar(target_name: str, player_id: int, focus: str = "general", executi
             return json.dumps({"error": f"Modo de ejecución desconocido: {execution_mode}"})
 
     except Exception as e:
+        print(f"❌ DEBUG: Exception en investigar: {e}")
         return json.dumps({"error": f"Error crítico en investigación: {str(e)}"})
 
 
