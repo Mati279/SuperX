@@ -36,7 +36,8 @@ def queue_player_action(player_id: int, action_text: str) -> bool:
 def try_trigger_db_tick(target_date_iso: str) -> bool:
     """Llama a la función RPC de Supabase para intentar reclamar el Tick."""
     try:
-        response = supabase.rpc("try_process_tick", {"target_date": target_date_iso}).execute()
+        # FIX: Usar _get_db() en lugar de 'supabase' que no estaba definido
+        response = _get_db().rpc("try_process_tick", {"target_date": target_date_iso}).execute()
         return response.data # True o False
     except Exception as e:
         log_event(f"Error RPC try_process_tick: {e}", is_error=True)
