@@ -140,12 +140,8 @@ def create_commander(
 
         response = _get_db().table("characters").insert(new_char_data).execute()
         if response.data:
-            # FIX: Asegurar que el jugador conoce a su propio comandante
-            new_char = response.data[0]
-            set_character_knowledge_level(new_char['id'], player_id, KnowledgeLevel.FRIEND)
-            
             log_event(f"Nuevo comandante V2 '{name}' creado en tick {current_tick}.", player_id)
-            return new_char
+            return response.data[0]
         return None
 
     except Exception as e:
@@ -212,19 +208,9 @@ def create_character(player_id: int, character_data: Dict[str, Any]) -> Optional
         response = _get_db().table("characters").insert(character_data).execute()
         
         if response.data:
-            new_char = response.data[0]
             nombre = character_data.get('nombre', 'Unit')
-            
-            # FIX CRÍTICO: Establecer nivel de conocimiento a FRIEND inmediatamente al crear.
-            # Esto soluciona el problema de personajes que se ven como "Desconocidos" tras reclutar.
-            set_character_knowledge_level(
-                character_id=new_char['id'],
-                observer_player_id=player_id,
-                knowledge_level=KnowledgeLevel.FRIEND
-            )
-
             log_event(f"Reclutado: {nombre}", player_id)
-            return new_char
+            return response.data[0]
         return None
 
     except Exception as e:
