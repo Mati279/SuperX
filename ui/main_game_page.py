@@ -1,5 +1,6 @@
 # ui/main_game_page.py
 import streamlit as st
+import time
 from .state import logout_user, get_player, get_commander
 from data.log_repository import get_recent_logs, log_event
 from services.gemini_service import resolve_player_action
@@ -286,9 +287,19 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         """
         st.markdown(clock_css, unsafe_allow_html=True)
 
-        if st.button("🔄 Forzar Tick", use_container_width=True):
-            debug_force_tick()
-            st.rerun()
+        col_tick1, col_tick10 = st.columns(2)
+        with col_tick1:
+            if st.button("🔄 +1 Tick", use_container_width=True):
+                debug_force_tick()
+                st.rerun()
+        
+        with col_tick10:
+            if st.button("⏩ +10 Ticks", use_container_width=True):
+                with st.spinner("Avanzando tiempo..."):
+                    for _ in range(10):
+                        debug_force_tick()
+                        time.sleep(0.1) # Pequeña pausa para evitar lock de DB
+                st.rerun()
 
         st.divider()
 

@@ -152,15 +152,10 @@ def update_commander_profile(
             return None # No debería pasar en flujo normal
             
         # Reconstruir stats_json completo con los nuevos datos
-        # Nota: Como es update, podríamos querer fusionar, pero el wizard suele ser "set definitivo" inicial.
-        # Reutilizamos lógica de create pero actualizando
-        
         current_stats = current.get("stats_json", {})
-        # Si es V1, esto sobrescribirá a V2
         
         habilidades = calculate_skills(attributes)
         name = current.get("nombre", "Comandante")
-        parts = name.split(" ", 1)
         
         # Update deep merge
         new_stats = _ensure_v2_structure(current_stats, name)
@@ -191,8 +186,6 @@ def create_character(player_id: int, character_data: Dict[str, Any]) -> Optional
     Persiste un personaje generado por character_engine (que ya viene en formato V2/DB ready).
     """
     try:
-        # El engine ya devuelve {nombre, rango, estado, stats_json, ...}
-        # Solo necesitamos inyectar player_id
         character_data["player_id"] = player_id
         
         response = supabase.table("characters").insert(character_data).execute()
@@ -213,6 +206,9 @@ def get_all_characters_by_player_id(player_id: int) -> list[Dict[str, Any]]:
         return response.data if response.data else []
     except Exception:
         return []
+
+# ALIAS para compatibilidad con event_service
+get_all_player_characters = get_all_characters_by_player_id
 
 def update_character(character_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     try:
@@ -260,7 +256,6 @@ def update_character_stats(character_id: int, new_stats_json: Dict[str, Any], pl
     return update_character(character_id, {"stats_json": new_stats_json})
 
 def update_character_level(character_id: int, new_level: int, new_stats_json: Dict[str, Any], player_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    # Sync columna Rango si cambia
     rango = new_stats_json.get("progresion", {}).get("rango", "Recluta")
     
     return update_character(character_id, {
@@ -282,18 +277,6 @@ def recruit_random_character_with_ai(
 ) -> Optional[Dict[str, Any]]:
     """
     Genera y recluta un personaje aleatorio usando IA para nombre y biografía.
-
-    Esta función delega al servicio de generación de personajes.
-
-    Args:
-        player_id: ID del jugador que recluta
-        location_planet_id: ID del planeta donde se recluta (para raza predominante)
-        predominant_race: Raza predominante del planeta
-        min_level: Nivel mínimo del recluta
-        max_level: Nivel máximo del recluta
-
-    Returns:
-        Dict con datos del personaje creado, o None si falla
     """
     from services.character_generation_service import recruit_character_with_ai
 
@@ -316,18 +299,6 @@ def get_recruitment_candidates(
 ) -> list[Dict[str, Any]]:
     """
     Genera un pool de candidatos para reclutamiento.
-    NO los guarda en BD - el jugador debe elegir uno.
-
-    Args:
-        player_id: ID del jugador
-        pool_size: Cantidad de candidatos a generar
-        location_planet_id: ID del planeta
-        predominant_race: Raza predominante
-        min_level: Nivel mínimo
-        max_level: Nivel máximo
-
-    Returns:
-        Lista de candidatos generados (sin ID, no persistidos)
     """
     from services.character_generation_service import generate_character_pool
 
