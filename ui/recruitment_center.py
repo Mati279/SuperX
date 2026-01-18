@@ -47,6 +47,16 @@ COLOR_SKILL_GREEN = "#26de81"
 COLOR_SKILL_BLUE = "#45b7d1"
 COLOR_SKILL_GOLD = "#ffd700"
 
+# Abreviaturas de Atributos
+ATTR_ABBREVIATIONS = {
+    "fuerza": "FUE",
+    "agilidad": "AGI",
+    "tecnica": "TEC",
+    "intelecto": "INT",
+    "voluntad": "VOL",
+    "presencia": "PRE"
+}
+
 
 def _get_skill_color(value: int) -> str:
     """Retorna el color apropiado segun el valor de la habilidad."""
@@ -66,8 +76,10 @@ def _render_top_skills(habilidades: Dict[str, int], count: int = 5):
         st.caption("Sin habilidades registradas.")
         return
 
-    # Si count es -1 o muy alto, muestra todas. Aqui limitamos si se pide
+    # Ordenar por valor descendente
     sorted_skills = sorted(habilidades.items(), key=lambda x: -x[1])
+    
+    # Si count es > 0, limitamos. Si es 0 o negativo, mostramos todas.
     if count > 0:
         sorted_skills = sorted_skills[:count]
 
@@ -100,7 +112,7 @@ def _render_candidate_card(
     raza = stats.get("taxonomia", {}).get("raza", "Desconocido")
     clase = stats.get("progresion", {}).get("clase", "Recluta")
     
-    # Extraer edad (Nuevo)
+    # Extraer edad
     edad = bio.get("edad", "??")
 
     # Estados
@@ -131,15 +143,14 @@ def _render_candidate_card(
         # Header con badges
         badges_html = ""
 
-        # NOTA: Se eliminaron los badges de SEGUIDO e INVESTIGANDO para limpiar la UI
-        # ya que se muestran en los botones inferiores.
-
         # Badge de conocimiento
         if already_investigated:
             badges_html += '<span style="background: rgba(69,183,209,0.2); color: #45b7d1; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; margin-left: 8px; border: 1px solid #45b7d1;">CONOCIDO</span>'
         else:
             badges_html += '<span style="background: rgba(255,107,107,0.15); color: #ff6b6b; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; margin-left: 8px; border: 1px solid #ff6b6b;">DESCONOCIDO</span>'
 
+        # Render Header
+        # Se ha eliminado el indicador de Nivel (Nv. X) para limpiar la cabecera.
         st.markdown(f"""
             <div style="
                 background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
@@ -150,7 +161,6 @@ def _render_candidate_card(
             ">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <span style="font-size: 1.1em; font-weight: bold; color: #fff;">{candidate['nombre']}{badges_html}</span>
-                    <span style="font-size: 1.3em; font-weight: bold; color: #45b7d1;">Nv. {nivel}</span>
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 0.85em; margin-top: 4px;">
                     <div><span style="color: #a55eea;">{raza}</span> | <span style="color: #f9ca24;">{clase}</span> | <span style="color: #ccc;">{edad} años</span></div>
@@ -169,24 +179,27 @@ def _render_candidate_card(
             bio_text = bio.get('bio_superficial') or bio.get('biografia_corta') or "Sin datos biometricos."
             st.caption(f"*{bio_text}*")
 
-        # --- CAMBIO: Atributos siempre visibles, Habilidades en toggle ---
-        
-        # Atributos (Ahora visibles siempre)
+        # Atributos (Resumidos)
         st.markdown("**Atributos:**")
         if atributos:
             cols = st.columns(3)
             for i, (attr, value) in enumerate(atributos.items()):
                 with cols[i % 3]:
                     color = _get_skill_color(value)
-                    st.markdown(f"<span style='color:{color};'>{attr.upper()}: **{value}**</span>", unsafe_allow_html=True)
+                    # Usar abreviatura si existe, si no usar las primeras 3 letras
+                    short_name = ATTR_ABBREVIATIONS.get(attr.lower(), attr[:3].upper())
+                    st.markdown(f"<span style='color:{color};'>{short_name}: **{value}**</span>", unsafe_allow_html=True)
         else:
             st.caption("Datos no disponibles.")
 
         st.write("") # Espaciador
 
-        # Habilidades (Ahora en Expander)
-        with st.expander("Ver Habilidades", expanded=False):
-             _render_top_skills(habilidades, count=10) # Mostrar mas habilidades ahora que esta oculto
+        # Habilidades (Lógica dinámica: Top 5 si Desconocido, Todas si Conocido)
+        skill_count = 0 if already_investigated else 5
+        label_skills = "Ver Todas las Habilidades" if already_investigated else "Ver Habilidades (Top 5)"
+        
+        with st.expander(label_skills, expanded=False):
+             _render_top_skills(habilidades, count=skill_count)
 
         # Rasgos de personalidad
         if show_traits and rasgos:
@@ -196,7 +209,7 @@ def _render_candidate_card(
             st.caption("*Rasgos de personalidad: Desconocidos*")
 
 
-        # --- Visualizacion del Costo (Movido arriba del footer) ---
+        # --- Visualizacion del Costo ---
         cost_color = "#26de81" if can_afford else "#ff6b6b"
         original_cost = candidate.get("original_cost") if discount_applied else None
         
@@ -206,7 +219,6 @@ def _render_candidate_card(
         else:
              cost_display_html = f'<span style="color: {cost_color}; font-weight: bold; font-size: 1.1em;">{candidate["costo"]:,} C</span>'
 
-        # Mostrar costo alineado a la derecha con margen inferior negativo para pegarlo a la linea
         st.markdown(f"""
             <div style="text-align: right; margin-top: 10px; margin-bottom: -12px; font-size: 0.9em; color: #aaa;">
                 Costo de contratacion: {cost_display_html}
@@ -215,17 +227,13 @@ def _render_candidate_card(
 
         st.markdown("---")
 
-        # --- Footer Actions (Botones alineados en una fila) ---
-        # Se usan 3 columnas solo para botones para garantizar alineacion horizontal perfecta.
-        # Ratios: [Seguimiento (pequeño), Investigar (medio), Contratar (grande)]
+        # --- Footer Actions ---
         col_track, col_inv, col_recruit = st.columns([0.7, 1.5, 2])
 
         # 1. Boton de Seguimiento (Icono Ojo)
         with col_track:
-            track_icon = "👁" # Nuevo icono solicitado
+            track_icon = "👁"
             track_help = "Dejar de seguir" if is_tracked else "Seguir (Evita expiracion)"
-            
-            # Si esta seguido, usamos type primary para resaltarlo
             btn_type = "primary" if is_tracked else "secondary"
 
             if st.button(track_icon, key=f"track_{candidate['id']}", help=track_help, use_container_width=True, type=btn_type):
@@ -236,10 +244,10 @@ def _render_candidate_card(
                     set_candidate_tracked(player_id, candidate['id'])
                 st.rerun()
 
-        # 2. Boton Investigar (Icono Detective)
+        # 2. Boton Investigar
         with col_inv:
             disable_inv = False
-            inv_label = "🕵️‍♂️ Investigar" # Nuevo icono
+            inv_label = "🕵️‍♂️ Investigar"
             inv_help = f"Costo: {INVESTIGATION_COST} C. Tarda 1 Tick."
             button_type = "secondary"
 
@@ -247,7 +255,7 @@ def _render_candidate_card(
                 disable_inv = True
                 inv_label = "🕵️‍♂️ Investigando..."
                 inv_help = "Investigacion en curso. Resultado en el proximo Tick."
-                button_type = "primary" # Azul/Resaltado
+                button_type = "primary" # Azul
             elif not can_afford_investigation:
                 disable_inv = True
                 inv_help = "Creditos insuficientes."
@@ -284,10 +292,9 @@ def _render_candidate_card(
                     if st.button("Pifia", key=f"d_cf_{candidate['id']}", help="El candidato huye"):
                         _handle_investigation(player_id, candidate, player_credits, debug_outcome="CRIT_FAIL")
 
-        # 3. Boton Contratar
+        # 3. Boton Contratar (Azul / Primary)
         with col_recruit:
             if can_afford:
-                # Type primary suele ser el color principal del tema (Rojo o Azul segun config)
                 if st.button("CONTRATAR", key=f"recruit_{candidate['id']}", type="primary", use_container_width=True):
                     _process_recruitment(player_id, candidate, player_credits)
             else:
@@ -511,15 +518,10 @@ def show_recruitment_center():
         st.subheader(f"Candidatos Disponibles ({len(candidates)}){tracked_msg}")
 
         # --- GRID SYSTEM 4 COLUMNAS ---
-        # Creamos una fila de 4 columnas inicialmente.
-        # Si hubiera mas de 4 (defensa contra bugs), el loop reinicia la fila.
         cols = st.columns(4)
         
         for i, candidate in enumerate(candidates):
-            # Indice de columna (0, 1, 2, 3)
             col_idx = i % 4
-            
-            # Si completamos una fila de 4 y empezamos otra, crear nuevas columnas
             if i > 0 and col_idx == 0:
                 cols = st.columns(4)
                 
