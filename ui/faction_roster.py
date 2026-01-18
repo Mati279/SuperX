@@ -12,8 +12,17 @@ from core.mrg_constants import DIFFICULTY_NORMAL
 from ui.character_sheet import render_character_sheet
 from data.player_repository import get_player_by_id
 
-def render_faction_roster(player_id: int):
+def render_faction_roster():
+    from .state import get_player
+
     st.title("📋 Personal de la Facción")
+
+    player = get_player()
+    if not player:
+        st.warning("Error de sesión.")
+        return
+
+    player_id = player.id
 
     # Obtener personajes
     characters = get_all_player_characters(player_id)
