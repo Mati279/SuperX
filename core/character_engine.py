@@ -2,11 +2,6 @@
 """
 Motor de Personajes - Lógica pura de generación, progresión y level up.
 Refactorizado para generar la estructura completa del CharacterSchema V2.
-
-NOTA: Para generación de personajes con IA, usar:
-    services.character_generation_service.generate_random_character_with_ai()
-
-Este módulo provee la lógica base de progresión y la generación sin IA.
 """
 
 import random
@@ -35,13 +30,11 @@ SKILL_POINTS_PER_LEVEL = 4
 ATTRIBUTE_POINT_LEVELS = [5, 10, 15, 20]
 FEAT_LEVELS = [1, 5, 10, 15, 20]
 
-# Atributos base (alineados con SKILL_MAPPING)
 BASE_ATTRIBUTE_MIN = 5
-BASE_ATTRIBUTE_MAX = 9  # Modificado de 10 a 9
+BASE_ATTRIBUTE_MAX = 9
 MAX_ATTRIBUTE_VALUE = 20
 MIN_ATTRIBUTE_VALUE = 3
 
-# Lista de atributos del sistema (alineados con SKILL_MAPPING en constants.py)
 ATTRIBUTE_NAMES = ["fuerza", "agilidad", "tecnica", "intelecto", "voluntad", "presencia"]
 
 AVAILABLE_FEATS = [
@@ -79,50 +72,38 @@ def generate_random_character(
 ) -> Dict[str, Any]:
     """
     Genera un personaje completo siguiendo el nuevo CharacterSchema V2.
-
-    NOTA: Esta función genera nombres localmente. Para generación con IA,
-    usar services.character_generation_service.generate_random_character_with_ai()
     """
     existing_names = existing_names or []
 
-    # 1. Determinar nivel y XP
     level = random.randint(min_level, max_level)
     xp = get_xp_for_level(level)
 
-    # 2. Selección de Raza
     race_name, race_data = random.choice(list(RACES.items()))
 
-    # 3. Selección de Clase (REGLA: Obligatoria a nivel CLASS_ASSIGNMENT_MIN_LEVEL, sino Novato)
     if level >= CLASS_ASSIGNMENT_MIN_LEVEL:
         class_name, class_data = random.choice(list(CLASSES.items()))
     else:
         class_name = "Novato"
         class_data = {"desc": "Recién reclutado, aún sin especialización.", "bonus_attr": None}
 
-    # 4. Generar Bio (Nombre, Apellido, Edad, Sexo)
     name, surname = _generate_full_name(race_name, existing_names)
     age = random.randint(RECRUIT_AGE_MIN, RECRUIT_AGE_MAX)
     sex = random.choice([BiologicalSex.MALE, BiologicalSex.FEMALE])
     
-    # 5. Generar Atributos
     attributes = _generate_base_attributes()
     
-    # Bonus Racial
     for attr, bonus in race_data.get("bonus", {}).items():
         if attr in attributes:
             attributes[attr] = min(attributes[attr] + bonus, MAX_ATTRIBUTE_VALUE)
     
-    # Bonus Clase (si aplica)
     if class_name != "Novato" and class_data.get("bonus_attr"):
         bonus_attr = class_data["bonus_attr"]
         if bonus_attr in attributes:
             attributes[bonus_attr] = min(attributes[bonus_attr] + 1, MAX_ATTRIBUTE_VALUE)
 
-    # Puntos extra por nivel
     extra_attr_points = sum(1 for lvl in ATTRIBUTE_POINT_LEVELS if lvl <= level)
     _distribute_random_points(attributes, extra_attr_points)
 
-    # 6. Habilidades y Feats
     skills = calculate_skills(attributes)
     skill_points = level * SKILL_POINTS_PER_LEVEL
     skills = _boost_skills(skills, skill_points)
@@ -130,13 +111,12 @@ def generate_random_character(
     num_feats = sum(1 for lvl in FEAT_LEVELS if lvl <= level)
     feats = random.sample(AVAILABLE_FEATS, min(num_feats, len(AVAILABLE_FEATS)))
 
-    # 7. Personalidad y Comportamiento
     traits = random.sample(PERSONALITY_TRAITS, k=2)
 
-    # 8. Ensamblar Estructura V2 (Mapping a CharacterSchema)
-    
-    # Bio local básica (Fallback)
-    bio_text = f"{race_name} {class_name}. {traits[0]} y {traits[1]}."
+    # TEXTOS DE BIOGRAFÍA GENÉRICOS (Local/Fallback)
+    bio_sup = f"{race_name} {class_name}. Se le ve {traits[0].lower()}."
+    bio_known = f"Sujeto reclutado en estación remota. Muestra rasgos de personalidad {traits[0]} y {traits[1]}. Historial académico estándar para un {race_name}."
+    bio_deep = f"DATOS CLASIFICADOS. El sujeto proviene de un sector en cuarentena. Posible exposición a radiación de vacío."
 
     stats_json = {
         "bio": {
@@ -144,11 +124,10 @@ def generate_random_character(
             "apellido": surname,
             "edad": age,
             "sexo": sex.value,
-            "biografia_corta": bio_text,
-            # Nuevos campos de biografía escalonada (valores por defecto)
-            "bio_superficial": f"Recluta {race_name}. Apariencia estándar.",
-            "bio_conocida": bio_text,
-            "bio_profunda": "Sin datos clasificados disponibles.",
+            "biografia_corta": bio_sup, # AHORA APUNTA A LA CORTA
+            "bio_superficial": bio_sup,
+            "bio_conocida": bio_known,
+            "bio_profunda": bio_deep,
             "nivel_acceso": BIO_ACCESS_SUPERFICIAL,
             "ticks_reclutado": 0
         },
@@ -186,7 +165,6 @@ def generate_random_character(
         }
     }
 
-    # Retorno compatible con lo que espera el repositorio para inserción
     return {
         "nombre": f"{name} {surname}",
         "rango": stats_json["progresion"]["rango"],
@@ -277,7 +255,6 @@ def apply_level_up(character_data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict
     Aplica level up sobre la estructura V2.
     """
     stats = character_data.get("stats_json", {})
-    # Adaptar acceso a la nueva estructura
     prog = stats.get("progresion", {})
     caps = stats.get("capacidades", {})
     
@@ -291,7 +268,6 @@ def apply_level_up(character_data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict
     new_level = current_level + 1
     changes = {"bonificaciones": []}
 
-    # Copias para modificar
     new_stats = stats.copy()
     new_prog = prog.copy()
     new_caps = caps.copy()
@@ -300,14 +276,12 @@ def apply_level_up(character_data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict
     new_skills = new_caps.get("habilidades", {}).copy()
     new_feats = new_caps.get("feats", []).copy()
 
-    # 1. Clase a Nivel 3 (Lógica especial)
     if new_level == 3 and new_prog.get("clase") == "Novato":
         changes["bonificaciones"].append("¡ELECCIÓN DE CLASE DISPONIBLE!")
         new_class_name, _ = random.choice(list(CLASSES.items()))
         new_prog["clase"] = new_class_name 
         changes["bonificaciones"].append(f"Clase asignada: {new_class_name}")
 
-    # 2. Skill Points
     changes["bonificaciones"].append(f"+{SKILL_POINTS_PER_LEVEL} puntos de habilidad")
     skill_keys = list(new_skills.keys())
     if skill_keys:
@@ -315,7 +289,6 @@ def apply_level_up(character_data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict
             skill = random.choice(skill_keys)
             new_skills[skill] += 1
 
-    # 3. Attribute Points
     if new_level in ATTRIBUTE_POINT_LEVELS:
         changes["bonificaciones"].append("+1 punto de atributo")
         attr_keys = list(new_attributes.keys())
@@ -325,7 +298,6 @@ def apply_level_up(character_data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict
                 new_attributes[chosen] += 1
                 changes["bonificaciones"].append(f"+1 {chosen.capitalize()}")
 
-    # 4. Feats
     if new_level in FEAT_LEVELS:
         available = [f for f in AVAILABLE_FEATS if f not in new_feats]
         if available:
@@ -333,7 +305,6 @@ def apply_level_up(character_data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict
             new_feats.append(new_feat)
             changes["bonificaciones"].append(f"Nuevo rasgo: {new_feat}")
 
-    # Actualizar estructura
     new_prog["nivel"] = new_level
     new_prog["xp_next"] = get_xp_for_level(new_level + 1) if new_level < 20 else current_xp
     
@@ -390,7 +361,6 @@ def update_character_access_level(stats_json: Dict[str, Any]) -> Tuple[bool, str
     """
     bio_data = stats_json.get("bio", {})
     
-    # Inicializar contador si no existe
     if "ticks_reclutado" not in bio_data:
         bio_data["ticks_reclutado"] = 0
         
@@ -402,7 +372,6 @@ def update_character_access_level(stats_json: Dict[str, Any]) -> Tuple[bool, str
         bio_data["nivel_acceso"] = BIO_ACCESS_KNOWN
         return False, ""
 
-    # Lógica de escalado
     new_level = current_level
     
     if ticks >= TICK_THRESHOLD_DEEP:

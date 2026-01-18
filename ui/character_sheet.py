@@ -14,13 +14,9 @@ from core.models import (
     CharacterRole, BiologicalSex
 )
 from data.character_repository import get_character_by_id
-from core.character_engine import get_visible_biography # NUEVA IMPORTACIÓN
+from core.character_engine import get_visible_biography
 
-
-# =============================================================================
-# CONSTANTES
-# =============================================================================
-
+# CONSTANTES DE COLOR
 COLOR_PALETTE = {
     "bg_primary": "#1a1a2e",
     "bg_secondary": "#16213e",
@@ -53,73 +49,22 @@ ATTRIBUTE_ICONS = {
 }
 
 SKILL_CATEGORIES: Dict[str, List[str]] = {
-    "Pilotaje y Vehiculos": [
-        "Piloteo de naves pequeñas", "Piloteo de naves medianas",
-        "Piloteo de fragatas y capitales", "Maniobras evasivas espaciales",
-        "Navegación en zonas peligrosas"
-    ],
-    "Combate y Armamento": [
-        "Armas de precisión", "Armas pesadas", "Combate cuerpo a cuerpo",
-        "Tácticas de escuadra", "Combate defensivo", "Uso de drones de combate"
-    ],
-    "Ingenieria y Tecnologia": [
-        "Reparación mecánica", "Reparación electrónica", "Hackeo de sistemas",
-        "Sabotaje tecnológico", "Optimización de sistemas", "Interfaz con sistemas"
-    ],
-    "Ciencia e Investigacion": [
-        "Investigación científica", "Análisis de datos",
-        "Ingeniería inversa", "Evaluación de amenazas"
-    ],
-    "Sigilo e Infiltracion": [
-        "Sigilo físico", "Infiltración urbana", "Evasión de sensores",
-        "Movimiento silencioso", "Escape táctico"
-    ],
-    "Diplomacia y Social": [
-        "Persuasión", "Engaño", "Intimidación",
-        "Negociación", "Liderazgo", "Lectura emocional"
-    ],
-    "Comando y Estrategia": [
-        "Planificación de misiones", "Coordinación de unidades",
-        "Gestión de recursos", "Toma de decisiones bajo presión"
-    ],
-    "Supervivencia y Fisico": [
-        "Resistencia física", "Supervivencia en entornos hostiles",
-        "Atletismo", "Orientación y exploración"
-    ]
+    "Pilotaje y Vehiculos": ["Piloteo de naves pequeñas", "Piloteo de naves medianas", "Piloteo de fragatas y capitales", "Maniobras evasivas espaciales", "Navegación en zonas peligrosas"],
+    "Combate y Armamento": ["Armas de precisión", "Armas pesadas", "Combate cuerpo a cuerpo", "Tácticas de escuadra", "Combate defensivo", "Uso de drones de combate"],
+    "Ingenieria y Tecnologia": ["Reparación mecánica", "Reparación electrónica", "Hackeo de sistemas", "Sabotaje tecnológico", "Optimización de sistemas", "Interfaz con sistemas"],
+    "Ciencia e Investigacion": ["Investigación científica", "Análisis de datos", "Ingeniería inversa", "Evaluación de amenazas"],
+    "Sigilo e Infiltracion": ["Sigilo físico", "Infiltración urbana", "Evasión de sensores", "Movimiento silencioso", "Escape táctico"],
+    "Diplomacia y Social": ["Persuasión", "Engaño", "Intimidación", "Negociación", "Liderazgo", "Lectura emocional"],
+    "Comando y Estrategia": ["Planificación de misiones", "Coordinación de unidades", "Gestión de recursos", "Toma de decisiones bajo presión"],
+    "Supervivencia y Fisico": ["Resistencia física", "Supervivencia en entornos hostiles", "Atletismo", "Orientación y exploración"]
 }
 
 SHEET_CSS = """
 <style>
-/* CSS abreviado para no duplicar todo el bloque largo, mantiene el estilo original */
-.char-header {
-    background: linear-gradient(90deg, rgba(69,183,209,0.15) 0%, rgba(38,222,129,0.08) 100%);
-    border-bottom: 2px solid #45b7d1;
-    padding: 20px;
-    border-radius: 12px;
-    margin-bottom: 15px;
-}
-.char-name {
-    font-size: 1.8em;
-    font-weight: bold;
-    color: #fff;
-    margin: 0;
-    text-shadow: 0 2px 4px rgba(0,0,0,0.3);
-}
-.char-subtitle {
-    color: #888;
-    font-size: 0.9em;
-    margin-top: 6px;
-}
-.char-bio-text {
-    font-style: italic;
-    color: #a0a0a0;
-    margin-top: 12px;
-    padding: 12px;
-    background: rgba(0,0,0,0.2);
-    border-left: 3px solid #45b7d1;
-    border-radius: 0 8px 8px 0;
-    font-size: 0.9em;
-}
+.char-header { background: linear-gradient(90deg, rgba(69,183,209,0.15) 0%, rgba(38,222,129,0.08) 100%); border-bottom: 2px solid #45b7d1; padding: 20px; border-radius: 12px; margin-bottom: 15px; }
+.char-name { font-size: 1.8em; font-weight: bold; color: #fff; margin: 0; text-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+.char-subtitle { color: #888; font-size: 0.9em; margin-top: 6px; }
+.char-bio-text { font-style: italic; color: #a0a0a0; margin-top: 12px; padding: 12px; background: rgba(0,0,0,0.2); border-left: 3px solid #45b7d1; border-radius: 0 8px 8px 0; font-size: 0.9em; }
 .attr-row { display: flex; align-items: center; margin: 10px 0; gap: 10px; }
 .attr-icon { font-size: 1.2em; width: 30px; text-align: center; }
 .attr-name { width: 90px; color: #ccc; font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -151,89 +96,43 @@ SHEET_CSS = """
 </style>
 """
 
-# =============================================================================
-# FUNCIONES HELPER
-# =============================================================================
-
 def _get_color_for_attr(value: int) -> str:
-    """Retorna color hex basado en valor de atributo (1-20)."""
-    if value <= 8:
-        return COLOR_PALETTE["attr_low"]
-    elif value <= 12:
-        return COLOR_PALETTE["attr_mid"]
-    elif value <= 16:
-        return COLOR_PALETTE["attr_high"]
-    else:
-        return COLOR_PALETTE["attr_elite"]
-
+    if value <= 8: return COLOR_PALETTE["attr_low"]
+    elif value <= 12: return COLOR_PALETTE["attr_mid"]
+    elif value <= 16: return COLOR_PALETTE["attr_high"]
+    else: return COLOR_PALETTE["attr_elite"]
 
 def _render_attribute_bar_html(name: str, value: int, icon: str = "") -> str:
-    """Genera HTML para una barra de atributo."""
     color = _get_color_for_attr(value)
     percent = min(100, (value / 20) * 100)
-
-    return f"""
-    <div class="attr-row">
-        <span class="attr-icon">{icon}</span>
-        <span class="attr-name">{name}</span>
-        <div class="attr-bar-container">
-            <div class="attr-bar-fill" style="width: {percent}%; background: {color};"></div>
-        </div>
-        <span class="attr-value" style="color: {color};">{value}</span>
-    </div>
-    """
-
+    return f"""<div class="attr-row"><span class="attr-icon">{icon}</span><span class="attr-name">{name}</span><div class="attr-bar-container"><div class="attr-bar-fill" style="width: {percent}%; background: {color};"></div></div><span class="attr-value" style="color: {color};">{value}</span></div>"""
 
 def _get_status_css_class(status: str) -> str:
-    """Determina la clase CSS del tag de estado."""
-    status_lower = status.lower()
-
-    if "disponible" in status_lower or "available" in status_lower:
-        return "status-available"
-    elif "misi" in status_lower:
-        return "status-mission"
-    elif "herido" in status_lower or "injured" in status_lower:
-        return "status-injured"
-    elif "entren" in status_lower or "training" in status_lower:
-        return "status-training"
-    elif "tránsito" in status_lower or "transit" in status_lower:
-        return "status-transit"
-
+    s = status.lower()
+    if "disponible" in s or "available" in s: return "status-available"
+    elif "misi" in s: return "status-mission"
+    elif "herido" in s or "injured" in s: return "status-injured"
+    elif "entren" in s or "training" in s: return "status-training"
+    elif "tránsito" in s or "transit" in s: return "status-transit"
     return "status-available"
 
-
 def _render_status_tag_html(status: str) -> str:
-    """Genera HTML para un tag de estado."""
-    css_class = _get_status_css_class(status)
-    return f'<span class="status-tag {css_class}">{status}</span>'
-
+    css = _get_status_css_class(status)
+    return f'<span class="status-tag {css}">{status}</span>'
 
 def _get_skill_badge_class(value: int) -> str:
-    """Determina la clase CSS del badge según valor."""
-    if value >= 17:
-        return "skill-badge skill-badge-elite"
-    elif value >= 13:
-        return "skill-badge skill-badge-high"
+    if value >= 17: return "skill-badge skill-badge-elite"
+    elif value >= 13: return "skill-badge skill-badge-high"
     return "skill-badge"
 
-
-# =============================================================================
-# SECCIONES DE LA FICHA
-# =============================================================================
-
 def _render_header(sheet: CharacterSchema) -> None:
-    """Renderiza el header principal con nombre y resumen."""
     bio = sheet.bio
     prog = sheet.progresion
     tax = sheet.taxonomia
-
     full_name = f"{bio.nombre} {bio.apellido}".strip()
-
-    # Obtener valor del sexo (puede ser enum o string)
     sexo_val = bio.sexo.value if hasattr(bio.sexo, 'value') else str(bio.sexo)
     
-    # IMPORTANTE: Usamos la función de lógica de visibilidad
-    # Convertimos sheet a dict para pasarle a la funcion helper del engine
+    # USAR LA LÓGICA DE VISIBILIDAD
     visible_bio = get_visible_biography(sheet.model_dump())
 
     header_html = f"""
@@ -251,90 +150,24 @@ def _render_header(sheet: CharacterSchema) -> None:
     """
     st.markdown(header_html, unsafe_allow_html=True)
 
-
 def _render_bio_section(bio: CharacterBio, tax: CharacterTaxonomy) -> None:
-    """Seccion de identificadores y taxonomia."""
     with st.expander("Identificadores de Entidad", expanded=False):
         sexo_val = bio.sexo.value if hasattr(bio.sexo, 'value') else str(bio.sexo)
         trans = tax.transformaciones if tax.transformaciones else ["Ninguna"]
         trans_str = ", ".join(trans)
-
-        st.markdown(f"""
-        <div class="info-grid">
-            <div class="info-item">
-                <div class="info-label">Nombre</div>
-                <div class="info-value">{bio.nombre}</div>
-            </div>
-            <div class="info-item">
-                <div class="info-label">Apellido</div>
-                <div class="info-value">{bio.apellido or "---"}</div>
-            </div>
-            <div class="info-item">
-                <div class="info-label">Edad</div>
-                <div class="info-value">{bio.edad} años</div>
-            </div>
-            <div class="info-item">
-                <div class="info-label">Sexo</div>
-                <div class="info-value">{sexo_val}</div>
-            </div>
-            <div class="info-item">
-                <div class="info-label">Raza</div>
-                <div class="info-value" style="color: #a55eea;">{tax.raza}</div>
-            </div>
-            <div class="info-item">
-                <div class="info-label">Transformaciones</div>
-                <div class="info-value">{trans_str}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
+        st.markdown(f"""<div class="info-grid"><div class="info-item"><div class="info-label">Nombre</div><div class="info-value">{bio.nombre}</div></div><div class="info-item"><div class="info-label">Apellido</div><div class="info-value">{bio.apellido or "---"}</div></div><div class="info-item"><div class="info-label">Edad</div><div class="info-value">{bio.edad} años</div></div><div class="info-item"><div class="info-label">Sexo</div><div class="info-value">{sexo_val}</div></div><div class="info-item"><div class="info-label">Raza</div><div class="info-value" style="color: #a55eea;">{tax.raza}</div></div><div class="info-item"><div class="info-label">Transformaciones</div><div class="info-value">{trans_str}</div></div></div>""", unsafe_allow_html=True)
 
 def _render_progression_section(prog: CharacterProgression) -> None:
-    """Seccion de progresion con barra de XP."""
     with st.expander("Progresion y Jerarquia", expanded=False):
         xp_current = prog.xp
         xp_next = prog.xp_next if prog.xp_next > 0 else 500
         xp_percent = 100 if prog.nivel >= 20 else min(100, max(0, (xp_current / xp_next) * 100))
-
-        st.markdown(f"""
-        <div style="text-align: center; margin-bottom: 20px;">
-            <span style="font-size: 3em; font-weight: bold; color: #45b7d1; text-shadow: 0 0 20px rgba(69,183,209,0.3);">
-                NIVEL {prog.nivel}
-            </span>
-        </div>
-        <div style="margin-bottom: 15px;">
-            <div style="display: flex; justify-content: space-between; font-size: 0.8em; color: #888; margin-bottom: 4px;">
-                <span>XP: {xp_current:,}</span>
-                <span>Siguiente: {xp_next:,}</span>
-            </div>
-            <div class="xp-bar-container">
-                <div class="xp-bar-fill" style="width: {xp_percent}%;"></div>
-            </div>
-            <div style="text-align: center; font-size: 0.75em; color: #666; margin-top: 4px;">
-                {xp_percent:.0f}% completado
-            </div>
-        </div>
-        <div class="info-grid">
-            <div class="info-item">
-                <div class="info-label">Clase</div>
-                <div class="info-value" style="color: #f9ca24; font-size: 1.1em;">{prog.clase}</div>
-            </div>
-            <div class="info-item">
-                <div class="info-label">Rango</div>
-                <div class="info-value" style="color: #ffd700; font-size: 1.1em;">{prog.rango}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
+        st.markdown(f"""<div style="text-align: center; margin-bottom: 20px;"><span style="font-size: 3em; font-weight: bold; color: #45b7d1; text-shadow: 0 0 20px rgba(69,183,209,0.3);">NIVEL {prog.nivel}</span></div><div style="margin-bottom: 15px;"><div style="display: flex; justify-content: space-between; font-size: 0.8em; color: #888; margin-bottom: 4px;"><span>XP: {xp_current:,}</span><span>Siguiente: {xp_next:,}</span></div><div class="xp-bar-container"><div class="xp-bar-fill" style="width: {xp_percent}%;"></div></div><div style="text-align: center; font-size: 0.75em; color: #666; margin-top: 4px;">{xp_percent:.0f}% completado</div></div><div class="info-grid"><div class="info-item"><div class="info-label">Clase</div><div class="info-value" style="color: #f9ca24; font-size: 1.1em;">{prog.clase}</div></div><div class="info-item"><div class="info-label">Rango</div><div class="info-value" style="color: #ffd700; font-size: 1.1em;">{prog.rango}</div></div></div>""", unsafe_allow_html=True)
 
 def _render_attributes_section(attrs: CharacterAttributes) -> None:
-    """Seccion de atributos con barras visuales."""
     with st.expander("Atributos Primarios", expanded=True):
-        if hasattr(attrs, 'model_dump'):
-            attrs_dict = attrs.model_dump()
-        else:
-            attrs_dict = {k: v for k, v in vars(attrs).items() if not k.startswith('_')}
-
+        if hasattr(attrs, 'model_dump'): attrs_dict = attrs.model_dump()
+        else: attrs_dict = {k: v for k, v in vars(attrs).items() if not k.startswith('_')}
         html_bars = ""
         total = 0
         for attr_name, value in attrs_dict.items():
@@ -343,32 +176,19 @@ def _render_attributes_section(attrs: CharacterAttributes) -> None:
                 display_name = attr_name.replace("_", " ").capitalize()
                 html_bars += _render_attribute_bar_html(display_name, value, icon)
                 total += value
-
         st.markdown(html_bars, unsafe_allow_html=True)
-
-        st.markdown(f"""
-        <div style="text-align: right; color: #888; font-size: 0.85em; margin-top: 15px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);">
-            Puntos de Merito Total: <span style="color: #ffd700; font-weight: bold; font-size: 1.1em;">{total}</span>
-        </div>
-        """, unsafe_allow_html=True)
-
+        st.markdown(f"""<div style="text-align: right; color: #888; font-size: 0.85em; margin-top: 15px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);">Puntos de Merito Total: <span style="color: #ffd700; font-weight: bold; font-size: 1.1em;">{total}</span></div>""", unsafe_allow_html=True)
 
 def _render_skills_section(caps: CharacterCapabilities) -> None:
-    """Seccion de habilidades organizadas por categoria."""
     with st.expander("Habilidades y Rasgos", expanded=False):
         skills = caps.habilidades or {}
         feats = caps.feats or []
         has_skills = False
-
         for category, skill_list in SKILL_CATEGORIES.items():
             cat_skills = {s: skills.get(s, 0) for s in skill_list if s in skills and skills.get(s, 0) > 0}
             if cat_skills:
                 has_skills = True
-                st.markdown(f"""
-                <div class="skill-category">
-                    <span class="skill-category-title">{category}</span>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown(f"""<div class="skill-category"><span class="skill-category-title">{category}</span></div>""", unsafe_allow_html=True)
                 sorted_skills = sorted(cat_skills.items(), key=lambda x: -x[1])
                 badges_html = ""
                 for skill_name, value in sorted_skills:
@@ -376,28 +196,21 @@ def _render_skills_section(caps: CharacterCapabilities) -> None:
                     color = _get_color_for_attr(value)
                     badges_html += f'<span class="{badge_class}" style="color: {color};">{skill_name}: {value}</span>'
                 st.markdown(badges_html, unsafe_allow_html=True)
-
-        if not has_skills:
-            st.caption("Sin habilidades calculadas.")
-
+        if not has_skills: st.caption("Sin habilidades calculadas.")
         if feats:
             st.markdown("---")
             st.markdown("**Rasgos Especiales (Feats)**")
             feats_html = "".join([f'<span class="feat-badge">{feat}</span>' for feat in feats])
             st.markdown(feats_html, unsafe_allow_html=True)
 
-
 def _render_behavior_section(behavior: CharacterBehavior) -> None:
-    """Seccion de personalidad y relaciones."""
     with st.expander("Comportamiento y Relaciones", expanded=False):
         traits = behavior.rasgos_personalidad or []
         if traits:
             st.markdown("**Rasgos de Personalidad**")
             traits_html = "".join([f'<span class="trait-badge">{t}</span>' for t in traits])
             st.markdown(traits_html, unsafe_allow_html=True)
-        else:
-            st.caption("Sin rasgos de personalidad registrados.")
-
+        else: st.caption("Sin rasgos de personalidad registrados.")
         st.write("")
         relations = behavior.relaciones or []
         if relations:
@@ -407,42 +220,18 @@ def _render_behavior_section(behavior: CharacterBehavior) -> None:
                 tipo = rel.get("tipo", "Neutral")
                 nivel = rel.get("nivel", "")
                 nivel_str = f" - {nivel}" if nivel else ""
-                st.markdown(f"""
-                <div class="equip-item">
-                    <span style="color: #fff;">{nombre}</span>
-                    <span style="color: #888; font-size: 0.85em;"> ({tipo}{nivel_str})</span>
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.caption("Sin relaciones registradas.")
-
+                st.markdown(f"""<div class="equip-item"><span style="color: #fff;">{nombre}</span><span style="color: #888; font-size: 0.85em;"> ({tipo}{nivel_str})</span></div>""", unsafe_allow_html=True)
+        else: st.caption("Sin relaciones registradas.")
 
 def _render_logistics_section(logistics: CharacterLogistics) -> None:
-    """Seccion de equipo e inventario."""
     with st.expander("Logistica y Equipamiento", expanded=False):
         slots_used = logistics.slots_ocupados
         slots_max = logistics.slots_maximos if logistics.slots_maximos > 0 else 10
         slots_percent = (slots_used / slots_max * 100) if slots_max > 0 else 0
-
-        if slots_percent < 70:
-            slots_color = COLOR_PALETTE["accent_green"]
-        elif slots_percent < 90:
-            slots_color = COLOR_PALETTE["accent_yellow"]
-        else:
-            slots_color = COLOR_PALETTE["accent_red"]
-
-        st.markdown(f"""
-        <div style="margin-bottom: 20px;">
-            <div style="display: flex; justify-content: space-between; font-size: 0.85em; color: #888; margin-bottom: 6px;">
-                <span>Capacidad de Carga</span>
-                <span style="color: {slots_color}; font-weight: bold;">{slots_used} / {slots_max} slots</span>
-            </div>
-            <div class="slots-bar-container">
-                <div class="slots-bar-fill" style="width: {slots_percent}%; background: {slots_color};"></div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
+        if slots_percent < 70: slots_color = COLOR_PALETTE["accent_green"]
+        elif slots_percent < 90: slots_color = COLOR_PALETTE["accent_yellow"]
+        else: slots_color = COLOR_PALETTE["accent_red"]
+        st.markdown(f"""<div style="margin-bottom: 20px;"><div style="display: flex; justify-content: space-between; font-size: 0.85em; color: #888; margin-bottom: 6px;"><span>Capacidad de Carga</span><span style="color: {slots_color}; font-weight: bold;">{slots_used} / {slots_max} slots</span></div><div class="slots-bar-container"><div class="slots-bar-fill" style="width: {slots_percent}%; background: {slots_color};"></div></div></div>""", unsafe_allow_html=True)
         equipo = logistics.equipo or []
         if equipo:
             st.markdown("**Equipo Asignado**")
@@ -451,91 +240,38 @@ def _render_logistics_section(logistics: CharacterLogistics) -> None:
                 tipo = item.get("tipo", "")
                 slots = item.get("slots", 1)
                 tipo_str = f" ({tipo})" if tipo else ""
-                st.markdown(f"""
-                <div class="equip-item">
-                    <span style="color: #fff;">{nombre}</span>
-                    <span style="color: #888; font-size: 0.85em;">{tipo_str}</span>
-                    <span style="color: #45b7d1; font-size: 0.8em; float: right;">{slots} slot(s)</span>
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.caption("Sin equipo asignado.")
-
+                st.markdown(f"""<div class="equip-item"><span style="color: #fff;">{nombre}</span><span style="color: #888; font-size: 0.85em;">{tipo_str}</span><span style="color: #45b7d1; font-size: 0.8em; float: right;">{slots} slot(s)</span></div>""", unsafe_allow_html=True)
+        else: st.caption("Sin equipo asignado.")
 
 def _render_state_section(state: CharacterDynamicState) -> None:
-    """Seccion de estado dinamico actual."""
     with st.expander("Estado Actual y Ubicacion", expanded=False):
         estados = state.estados_activos or []
         if estados:
             st.markdown("**Estados Activos**")
             estados_html = "".join([_render_status_tag_html(e) for e in estados])
             st.markdown(estados_html, unsafe_allow_html=True)
-        else:
-            st.markdown(_render_status_tag_html("Disponible"), unsafe_allow_html=True)
-
+        else: st.markdown(_render_status_tag_html("Disponible"), unsafe_allow_html=True)
         st.write("")
         loc = state.ubicacion
         rol_val = state.rol_asignado.value if hasattr(state.rol_asignado, 'value') else str(state.rol_asignado)
-
-        st.markdown(f"""
-        <div class="info-grid">
-            <div class="info-item">
-                <div class="info-label">Sistema Estelar</div>
-                <div class="info-value">{loc.sistema_actual}</div>
-            </div>
-            <div class="info-item">
-                <div class="info-label">Ubicacion Local</div>
-                <div class="info-value">{loc.ubicacion_local}</div>
-            </div>
-            <div class="info-item">
-                <div class="info-label">Rol Asignado</div>
-                <div class="info-value" style="color: #45b7d1;">{rol_val}</div>
-            </div>
-            <div class="info-item">
-                <div class="info-label">Accion Actual</div>
-                <div class="info-value">{state.accion_actual}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
+        st.markdown(f"""<div class="info-grid"><div class="info-item"><div class="info-label">Sistema Estelar</div><div class="info-value">{loc.sistema_actual}</div></div><div class="info-item"><div class="info-label">Ubicacion Local</div><div class="info-value">{loc.ubicacion_local}</div></div><div class="info-item"><div class="info-label">Rol Asignado</div><div class="info-value" style="color: #45b7d1;">{rol_val}</div></div><div class="info-item"><div class="info-label">Accion Actual</div><div class="info-value">{state.accion_actual}</div></div></div>""", unsafe_allow_html=True)
         if loc.coordenadas:
             coords = loc.coordenadas
-            st.markdown(f"""
-            <div style="margin-top: 10px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 6px;">
-                <span style="color: #666; font-size: 0.75em;">COORDENADAS: </span>
-                <span style="color: #45b7d1; font-family: monospace;">
-                    X:{coords.get('x', 0):.2f} Y:{coords.get('y', 0):.2f} Z:{coords.get('z', 0):.2f}
-                </span>
-            </div>
-            """, unsafe_allow_html=True)
-
-
-# =============================================================================
-# FUNCION PRINCIPAL
-# =============================================================================
+            st.markdown(f"""<div style="margin-top: 10px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 6px;"><span style="color: #666; font-size: 0.75em;">COORDENADAS: </span><span style="color: #45b7d1; font-family: monospace;">X:{coords.get('x', 0):.2f} Y:{coords.get('y', 0):.2f} Z:{coords.get('z', 0):.2f}</span></div>""", unsafe_allow_html=True)
 
 @st.dialog("Expediente de Personal", width="large")
 def show_character_sheet(character_id: int) -> None:
-    """
-    Modal principal que muestra la ficha completa del personaje.
-    Args:
-        character_id: ID del personaje en la base de datos
-    """
     st.markdown(SHEET_CSS, unsafe_allow_html=True)
-
     char_data = get_character_by_id(character_id)
-
     if not char_data:
         st.error("No se pudo cargar el expediente del personaje.")
         return
-
     try:
         commander = CommanderData.from_dict(char_data)
         sheet = commander.sheet 
     except Exception as e:
         st.error(f"Error al procesar datos del personaje: {e}")
         return
-
     _render_header(sheet)
     _render_bio_section(sheet.bio, sheet.taxonomia)
     _render_progression_section(sheet.progresion)

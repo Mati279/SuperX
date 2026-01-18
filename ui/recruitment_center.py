@@ -7,9 +7,7 @@ Genera candidatos aleatorios con stats completos usando character_engine.
 import streamlit as st
 from typing import Dict, Any, List
 from ui.state import get_player
-# Importamos calculate_recruitment_cost de core
 from core.character_engine import calculate_recruitment_cost, get_visible_biography, BIO_ACCESS_KNOWN, BIO_ACCESS_SUPERFICIAL
-# Importamos el generador con IA y el contexto
 from services.character_generation_service import generate_random_character_with_ai, RecruitmentContext
 from core.recruitment_logic import can_recruit
 from data.player_repository import get_player_credits, update_player_credits
@@ -28,9 +26,6 @@ def _generate_recruitment_pool(
     min_level: int = 1, 
     max_level: int = 3
 ) -> List[Dict[str, Any]]:
-    """
-    Genera una piscina de candidatos para reclutamiento usando el servicio de IA.
-    """
     candidates = []
     names_in_use = list(existing_names)
 
@@ -74,7 +69,7 @@ def _generate_recruitment_pool(
 
 
 def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits: int, player_id: int):
-    """Renderiza la tarjeta de un candidato con todos sus detalles y opción de investigar."""
+    """Renderiza la tarjeta de un candidato."""
 
     stats = candidate.get("stats_json", {})
     bio = stats.get("bio", {})
@@ -87,7 +82,6 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
     border_color = "#26de81" if can_afford else "#ff6b6b"
 
     with st.container(border=True):
-        # Header
         st.markdown(f"""
             <div style="
                 background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
@@ -111,37 +105,31 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
             </div>
         """, unsafe_allow_html=True)
 
-        # Biografía visible según nivel de acceso
+        # USAR get_visible_biography
         visible_bio = get_visible_biography(stats)
         st.caption(f"_{visible_bio}_")
 
-        # Opción de Investigación (si es superficial)
+        # Opción de Investigación
         access_level = bio.get("nivel_acceso", BIO_ACCESS_SUPERFICIAL)
         if access_level == BIO_ACCESS_SUPERFICIAL:
             investigation_cost = 150
             if st.button(f"🕵️ Investigar Antecedentes ({investigation_cost} CR)", key=f"inv_{index}", use_container_width=True):
                 if player_credits >= investigation_cost:
-                    # 1. Cobrar
                     if update_player_credits(player_id, player_credits - investigation_cost):
-                        # 2. Tirada MRG (Simulada para UI inmediata)
-                        # Usamos dificultad normal (10)
                         mrg = resolve_action(merit_points=2, difficulty=DIFFICULTY_NORMAL, action_description="Investigar recluta")
                         
                         if mrg.success:
-                            # 3. Actualizar estado en sesión (memoria)
                             stats['bio']['nivel_acceso'] = BIO_ACCESS_KNOWN
                             st.success("✅ ¡Investigación exitosa! Archivos desbloqueados.")
                             st.rerun()
                         else:
                             st.error("❌ La encriptación de los archivos es muy fuerte. Intento fallido.")
-                            # Igual gastó los créditos (costo de la operación)
                             st.rerun()
                     else:
                         st.error("Error al procesar transacción.")
                 else:
-                    st.error("Créditos insuficientes para investigar.")
+                    st.error("Créditos insuficientes.")
 
-        # Atributos en grid compacto
         with st.expander("Ver Atributos", expanded=False):
             cols = st.columns(3)
             for i, (attr, value) in enumerate(atributos.items()):
@@ -149,7 +137,6 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
                     color = "#26de81" if value >= 12 else "#888"
                     st.markdown(f"<span style='color:{color};'>{attr.upper()}: **{value}**</span>", unsafe_allow_html=True)
 
-        # Habilidades
         with st.expander("Ver Habilidades", expanded=False):
             if habilidades:
                 sorted_skills = sorted(habilidades.items(), key=lambda x: -x[1])
@@ -159,13 +146,11 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
             else:
                 st.caption("Sin habilidades calculadas")
 
-        # Feats/Rasgos
         if feats:
             with st.expander("Ver Rasgos", expanded=False):
                 for feat in feats:
                     st.markdown(f"- {feat}")
 
-        # Costo y boton de contratacion
         st.markdown("---")
 
         col_cost, col_btn = st.columns([2, 1])
@@ -188,18 +173,14 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
 
 
 def _process_recruitment(player_id: int, candidate: Dict[str, Any], player_credits: int):
-    """Procesa la contratacion de un candidato."""
     try:
-        # Verificar fondos
         can_afford, message = can_recruit(player_credits, candidate['costo'])
         if not can_afford:
             st.error(message)
             return
 
-        # Calcular nuevo balance
         new_credits = player_credits - candidate['costo']
 
-        # Preparar datos del personaje para la DB
         new_character_data = {
             "player_id": player_id,
             "nombre": candidate["nombre"],
@@ -210,14 +191,11 @@ def _process_recruitment(player_id: int, candidate: Dict[str, Any], player_credi
             "ubicacion": DEFAULT_RECRUIT_LOCATION
         }
 
-        # Ejecutar transacciones
         update_ok = update_player_credits(player_id, new_credits)
         char_ok = create_character(player_id, new_character_data)
 
         if update_ok and char_ok:
             st.success(f"¡{candidate['nombre']} se ha unido a tu faccion!")
-
-            # Limpiar el candidato de la sesion
             if 'recruitment_pool' in st.session_state:
                 st.session_state.recruitment_pool = [
                     c for c in st.session_state.recruitment_pool if c['nombre'] != candidate['nombre']
@@ -231,20 +209,16 @@ def _process_recruitment(player_id: int, candidate: Dict[str, Any], player_credi
 
 
 def show_recruitment_center():
-    """Pagina principal del Centro de Reclutamiento."""
-
     st.title("Centro de Reclutamiento Galactico")
     st.caption("Encuentra y contrata nuevos operativos para tu faccion")
     st.markdown("---")
 
     player = get_player()
     if not player:
-        st.warning("Error de sesion. Por favor, inicie sesion de nuevo.")
+        st.warning("Error de sesion.")
         return
 
     player_id = player.id
-
-    # --- Header con creditos ---
     player_credits = get_player_credits(player_id)
 
     col_credits, col_refresh = st.columns([3, 1])
@@ -263,7 +237,7 @@ def show_recruitment_center():
         """, unsafe_allow_html=True)
 
     with col_refresh:
-        st.write("")  # Espaciado
+        st.write("")
         refresh_cost = 50
         can_refresh = player_credits >= refresh_cost
 
@@ -282,7 +256,6 @@ def show_recruitment_center():
 
     st.markdown("---")
 
-    # --- Opciones de nivel ---
     with st.expander("Opciones de Busqueda"):
         col_min, col_max = st.columns(2)
         with col_min:
@@ -300,7 +273,6 @@ def show_recruitment_center():
             st.session_state.recruit_max_level = max_level
             st.rerun()
 
-    # --- Generar/Obtener piscina de candidatos ---
     if 'recruitment_pool' not in st.session_state or not st.session_state.recruitment_pool:
         all_chars = get_all_characters_by_player_id(player_id)
         
@@ -325,7 +297,6 @@ def show_recruitment_center():
 
     candidates = st.session_state.recruitment_pool
 
-    # --- Mostrar candidatos ---
     if not candidates:
         st.info("No hay candidatos disponibles. Pulsa 'Buscar Nuevos' para generar mas.")
         if st.button("Generar Candidatos Gratis"):

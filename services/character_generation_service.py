@@ -31,7 +31,7 @@ from core.character_engine import (
     SKILL_POINTS_PER_LEVEL,
     ATTRIBUTE_POINT_LEVELS,
     FEAT_LEVELS,
-    BIO_ACCESS_SUPERFICIAL # Constante nueva
+    BIO_ACCESS_SUPERFICIAL # Constante de acceso
 )
 
 from config.app_constants import TEXT_MODEL_NAME
@@ -46,10 +46,10 @@ AGE_MAX = 70
 PREDOMINANT_RACE_CHANCE = 0.5
 DEFAULT_RANK = "Iniciado"
 
-# Prompt actualizado para 3 niveles de biografía
+# Prompt actualizado para 3 niveles de biografía estrictos
 IDENTITY_GENERATION_PROMPT = """
 Actúa como un Oficial de Inteligencia de una facción galáctica.
-Genera el dossier completo para un nuevo operativo con estos datos:
+Genera el dossier para un nuevo operativo.
 
 DATOS TÉCNICOS:
 - Raza: {race}
@@ -60,15 +60,15 @@ DATOS TÉCNICOS:
 - Personalidad: {traits}
 - Atributos top: {top_attributes}
 
-INSTRUCCIONES DE GENERACIÓN DE PERFIL (3 NIVELES):
+INSTRUCCIONES DE GENERACIÓN (3 NIVELES):
 1. NOMBRE y APELLIDO: Coherentes con la raza.
-2. BIO SUPERFICIAL (Público): Una sola frase descriptiva visual o de rol básico (ej: "Mercenario alto con cicatrices visibles.").
-3. BIO CONOCIDA (Estándar): Resumen profesional (40-60 palabras). Formación, carrera visible y reputación.
-4. BIO PROFUNDA (Clasificado): Secretos, traumas, motivaciones ocultas o eventos pasados oscuros que podrían disparar eventos futuros (60-90 palabras).
+2. BIO SUPERFICIAL (Público - 1 oración): Solo una descripción visual o impresión rápida. Ej: "Humano robusto con cicatrices de combate, mirada cansada." o "Androide de serie brillante, movimientos precisos."
+3. BIO CONOCIDA (Estándar - 40 palabras aprox): Resumen profesional para el expediente. Formación, especialidad táctica y evaluación de desempeño.
+4. BIO PROFUNDA (Privado - 60-80 palabras): Secretos, ganchos narrativos, traumas pasados o motivaciones ocultas que podrían derivar en misiones personales.
 
-⚠️ REGLAS CRÍTICAS JSON ⚠️
+⚠️ REGLAS TÉCNICAS ⚠️
 - Responde SOLO con JSON válido.
-- NO uses comillas dobles dentro de los textos.
+- NO uses comillas dobles (") dentro de los textos.
 """
 
 
@@ -155,6 +155,7 @@ def _select_class(level: int, force_class: Optional[str] = None) -> tuple[str, D
 
 
 def _generate_fallback_identity(race: str, sex: BiologicalSex) -> GeneratedIdentity:
+    """Genera identidades con las 3 capas si la IA falla."""
     names_by_race = {
         "Humano": {
             BiologicalSex.MALE: ["Marcus", "Adrian", "Victor", "Leon", "Dante"],
@@ -188,9 +189,9 @@ def _generate_fallback_identity(race: str, sex: BiologicalSex) -> GeneratedIdent
     return GeneratedIdentity(
         nombre=name,
         apellido=surname,
-        bio_superficial=f"{race} reclutado. Apariencia estándar.",
-        bio_conocida=f"Historial corrompido. Se sabe que sirvió brevemente antes de perder la memoria en un incidente de salto.",
-        bio_profunda=f"ARCHIVOS CLASIFICADOS INACCESIBLES. Posiblemente un agente durmiente o simplemente un error burocrático."
+        bio_superficial=f"{race} de aspecto estándar. Parece competente.",
+        bio_conocida=f"Operativo {race} reclutado recientemente. Su expediente indica habilidades básicas de combate y adaptación a entornos hostiles.",
+        bio_profunda=f"ARCHIVOS CORRUPTOS. Hay menciones a una operación fallida en el sector 7, pero los detalles han sido borrados intencionalmente."
     )
 
 
@@ -233,9 +234,9 @@ def generate_identity_with_ai_sync(
         properties={
             "nombre": types.Schema(type=types.Type.STRING),
             "apellido": types.Schema(type=types.Type.STRING),
-            "bio_superficial": types.Schema(type=types.Type.STRING, description="Máx 15 palabras. Descripción visual."),
-            "bio_conocida": types.Schema(type=types.Type.STRING, description="Perfil profesional estándar."),
-            "bio_profunda": types.Schema(type=types.Type.STRING, description="Secretos, traumas y detalles ocultos."),
+            "bio_superficial": types.Schema(type=types.Type.STRING, description="Máx 1 oración. Visual/Hint."),
+            "bio_conocida": types.Schema(type=types.Type.STRING, description="Perfil profesional. 40 palabras."),
+            "bio_profunda": types.Schema(type=types.Type.STRING, description="Secretos y ganchos de misión."),
         },
         required=["nombre", "apellido", "bio_superficial", "bio_conocida", "bio_profunda"]
     )
@@ -284,7 +285,7 @@ def generate_identity_with_ai_sync(
                     return GeneratedIdentity(
                         nombre=data.get("nombre", "SinNombre"),
                         apellido=data.get("apellido", ""),
-                        bio_superficial=data.get("bio_superficial", f"Operativo {race}."),
+                        bio_superficial=data.get("bio_superficial", f"{race} con aspecto preparado."),
                         bio_conocida=data.get("bio_conocida", f"Historial estándar de {char_class}."),
                         bio_profunda=data.get("bio_profunda", "Sin secretos registrados.")
                     )
@@ -349,7 +350,7 @@ def generate_random_character_with_ai(
     attempts = 0
     while full_name in existing_names and attempts < 5:
         fallback_id = _generate_fallback_identity(race_name, sex)
-        # Intentar preservar biografías si son válidas
+        # Preservar biografías si son válidas
         identity = GeneratedIdentity(
             fallback_id.nombre, fallback_id.apellido, 
             identity.bio_superficial, identity.bio_conocida, identity.bio_profunda
@@ -375,9 +376,9 @@ def generate_random_character_with_ai(
             "apellido": identity.apellido,
             "edad": age,
             "sexo": sex.value,
-            # Campo legacy para compatibilidad
-            "biografia_corta": identity.bio_conocida,
-            # NUEVOS CAMPOS
+            # Campo legacy: Ahora apunta a SUPERFICIAL (la corta)
+            "biografia_corta": identity.bio_superficial,
+            # Nuevos campos
             "bio_superficial": identity.bio_superficial,
             "bio_conocida": identity.bio_conocida,
             "bio_profunda": identity.bio_profunda,
