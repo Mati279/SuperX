@@ -32,7 +32,7 @@ from core.character_engine import (
     SKILL_POINTS_PER_LEVEL,
     ATTRIBUTE_POINT_LEVELS,
     FEAT_LEVELS,
-    BIO_ACCESS_SUPERFICIAL # Constante de acceso
+    BIO_ACCESS_UNKNOWN,  # Nivel inicial: desconocido
 )
 
 from config.app_constants import TEXT_MODEL_NAME
@@ -396,8 +396,9 @@ def generate_random_character_with_ai(
             "bio_superficial": identity.bio_superficial,
             "bio_conocida": identity.bio_conocida,
             "bio_profunda": identity.bio_profunda,
-            "nivel_acceso": BIO_ACCESS_SUPERFICIAL,
-            "ticks_reclutado": 0
+            "nivel_acceso": BIO_ACCESS_UNKNOWN,  # Empieza como desconocido
+            "ticks_reclutado": 0,
+            "ticks_como_conocido": 0,  # Contador para nivel amigo
         },
         "taxonomia": {
             "raza": race_name,

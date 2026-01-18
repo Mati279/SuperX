@@ -263,14 +263,14 @@ def investigar(target_name: str, player_id: int, focus: str = "general", executi
                 roll_total = mrg_result.roll.total
 
             # --- APLICAR CONSECUENCIAS Y LOGS ---
-            # El log debe tener formato estricto para que la UI lo parsee: 
+            # El log debe tener formato estricto para que la UI lo parsee:
             # "SYSTEM_EVENT: INVESTIGATION_RESULT | target=NAME | outcome=TYPE"
-            
+
             if final_result_type == ResultType.CRITICAL_SUCCESS:
                 log_event(f"SYSTEM_EVENT: INVESTIGATION_RESULT | target={target_name} | outcome=CRITICAL_SUCCESS", player_id)
                 return json.dumps({
                     "status": "SUCCESS",
-                    "resultado": f"¡CRÍTICO! Se han descubierto secretos profundos de {target_name}. Descuento del 30% aplicable.",
+                    "resultado": f"ÉXITO CRÍTICO. Contactos en el bajo mundo revelaron información sensible sobre {target_name}. Sabemos cómo influenciarlo. Descuento del 30% aplicable.",
                     "roll": roll_total
                 }, ensure_ascii=False)
 
@@ -278,7 +278,7 @@ def investigar(target_name: str, player_id: int, focus: str = "general", executi
                 log_event(f"SYSTEM_EVENT: INVESTIGATION_RESULT | target={target_name} | outcome=SUCCESS", player_id)
                 return json.dumps({
                     "status": "SUCCESS",
-                    "resultado": f"ÉXITO. Antecedentes de {target_name} verificados. Biografía ampliada.",
+                    "resultado": f"ÉXITO. Se localizaron registros sobre {target_name} en bases de datos corporativas. Expediente actualizado.",
                     "roll": roll_total
                 }, ensure_ascii=False)
 
@@ -286,15 +286,15 @@ def investigar(target_name: str, player_id: int, focus: str = "general", executi
                 log_event(f"SYSTEM_EVENT: INVESTIGATION_RESULT | target={target_name} | outcome=CRITICAL_FAILURE", player_id)
                 return json.dumps({
                     "status": "FAILURE",
-                    "resultado": f"PIFIA. {target_name} descubrió la vigilancia y ha retirado su solicitud.",
+                    "resultado": f"PIFIA. {target_name} fue alertado por un contacto sobre nuestra investigación. Ha abandonado la estación.",
                     "roll": roll_total
                 }, ensure_ascii=False)
 
-            else: # FAILURE
+            else:  # FAILURE
                 log_event(f"SYSTEM_EVENT: INVESTIGATION_RESULT | target={target_name} | outcome=FAILURE", player_id)
                 return json.dumps({
                     "status": "FAILURE",
-                    "resultado": f"Fallo. No se encontró información relevante sobre {target_name}. Puede reintentarse.",
+                    "resultado": f"Sin resultados. Los registros de {target_name} están incompletos o fueron borrados. No se encontró información útil. Puede reintentarse.",
                     "roll": roll_total
                 }, ensure_ascii=False)
                 

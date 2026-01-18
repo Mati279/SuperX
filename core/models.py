@@ -47,6 +47,20 @@ class CharacterRole(str, Enum):
     MARINE = "Infante"
     NONE = "Sin Asignar"
 
+
+class KnowledgeLevel(str, Enum):
+    """Niveles de conocimiento sobre un personaje."""
+    UNKNOWN = "desconocido"     # Bio superficial, sin rasgos de personalidad
+    KNOWN = "conocido"          # Bio conocida + rasgos de personalidad
+    FRIEND = "amigo"            # Bio profunda + secreto revelado
+
+
+class SecretType(str, Enum):
+    """Tipos de secretos revelables al alcanzar nivel 'amigo'."""
+    PROFESSIONAL = "profesional"  # +XP fijo (mejor entrenamiento)
+    PERSONAL = "personal"         # +2 Voluntad (se siente parte del equipo)
+    CRITICAL = "critico"          # Misión personal (desarrollo futuro)
+
 # --- SUB-MODELOS DE PERSONAJE (COMPOSICIÓN) ---
 
 class CharacterBio(BaseModel):

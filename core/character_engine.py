@@ -54,12 +54,33 @@ PERSONALITY_TRAITS = [
 # CONSTANTES DE BIOGRAFÍA Y ACCESO
 # =============================================================================
 
-BIO_ACCESS_SUPERFICIAL = "superficial"
-BIO_ACCESS_KNOWN = "conocido"
-BIO_ACCESS_DEEP = "profundo"
+BIO_ACCESS_UNKNOWN = "desconocido"      # Bio superficial, sin rasgos
+BIO_ACCESS_KNOWN = "conocido"           # Bio conocida + rasgos de personalidad
+BIO_ACCESS_DEEP = "amigo"               # Bio profunda + secreto
 
+# Aliases para compatibilidad
+BIO_ACCESS_SUPERFICIAL = BIO_ACCESS_UNKNOWN
+
+# Ticks requeridos para avanzar de nivel de conocimiento
+# "conocido": 20 ticks base (+1 por cada punto de Presencia por debajo de 10)
 TICK_THRESHOLD_KNOWN = 20
-TICK_THRESHOLD_DEEP = 50
+# "amigo": 50 ticks como "conocido" (no desde el reclutamiento)
+TICK_THRESHOLD_DEEP_AS_KNOWN = 50
+
+# Alias para compatibilidad
+TICK_THRESHOLD_DEEP = TICK_THRESHOLD_KNOWN + TICK_THRESHOLD_DEEP_AS_KNOWN
+
+# =============================================================================
+# TIPOS DE SECRETOS (para biografía profunda)
+# =============================================================================
+
+SECRET_TYPE_PROFESSIONAL = "profesional"  # +XP fijo - "mejor entrenamiento al conocerlo"
+SECRET_TYPE_PERSONAL = "personal"         # +2 Voluntad - "se siente amigo de la tropa"
+SECRET_TYPE_CRITICAL = "critico"          # Misión personal (futuro desarrollo)
+
+# Bonus de secretos
+SECRET_PROFESSIONAL_XP_BONUS = 500       # XP que otorga el secreto profesional
+SECRET_PERSONAL_WILLPOWER_BONUS = 2      # +2 Voluntad por secreto personal
 
 # =============================================================================
 # FUNCIONES DE GENERACIÓN DE PERSONAJES
@@ -124,12 +145,13 @@ def generate_random_character(
             "apellido": surname,
             "edad": age,
             "sexo": sex.value,
-            "biografia_corta": bio_sup, # AHORA APUNTA A LA CORTA
+            "biografia_corta": bio_sup,  # Campo legacy, mantiene la corta
             "bio_superficial": bio_sup,
             "bio_conocida": bio_known,
             "bio_profunda": bio_deep,
-            "nivel_acceso": BIO_ACCESS_SUPERFICIAL,
-            "ticks_reclutado": 0
+            "nivel_acceso": BIO_ACCESS_UNKNOWN,  # Empieza como desconocido
+            "ticks_reclutado": 0,
+            "ticks_como_conocido": 0,  # Nuevo contador para nivel amigo
         },
         "taxonomia": {
             "raza": race_name,
@@ -338,49 +360,135 @@ def get_visible_biography(stats_json: Dict[str, Any]) -> str:
     Maneja retrocompatibilidad con personajes viejos.
     """
     bio_data = stats_json.get("bio", {})
-    access_level = bio_data.get("nivel_acceso", BIO_ACCESS_KNOWN) # Legacy -> conocido
-    
+    access_level = bio_data.get("nivel_acceso", BIO_ACCESS_KNOWN)  # Legacy -> conocido
+
     # Textos disponibles (con fallbacks)
     default_bio = bio_data.get("biografia_corta", "Datos no disponibles.")
-    
+
     bio_sup = bio_data.get("bio_superficial", default_bio)
     bio_known = bio_data.get("bio_conocida", default_bio)
     bio_deep = bio_data.get("bio_profunda", bio_known)
-    
+
     if access_level == BIO_ACCESS_DEEP:
         return bio_deep
     elif access_level == BIO_ACCESS_KNOWN:
         return bio_known
-    else: # Superficial
+    else:  # Desconocido/Superficial
         return bio_sup
 
-def update_character_access_level(stats_json: Dict[str, Any]) -> Tuple[bool, str]:
+
+def should_show_personality_traits(stats_json: Dict[str, Any]) -> bool:
     """
-    Calcula si debe subir el nivel de acceso basado en ticks reclutado.
-    Retorna (True, NuevoNivel) si hubo cambio.
+    Determina si se deben mostrar los rasgos de personalidad.
+    Solo se muestran si el nivel de acceso es 'conocido' o superior.
     """
     bio_data = stats_json.get("bio", {})
-    
+    access_level = bio_data.get("nivel_acceso", BIO_ACCESS_UNKNOWN)
+    return access_level in [BIO_ACCESS_KNOWN, BIO_ACCESS_DEEP]
+
+
+def calculate_ticks_for_known(presencia: int) -> int:
+    """
+    Calcula los ticks necesarios para pasar a nivel 'conocido'.
+    Base: 20 ticks + 1 por cada punto de Presencia por debajo de 10.
+    """
+    extra_ticks = max(0, 10 - presencia)
+    return TICK_THRESHOLD_KNOWN + extra_ticks
+
+
+def update_character_access_level(stats_json: Dict[str, Any]) -> Tuple[bool, str, Optional[str]]:
+    """
+    Calcula si debe subir el nivel de acceso basado en ticks reclutado.
+    Retorna (cambio_ocurrido, nuevo_nivel, tipo_secreto_revelado).
+    El tipo_secreto_revelado solo se retorna cuando se alcanza nivel 'amigo'.
+    """
+    bio_data = stats_json.get("bio", {})
+    capacidades = stats_json.get("capacidades", {})
+    atributos = capacidades.get("atributos", {})
+    presencia = atributos.get("presencia", 10)
+
     if "ticks_reclutado" not in bio_data:
         bio_data["ticks_reclutado"] = 0
-        
-    ticks = bio_data["ticks_reclutado"]
-    current_level = bio_data.get("nivel_acceso", BIO_ACCESS_SUPERFICIAL)
-    
+
+    if "ticks_como_conocido" not in bio_data:
+        bio_data["ticks_como_conocido"] = 0
+
+    ticks_total = bio_data["ticks_reclutado"]
+    ticks_conocido = bio_data["ticks_como_conocido"]
+    current_level = bio_data.get("nivel_acceso", BIO_ACCESS_UNKNOWN)
+
     # Si es personaje legacy (sin nivel_acceso), lo asumimos conocido y no cambiamos nada
     if "nivel_acceso" not in bio_data:
         bio_data["nivel_acceso"] = BIO_ACCESS_KNOWN
-        return False, ""
+        return False, "", None
 
     new_level = current_level
-    
-    if ticks >= TICK_THRESHOLD_DEEP:
+    secret_revealed = None
+
+    # Calcular threshold dinámico para 'conocido' basado en presencia
+    threshold_known = calculate_ticks_for_known(presencia)
+
+    # Transición a 'amigo' (requiere 50 ticks COMO conocido)
+    if current_level == BIO_ACCESS_KNOWN and ticks_conocido >= TICK_THRESHOLD_DEEP_AS_KNOWN:
         new_level = BIO_ACCESS_DEEP
-    elif ticks >= TICK_THRESHOLD_KNOWN and current_level == BIO_ACCESS_SUPERFICIAL:
+        # Determinar tipo de secreto al azar si no está definido
+        if "tipo_secreto" not in bio_data:
+            secret_type = random.choice([SECRET_TYPE_PROFESSIONAL, SECRET_TYPE_PERSONAL, SECRET_TYPE_CRITICAL])
+            bio_data["tipo_secreto"] = secret_type
+            secret_revealed = secret_type
+        else:
+            secret_revealed = bio_data["tipo_secreto"]
+
+    # Transición a 'conocido'
+    elif current_level == BIO_ACCESS_UNKNOWN and ticks_total >= threshold_known:
         new_level = BIO_ACCESS_KNOWN
-        
+
     if new_level != current_level:
         bio_data["nivel_acceso"] = new_level
-        return True, new_level
-        
-    return False, ""
+        return True, new_level, secret_revealed
+
+    return False, "", None
+
+
+def apply_secret_bonus(stats_json: Dict[str, Any], secret_type: str) -> Dict[str, Any]:
+    """
+    Aplica el bonus correspondiente al tipo de secreto revelado.
+    Modifica stats_json in-place y retorna los cambios aplicados.
+    """
+    changes = {"tipo": secret_type, "aplicado": False, "descripcion": ""}
+    bio_data = stats_json.get("bio", {})
+
+    if bio_data.get("secreto_aplicado", False):
+        changes["descripcion"] = "El secreto ya fue aplicado anteriormente."
+        return changes
+
+    if secret_type == SECRET_TYPE_PROFESSIONAL:
+        # +XP fijo
+        progresion = stats_json.get("progresion", {})
+        current_xp = progresion.get("xp", 0)
+        progresion["xp"] = current_xp + SECRET_PROFESSIONAL_XP_BONUS
+        stats_json["progresion"] = progresion
+        changes["aplicado"] = True
+        changes["descripcion"] = f"Secreto profesional: +{SECRET_PROFESSIONAL_XP_BONUS} XP (mejor entrenamiento al conocerlo mejor)."
+
+    elif secret_type == SECRET_TYPE_PERSONAL:
+        # +2 Voluntad
+        capacidades = stats_json.get("capacidades", {})
+        atributos = capacidades.get("atributos", {})
+        current_will = atributos.get("voluntad", 5)
+        atributos["voluntad"] = min(current_will + SECRET_PERSONAL_WILLPOWER_BONUS, MAX_ATTRIBUTE_VALUE)
+        capacidades["atributos"] = atributos
+        stats_json["capacidades"] = capacidades
+        changes["aplicado"] = True
+        changes["descripcion"] = f"Secreto personal: +{SECRET_PERSONAL_WILLPOWER_BONUS} Voluntad (se siente amigo de la tropa)."
+
+    elif secret_type == SECRET_TYPE_CRITICAL:
+        # Misión personal (futuro desarrollo)
+        changes["aplicado"] = True
+        changes["descripcion"] = "Secreto crítico: Se revela información de importancia crítica. Misión personal desbloqueada (pendiente de implementación)."
+
+    if changes["aplicado"]:
+        bio_data["secreto_aplicado"] = True
+        stats_json["bio"] = bio_data
+
+    return changes
