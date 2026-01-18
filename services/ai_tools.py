@@ -62,6 +62,15 @@ TOOL_FUNCTIONS = {
     "investigate_character": investigate_character 
 }
 
+def execute_tool(tool_name: str, tool_args: Dict[str, Any]) -> str:
+    """Ejecuta una herramienta por nombre con los argumentos dados."""
+    if tool_name not in TOOL_FUNCTIONS:
+        return f"Error: Herramienta '{tool_name}' no encontrada."
+    try:
+        return TOOL_FUNCTIONS[tool_name](**tool_args)
+    except Exception as e:
+        return f"Error ejecutando {tool_name}: {str(e)}"
+
 # Declaraciones para Gemini (Function Calling)
 TOOL_DECLARATIONS = [
     # ... (existentes) ...
