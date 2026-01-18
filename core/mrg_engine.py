@@ -60,6 +60,15 @@ class MRGResult:
     action_description: str = ""
     narrative_outcome: str = "" 
 
+    @property
+    def success(self) -> bool:
+        """Determina si el resultado es un éxito positivo (Crítico, Total o Parcial)."""
+        return self.result_type in [
+            ResultType.CRITICAL_SUCCESS,
+            ResultType.TOTAL_SUCCESS,
+            ResultType.PARTIAL_SUCCESS
+        ]
+
 
 def roll_2d50() -> MRGRoll:
     """
