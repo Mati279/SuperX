@@ -188,47 +188,44 @@ def _render_candidate_card(
                         color = _get_skill_color(value)
                         st.markdown(f"<span style='color:{color};'>{attr.upper()}: **{value}**</span>", unsafe_allow_html=True)
 
+        # --- Visualizacion del Costo (Movido arriba del footer) ---
+        cost_color = "#26de81" if can_afford else "#ff6b6b"
+        original_cost = candidate.get("original_cost") if discount_applied else None
+        
+        cost_display_html = ""
+        if discount_applied and original_cost:
+             cost_display_html = f'<span style="text-decoration: line-through; color: #888; font-size: 0.9em;">{original_cost:,}</span> <span style="color: #ffd700; font-weight: bold; font-size: 1.1em;">{candidate["costo"]:,} C</span> (Oferta)'
+        else:
+             cost_display_html = f'<span style="color: {cost_color}; font-weight: bold; font-size: 1.1em;">{candidate["costo"]:,} C</span>'
+
+        # Mostrar costo alineado a la derecha con margen inferior negativo para pegarlo a la linea
+        st.markdown(f"""
+            <div style="text-align: right; margin-top: 10px; margin-bottom: -12px; font-size: 0.9em; color: #aaa;">
+                Costo de contratacion: {cost_display_html}
+            </div>
+        """, unsafe_allow_html=True)
+
         st.markdown("---")
 
-        # Footer Actions
-        col_track, col_cost, col_inv, col_recruit = st.columns([1, 2, 1, 1])
+        # --- Footer Actions (Botones alineados en una fila) ---
+        # Se usan 3 columnas solo para botones para garantizar alineacion horizontal perfecta.
+        # Ratios: [Seguimiento (pequeño), Investigar (medio), Contratar (grande)]
+        col_track, col_inv, col_recruit = st.columns([0.7, 1.5, 2])
 
-        # Boton de Seguimiento
+        # 1. Boton de Seguimiento
         with col_track:
             track_icon = "⭐" if is_tracked else "☆"
             track_help = "Quitar seguimiento" if is_tracked else "Marcar para seguimiento (no expirara)"
 
             if st.button(track_icon, key=f"track_{candidate['id']}", help=track_help, use_container_width=True):
                 if is_tracked:
-                    # Quitar seguimiento (no hay funcion untrack, usamos set_tracked con otro)
                     from data.recruitment_repository import untrack_candidate
                     untrack_candidate(player_id, candidate['id'])
                 else:
                     set_candidate_tracked(player_id, candidate['id'])
                 st.rerun()
 
-        # Costo
-        with col_cost:
-            cost_color = "#26de81" if can_afford else "#ff6b6b"
-            original_cost = candidate.get("original_cost") if discount_applied else None
-
-            if discount_applied and original_cost:
-                st.markdown(f"""
-                    <div style="text-align: center;">
-                        <span style="color: #888; font-size: 0.75em;">COSTO</span><br>
-                        <span style="text-decoration: line-through; color: #888; font-size: 0.9em;">{original_cost:,}</span>
-                        <span style="font-size: 1.2em; font-weight: bold; color: #ffd700;"> {candidate['costo']:,} C</span>
-                    </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                    <div style="text-align: center;">
-                        <span style="color: #888; font-size: 0.75em;">COSTO</span><br>
-                        <span style="font-size: 1.2em; font-weight: bold; color: {cost_color};">{candidate['costo']:,} C</span>
-                    </div>
-                """, unsafe_allow_html=True)
-
-        # Boton Investigar
+        # 2. Boton Investigar
         with col_inv:
             disable_inv = False
             inv_label = "Investigar"
@@ -276,9 +273,10 @@ def _render_candidate_card(
                     if st.button("Pifia", key=f"d_cf_{candidate['id']}", help="El candidato huye"):
                         _handle_investigation(player_id, candidate, player_credits, debug_outcome="CRIT_FAIL")
 
-        # Boton Contratar
+        # 3. Boton Contratar
         with col_recruit:
             if can_afford:
+                # El costo ya se muestra arriba, aqui solo el boton limpio
                 if st.button("CONTRATAR", key=f"recruit_{candidate['id']}", type="primary", use_container_width=True):
                     _process_recruitment(player_id, candidate, player_credits)
             else:
