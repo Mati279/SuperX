@@ -53,6 +53,7 @@ SuperX/
 │   ├── constants.py
 │   ├── rules.py
 │   ├── models.py
+│   ├── exceptions.py          # Custom exception classes
 │   ├── character_engine.py
 │   ├── economy_engine.py
 │   ├── mrg_engine.py
@@ -63,14 +64,17 @@ SuperX/
 │   ├── prestige_constants.py
 │   ├── world_models.py
 │   ├── world_constants.py
-│   └── galaxy_generator.py
+│   ├── galaxy_generator.py
+│   └── genesis_engine.py
 ├── data/
 │   ├── database.py
 │   ├── player_repository.py
 │   ├── character_repository.py
 │   ├── planet_repository.py
 │   ├── world_repository.py
-│   └── log_repository.py
+│   ├── faction_repository.py
+│   ├── log_repository.py
+│   └── game_config_repository.py
 ├── services/
 │   ├── gemini_service.py
 │   ├── ai_tools.py
@@ -80,9 +84,17 @@ SuperX/
 │   ├── auth_page.py
 │   ├── main_game_page.py
 │   └── [otras páginas]
-└── utils/
-    ├── security.py
-    └── helpers.py
+├── utils/
+│   ├── security.py
+│   ├── helpers.py
+│   └── logging_utils.py       # Logging utilities and decorators
+└── tests/
+    ├── __init__.py
+    ├── test_models.py
+    ├── test_constants.py
+    ├── test_mrg_engine.py
+    ├── test_security.py
+    └── test_genesis_and_logging.py
 ```
 
 ---
@@ -163,12 +175,24 @@ def get_color_for_level(value: int) -> str
 class PlayerStatus(str, Enum)
 class CharacterStatus(str, Enum)
 class CharacterClass(str, Enum)
+class BiologicalSex(str, Enum)
+class CharacterRole(str, Enum)
 
-class CharacterAttributes(BaseModel)
+class CharacterAttributes(BaseModel):
+    # CORRECT attribute names (NOT destreza/constitucion/etc)
+    fuerza: int = 5
+    agilidad: int = 5
+    tecnica: int = 5
+    intelecto: int = 5
+    voluntad: int = 5
+    presencia: int = 5
+
 class CharacterStats(BaseModel)
 class PlayerResources(BaseModel)
 class PlayerData(BaseModel)
-class CommanderData(BaseModel)
+class CommanderData(BaseModel):
+    def get_merit_points(self) -> int  # Sum of all 6 attributes
+
 class PlanetAsset(BaseModel)
 class Building(BaseModel)
 class ProductionSummary(BaseModel)
@@ -302,14 +326,39 @@ def is_near_hegemony(prestige: float, threshold_distance: float = 3.0) -> bool
 
 ### core/world_constants.py
 ```python
-STAR_TYPES: Dict[str, Dict]
+STAR_TYPES: Dict[str, Dict]  # Includes: color, size, rarity, energy_modifier, special_rule, class
+STAR_RARITY_WEIGHTS: Dict[str, float]  # Probability weights for star classes O-M
+PLANET_BIOMES: Dict[str, Dict]  # Biome configs with bonuses, slots, maintenance
+ORBITAL_ZONES: Dict[str, Dict]  # Inner/habitable/outer zone configs
+ASTEROID_BELT_CHANCE: float  # 0.15
+RESOURCE_STAR_WEIGHTS: Dict[str, Dict]  # Resource weights by star class
+
 METAL_RESOURCES: Dict[str, Dict]
 BASE_TIER_COSTS: Dict[int, Dict]
 INFRASTRUCTURE_MODULES: Dict[str, Dict]
-BUILDING_TYPES: Dict[str, Dict]
+BUILDING_TYPES: Dict[str, Dict]  # Includes: production, category fields
 BUILDING_SHUTDOWN_PRIORITY: Dict[str, int]
 ECONOMY_RATES: Dict[str, float]
 BROKER_PRICES: Dict[str, int]
+```
+
+### core/exceptions.py
+```python
+class SuperXException(Exception):
+    """Base exception with message and details dict."""
+    message: str
+    details: Dict[str, Any]
+
+class DatabaseError(SuperXException)
+class ValidationError(SuperXException)
+class AuthenticationError(SuperXException)
+class GenesisProtocolError(SuperXException)
+class ResourceInsufficientError(SuperXException)
+class CharacterGenerationError(SuperXException)
+class MissionError(SuperXException)
+class EconomyError(SuperXException)
+class AIServiceError(SuperXException)
+class WorldStateError(SuperXException)
 ```
 
 ### core/galaxy_generator.py
@@ -425,6 +474,15 @@ def clear_player_logs(player_id: int) -> bool
 def get_global_logs(limit: int = 50) -> List[Dict]
 ```
 
+### data/faction_repository.py
+```python
+def get_all_factions() -> List[Dict[str, Any]]
+def get_faction_by_id(faction_id: int) -> Optional[Dict[str, Any]]
+def update_faction_prestige(faction_id: int, new_prestige: float) -> bool
+def batch_update_prestige(prestige_map: Dict[int, float]) -> bool
+def get_faction_prestige_history(faction_id: int, limit: int = 10) -> List[Dict]
+```
+
 ---
 
 ### services/gemini_service.py
@@ -488,6 +546,14 @@ def verify_password(stored_password: str, provided_password: str) -> bool
 ### utils/helpers.py
 ```python
 def encode_image(image_file: IO[bytes]) -> str
+```
+
+### utils/logging_utils.py
+```python
+def log_exception(error: Exception, context: str, player_id: int = None, extra_data: dict = None) -> None
+def safe_db_operation(operation_name: str, default_return: Any = None) -> Callable  # Decorator
+def safe_operation(operation_name: str, default_return: Any = None, reraise: bool = False) -> Callable  # Decorator
+def setup_logging(level: int = logging.INFO) -> None
 ```
 
 ---
@@ -572,4 +638,25 @@ supabase.table(...)  # MAL - variable no definida
 from data.database import get_supabase
 db = get_supabase()
 db.table(...)  # BIEN
+
+# PATRÓN RECOMENDADO en repositorios:
+def _get_db():
+    return get_supabase()
+
+def my_query():
+    return _get_db().table("x").select("*").execute()
 ```
+
+---
+
+## 6. ATRIBUTOS DE PERSONAJE (IMPORTANTE)
+
+Los atributos correctos son:
+- `fuerza`
+- `agilidad`
+- `tecnica`
+- `intelecto`
+- `voluntad`
+- `presencia`
+
+**NUNCA usar:** `destreza`, `constitucion`, `inteligencia`, `sabiduria`, `carisma` (nombres legacy incorrectos)
