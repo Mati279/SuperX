@@ -17,6 +17,7 @@ import random
 import json
 import re
 import traceback
+import time
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from google.genai import types
@@ -53,7 +54,7 @@ AGE_MAX = 70
 PREDOMINANT_RACE_CHANCE = 0.5
 DEFAULT_RANK = "Iniciado"
 
-# Prompt ENDURECIDO para evitar errores de JSON
+# Prompt simplificado porque el Schema se encarga del formato
 IDENTITY_GENERATION_PROMPT = """
 Actúa como un Oficial de Reclutamiento Veterano de una facción galáctica.
 Genera la identidad para un nuevo operativo con estos datos:
@@ -68,22 +69,10 @@ DATOS TÉCNICOS:
 - Atributos top: {top_attributes}
 
 INSTRUCCIONES:
-1. Genera NOMBRE y APELLIDO adecuados a la raza.
-2. Escribe una BIOGRAFÍA (50-80 palabras) con trasfondo, perfil psicológico y rol táctico.
-
-⚠️ REGLAS CRÍTICAS DE FORMATO JSON ⚠️
-1. Responde ÚNICAMENTE con un objeto JSON válido. Nada de markdown, nada de ```json.
-2. **PROHIBIDO** usar comillas dobles (") DENTRO de los textos. Usa comillas simples (') si es necesario.
-   - MAL: "biografia": "Dijo "hola" y se fue"
-   - BIEN: "biografia": "Dijo 'hola' y se fue"
-3. El texto de la biografía debe ser UNA SOLA LÍNEA, sin saltos de línea reales.
-
-ESTRUCTURA REQUERIDA:
-{{
-  "nombre": "NombreDelPj",
-  "apellido": "ApellidoDelPj",
-  "biografia": "Texto continuo de la biografía sin comillas dobles internas."
-}}
+1. Genera NOMBRE y APELLIDO adecuados a la raza y cultura (sci-fi).
+2. Escribe una BIOGRAFÍA (50-80 palabras) en español.
+   - Debe incluir trasfondo breve, perfil psicológico y rol táctico.
+   - Tono profesional/militar.
 """
 
 
@@ -202,38 +191,6 @@ def _generate_fallback_identity(race: str, sex: BiologicalSex) -> GeneratedIdent
     )
 
 
-def _sanitize_json_output(text: str) -> str:
-    """
-    Limpia y repara strings JSON rotos comunes antes del parseo.
-    """
-    if not text:
-        return "{}"
-    
-    # 1. Quitar bloques de código Markdown
-    text = re.sub(r"```(?:json)?", "", text)
-    text = text.replace("```", "")
-    
-    # 2. Recortar espacios
-    text = text.strip()
-    
-    # 3. Intentar extraer el objeto JSON principal
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1:
-        text = text[start : end + 1]
-    
-    # 4. Eliminar "Trailing Commas" (coma antes de cierre de llave o corchete)
-    #    Ej: { "a": 1, } -> { "a": 1 }
-    text = re.sub(r",\s*\}", "}", text)
-    text = re.sub(r",\s*\]", "]", text)
-    
-    # 5. Intentar arreglar saltos de línea literales dentro de strings (muy común que rompa JSON)
-    #    Reemplaza saltos de línea reales por espacios, excepto si parecen formato
-    text = text.replace("\n", " ")
-    
-    return text
-
-
 # =============================================================================
 # GENERACIÓN DE IDENTIDAD CON IA
 # =============================================================================
@@ -248,7 +205,7 @@ def generate_identity_with_ai_sync(
     attributes: Dict[str, int]
 ) -> GeneratedIdentity:
     """
-    Versión síncrona de generación de identidad con IA con manejo robusto de errores.
+    Versión síncrona de generación de identidad con IA usando Schema Estricto y Reintentos.
     """
     container = get_service_container()
 
@@ -268,59 +225,87 @@ def generate_identity_with_ai_sync(
         top_attributes=_get_top_attributes(attributes)
     )
 
-    raw_response_text = ""
-    sanitized_text = ""
+    # 1. Definir Schema Estricto (Structured Output)
+    identity_schema = types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "nombre": types.Schema(type=types.Type.STRING),
+            "apellido": types.Schema(type=types.Type.STRING),
+            "biografia": types.Schema(type=types.Type.STRING),
+        },
+        required=["nombre", "apellido", "biografia"]
+    )
 
-    try:
-        # Aumentamos max_output_tokens para evitar cortes (Unterminated string)
-        response = ai_client.models.generate_content(
-            model=TEXT_MODEL_NAME,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.8,
-                max_output_tokens=800,  # AUMENTADO de 600
-                response_mime_type="application/json"
+    # 2. Configuración de Generación y Seguridad
+    # Bloquear nada para evitar truncamientos por falsos positivos en biografías de combate
+    safety_config = [
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE
+        ),
+    ]
+
+    generation_config = types.GenerateContentConfig(
+        temperature=0.8,
+        max_output_tokens=1000,
+        response_mime_type="application/json",
+        response_schema=identity_schema,
+        safety_settings=safety_config
+    )
+
+    # 3. Loop de Reintentos (Robustez)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = ai_client.models.generate_content(
+                model=TEXT_MODEL_NAME,
+                contents=prompt,
+                config=generation_config
             )
-        )
 
-        if response and response.text:
-            raw_response_text = response.text
-            
-            # Intento de limpieza
-            sanitized_text = _sanitize_json_output(raw_response_text)
-            
-            # Parseo con strict=False para ser más tolerante
-            data = json.loads(sanitized_text, strict=False)
-            
-            return GeneratedIdentity(
-                nombre=data.get("nombre", "SinNombre"),
-                apellido=data.get("apellido", ""),
-                biografia=data.get("biografia", f"{race} {char_class}.")
-            )
-        else:
-            log_event("IA retornó respuesta vacía.", is_error=True)
+            if response and response.text:
+                # Al usar schema, el text debería ser JSON válido directamente
+                try:
+                    data = json.loads(response.text)
+                    return GeneratedIdentity(
+                        nombre=data.get("nombre", "SinNombre"),
+                        apellido=data.get("apellido", ""),
+                        biografia=data.get("biografia", f"{race} {char_class}.")
+                    )
+                except json.JSONDecodeError as json_err:
+                    print(f"⚠️ Intento {attempt+1}/{max_retries} falló parseo JSON: {json_err}. Raw: {response.text[:50]}...")
+                    # Si falla, continuamos al siguiente intento
+                    continue
+            else:
+                print(f"⚠️ Intento {attempt+1}/{max_retries}: Respuesta vacía o bloqueada.")
+                # Chequear finish_reason si es posible (debug)
+                if response.candidates:
+                    print(f"   Razón de fin: {response.candidates[0].finish_reason}")
+                
+        except Exception as e:
+            print(f"⚠️ Intento {attempt+1}/{max_retries} Excepción: {e}")
+            # Pequeña pausa antes de reintentar por si es problema de red momentáneo
+            time.sleep(1)
 
-    except json.JSONDecodeError as e:
-        # LOGGING DETALLADO PARA DEBUG
-        error_msg = f"❌ JSON PARSE ERROR: {str(e)}"
-        print(f"\n{error_msg}")
-        print(f"--- RAW TEXT ---\n{raw_response_text}\n----------------")
-        print(f"--- SANITIZED ---\n{sanitized_text}\n----------------")
-        
-        # Registrar en la base de datos de logs para persistencia
-        log_event(f"Error generando personaje. JSON corrupto: {str(e)}. Ver consola para raw.", is_error=True)
-        
-    except Exception as e:
-        # Otros errores (red, modelo no encontrado, etc)
-        print(f"🔴 ERROR CRÍTICO IA: {traceback.format_exc()}")
-        log_event(f"Error crítico IA: {str(e)}", is_error=True)
-
-    # Si algo falló, SIEMPRE devolvemos fallback para no romper el juego
-    print("⚠️ Ejecutando Fallback Identity por error previo.")
+    # Si agotamos los intentos, fallback
+    print("❌ Todos los intentos de IA fallaron. Usando identidad fallback.")
+    log_event(f"Fallo total generación IA tras {max_retries} intentos. Usando fallback.", is_error=True)
     return _generate_fallback_identity(race, sex)
 
 
-# Async wrapper si fuera necesario (mantenido por compatibilidad)
+# Async wrapper si fuera necesario
 async def _generate_identity_with_ai(
     race: str, char_class: str, level: int, sex: BiologicalSex, age: int, traits: List[str], attributes: Dict[str, int]
 ) -> GeneratedIdentity:
@@ -364,7 +349,7 @@ def generate_random_character_with_ai(
     feats = random.sample(AVAILABLE_FEATS, min(num_feats, len(AVAILABLE_FEATS)))
     traits = random.sample(PERSONALITY_TRAITS, k=2)
 
-    # Generación de identidad
+    # Generación de identidad (con reintentos internos)
     identity = generate_identity_with_ai_sync(
         race=race_name,
         char_class=class_name,
@@ -379,7 +364,8 @@ def generate_random_character_with_ai(
     attempts = 0
     while full_name in existing_names and attempts < 5:
         fallback_id = _generate_fallback_identity(race_name, sex)
-        # Mantener la biografía rica si la original fue de IA y válida
+        # Si la identidad original vino de IA (tiene biografía rica), intentamos conservarla
+        # si no es "Identidad provisional..."
         new_bio = identity.biografia if "Identidad provisional" not in identity.biografia else fallback_id.biografia
         identity = GeneratedIdentity(fallback_id.nombre, fallback_id.apellido, new_bio)
         full_name = f"{identity.nombre} {identity.apellido}"
