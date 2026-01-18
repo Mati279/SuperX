@@ -1,7 +1,7 @@
 # services/ai_tools.py
 from typing import Dict, Any, List, Optional
 import json
-from google.generativeai import types
+from google.genai import types
 from data.database import get_supabase
 from data.world_repository import get_world_state, get_system_by_id, get_planets_by_system_id
 from data.player_repository import get_player_by_id, get_player_finances
@@ -42,7 +42,7 @@ def investigate_character(character_name: str, player_id: int) -> str:
     narrative = f"Investigación sobre {target['nombre']}: {result.result_type.name} (Margen: {result.margin})\n"
     
     # 4. Aplicar consecuencias
-    if result.is_success:
+    if result.success:
         # Solo sube a KNOWN
         set_character_knowledge_level(target["id"], player_id, KnowledgeLevel.KNOWN)
         narrative += f"¡ÉXITO! Antecedentes recuperados. Nivel de conocimiento actualizado a CONOCIDO.\n"
