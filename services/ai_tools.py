@@ -213,19 +213,17 @@ def check_route_safety(origin_system: str, destination_system: str) -> str:
 def investigar(target_name: str, player_id: int, focus: str = "general", execution_mode: str = "SCHEDULE", force_success: bool = False) -> str:
     """
     Realiza una investigación sobre un objetivo.
-    Modo SCHEDULE: Programa la acción para el Tick (wait 1 tick).
-    Modo EXECUTE: Ejecuta la lógica MRG y revela información.
-    Flag force_success: Bypass del sistema MRG para debug.
+    Maneja la lógica de resultados:
+    - Crítico: Descuento 30%.
+    - Éxito (Parcial/Total): Revela Bio.
+    - Fallo: Reintentar.
+    - Pifia: Eliminar candidato.
     """
     print(f"🕵️ DEBUG: llamada a investigar() - Target: {target_name}, Mode: {execution_mode}, PID: {player_id}, Force: {force_success}")
     try:
         # MODO 1: PROGRAMACIÓN (Default)
-        # El usuario ordena investigar. La IA programa la acción.
         if execution_mode == "SCHEDULE":
-            # Detectar si hay flag de éxito forzado en el contexto (pasado como argumento o implícito)
             force_flag = " force_success=True" if force_success else ""
-            
-            # Crear el comando interno que disparará el modo EXECUTE en el próximo tick
             internal_command = f"[INTERNAL_EXECUTE_INVESTIGATION] target='{target_name}' focus='{focus}' player_id={player_id}{force_flag}"
             
             queue_ok = queue_player_action(player_id, internal_command)
@@ -233,34 +231,31 @@ def investigar(target_name: str, player_id: int, focus: str = "general", executi
             if queue_ok:
                 return json.dumps({
                     "status": "SCHEDULED",
-                    "mensaje": f"Protocolo de investigación sobre '{target_name}' iniciado. Los analistas requieren 1 Ciclo Estándar para procesar la información. Recibirá un informe en el próximo Tick.",
+                    "mensaje": f"Protocolo de investigación sobre '{target_name}' iniciado. Recibirá un informe en el próximo Tick.",
                     "tiempo_estimado": "1 Tick"
                 }, ensure_ascii=False)
             else:
                 return json.dumps({"error": "No se pudo programar la investigación. Error en cola de operaciones."})
 
         # MODO 2: EJECUCIÓN (Internal)
-        # El Tick Engine procesa la cola y la IA se llama a sí misma con este modo.
         elif execution_mode == "EXECUTE":
             commander = get_commander_by_player_id(player_id)
             if not commander:
                 return json.dumps({"error": "Comandante no encontrado."})
 
-            # Obtener stats y habilidad nueva
+            # Obtener stats
             stats = commander.get('stats_json', {})
             attributes = stats.get('atributos', {})
             skills = stats.get('habilidades', {})
             
-            # Base: Intelecto + Habilidad "Recopilación de Información"
             base_merit = attributes.get('intelecto', 0)
-            skill_bonus = skills.get('Recopilación de Información', 0) # NUEVA HABILIDAD
+            skill_bonus = skills.get('Recopilación de Información', 0)
             total_merit = base_merit + skill_bonus
 
             print(f"🎲 DEBUG: Tirada MRG. Mérito total: {total_merit}. Force: {force_success}")
 
-            # Resolución MRG (o bypass)
             if force_success:
-                # Objeto dummy para simular éxito
+                # Mock para debug
                 class MockResult:
                     result_type = ResultType.CRITICAL_SUCCESS
                     roll = type('obj', (object,), {'total': 100})
@@ -269,81 +264,100 @@ def investigar(target_name: str, player_id: int, focus: str = "general", executi
             else:
                 result = resolve_action(
                     merit_points=total_merit,
-                    difficulty=DIFFICULTY_NORMAL, # 50
+                    difficulty=DIFFICULTY_NORMAL, 
                     action_description=f"Investigación de {target_name}"
                 )
             
-            print(f"🎲 DEBUG: Resultado MRG: {result.result_type} (Roll: {result.roll.total})")
+            print(f"🎲 DEBUG: Resultado MRG: {result.result_type}")
 
-            # Generar resultado basado en éxito/fracaso
-            if result.result_type in [ResultType.CRITICAL_SUCCESS, ResultType.TOTAL_SUCCESS, ResultType.PARTIAL_SUCCESS]:
-                # Éxito: Revelar lore
-                lore_fragment = f"INFORME DE INTELIGENCIA SOBRE: {target_name}\n"
-                lore_fragment += "------------------------------------------------\n"
-                lore_fragment += "Búsqueda en archivos descentralizados completada. Se han recuperado fragmentos de su historial personal y operativo."
+            # --- LÓGICA DE RESULTADOS ---
+            
+            # 1. ÉXITO CRÍTICO: Descuento + Bio
+            if result.result_type == ResultType.CRITICAL_SUCCESS:
+                outcome_code = "CRITICAL_SUCCESS"
+                log_event(f"SYSTEM_EVENT: INVESTIGATION_RESULT | target={target_name} | outcome={outcome_code}", player_id)
                 
-                if result.result_type == ResultType.CRITICAL_SUCCESS:
-                    lore_fragment += " [CRÍTICO] Datos biométricos y psicológicos profundos desencriptados."
+                lore = f"¡ÉXITO ROTUNDO! Se han encontrado puntos de presión psicológica en {target_name}. "
+                lore += "Sabemos exactamente qué ofrecerle para que se una por menos créditos. (Descuento 30% aplicado)."
                 
                 return json.dumps({
                     "status": "SUCCESS",
-                    "mrg_roll": result.roll.total,
-                    "resultado": lore_fragment,
-                    "analisis": f"Éxito en recopilación (Margen: {result.margin}). El perfil del objetivo ha sido esclarecido."
+                    "resultado": lore,
+                    "analisis": "Operación perfecta. Activo comprometido favorablemente."
                 }, ensure_ascii=False)
-            
-            else:
-                # Fracaso Narrativo (No técnico)
+
+            # 2. ÉXITO (TOTAL O PARCIAL): Solo Bio
+            elif result.result_type in [ResultType.TOTAL_SUCCESS, ResultType.PARTIAL_SUCCESS]:
+                outcome_code = "SUCCESS"
+                log_event(f"SYSTEM_EVENT: INVESTIGATION_RESULT | target={target_name} | outcome={outcome_code}", player_id)
+                
+                lore = f"Investigación completada. Se han verificado los antecedentes de {target_name}. "
+                lore += "Información biográfica añadida al expediente."
+                
+                return json.dumps({
+                    "status": "SUCCESS",
+                    "resultado": lore,
+                    "analisis": "Información recuperada correctamente."
+                }, ensure_ascii=False)
+
+            # 3. FALLO CRÍTICO: Eliminación
+            elif result.result_type == ResultType.CRITICAL_FAILURE:
+                outcome_code = "CRITICAL_FAILURE"
+                log_event(f"SYSTEM_EVENT: INVESTIGATION_RESULT | target={target_name} | outcome={outcome_code}", player_id)
+                
+                lore = f"¡ALERTA! La operación contra {target_name} ha sido descubierta. "
+                lore += "El objetivo se ha ofendido por la intrusión y ha retirado su solicitud de reclutamiento."
+                
                 return json.dumps({
                     "status": "FAILURE",
-                    "mrg_roll": result.roll.total,
-                    "resultado": f"La búsqueda de información sobre {target_name} ha concluido sin hallazgos significativos. Los registros parecen haber sido purgados o nunca existieron en las redes accesibles.",
-                    "analisis": "Sin datos. No se encontraron huellas digitales ni registros públicos vinculados al objetivo en este sector."
+                    "resultado": lore,
+                    "analisis": "Operación comprometida. Objetivo perdido."
+                }, ensure_ascii=False)
+
+            # 4. FALLO NORMAL: Reintentar
+            else:
+                outcome_code = "FAILURE"
+                log_event(f"SYSTEM_EVENT: INVESTIGATION_RESULT | target={target_name} | outcome={outcome_code}", player_id)
+                
+                lore = f"No se han encontrado datos relevantes sobre {target_name} en esta pasada. "
+                lore += "Los archivos parecen estar encriptados o fuera de alcance por ahora."
+                
+                return json.dumps({
+                    "status": "FAILURE",
+                    "resultado": lore,
+                    "analisis": "Sin resultados concluyentes. Se puede volver a intentar."
                 }, ensure_ascii=False)
                 
         else:
-            return json.dumps({"error": f"Modo de ejecución desconocido: {execution_mode}"})
+            return json.dumps({"error": f"Modo desconocido: {execution_mode}"})
 
     except Exception as e:
         print(f"❌ DEBUG: Exception en investigar: {e}")
-        return json.dumps({"error": f"Error crítico en investigación: {str(e)}"})
+        return json.dumps({"error": f"Error crítico: {str(e)}"})
 
 
 def recruit_character(player_id: int, candidate_name: str) -> str:
-    """
-    Intenta reclutar (esto es solo informativo para la IA, la acción real va por UI normalmente,
-    pero aquí permitimos que la IA lo sugiera o verifique).
-    """
     return json.dumps({
         "status": "REQUIERE_CONFIRMACION_UI",
-        "mensaje": f"El reclutamiento de {candidate_name} debe ser autorizado biométricamente en el Centro de Reclutamiento."
+        "mensaje": f"El reclutamiento de {candidate_name} debe ser autorizado en el Centro."
     })
 
 
 def get_recruitment_candidates(player_id: int) -> str:
-    """Devuelve la lista de candidatos (simulada o de sesión)."""
-    # En una impl real, esto leería de una tabla temporal o de la sesión (complicado desde aquí).
-    # Devolveremos un placeholder.
     return json.dumps({
-        "candidatos": [
-            {"nombre": "Kira-7", "clase": "Soldado", "nivel": 2, "costo": 500},
-            {"nombre": "Jace", "clase": "Piloto", "nivel": 1, "costo": 350}
-        ],
-        "nota": "Datos simulados. Consultar terminal de reclutamiento para tiempo real."
+        "candidatos": [],
+        "nota": "Datos simulados."
     })
 
 def list_player_characters(player_id: int) -> str:
-    """Lista los personajes del jugador."""
     try:
         db = _get_db()
         response = db.table("characters").select("*").eq("player_id", player_id).execute()
-        
         char_list = []
         if response.data:
             for c in response.data:
                 stats = c.get("stats_json", {})
                 estado = c.get("estado", "Activo")
-                
                 char_list.append({
                     "nombre": c["nombre"],
                     "clase": c.get("clase"),
@@ -355,23 +369,16 @@ def list_player_characters(player_id: int) -> str:
                     "accion": estado.get("accion_actual", "Esperando"),
                     "es_comandante": c.get("es_comandante", False)
                 })
-
-        return json.dumps({
-            "personajes": char_list,
-            "total": len(char_list)
-        }, ensure_ascii=False)
-
+        return json.dumps({"personajes": char_list, "total": len(char_list)}, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"error": f"Error listando personajes: {e}"})
 
-
-# --- REGISTRO DE FUNCIONES ---
 
 TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
     "get_player_status": get_player_status,
     "scan_system_data": scan_system_data,
     "check_route_safety": check_route_safety,
-    "investigar": investigar, # RENOMBRADO
+    "investigar": investigar,
     "recruit_character": recruit_character,
     "get_recruitment_candidates": get_recruitment_candidates,
     "list_player_characters": list_player_characters
@@ -381,15 +388,10 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., str]] = {
 def execute_tool(function_name: str, arguments: Dict[str, Any]) -> str:
     if function_name not in TOOL_FUNCTIONS:
         return json.dumps({"error": f"Función desconocida: {function_name}"})
-
     try:
-        # Introspección simple para llamar con argumentos
         func = TOOL_FUNCTIONS[function_name]
-        
-        # Casting básico
         if "player_id" in arguments:
             arguments["player_id"] = int(arguments["player_id"])
-            
         return func(**arguments)
     except Exception as e:
         return json.dumps({"error": f"Error ejecutando {function_name}: {e}"})

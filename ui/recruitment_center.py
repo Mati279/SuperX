@@ -5,41 +5,108 @@ Genera candidatos aleatorios con stats completos usando character_engine o IA.
 """
 
 import streamlit as st
+import re
 from typing import Dict, Any, List
 from ui.state import get_player
-# IMPORTANTE: Usamos el servicio de generación robusto (con IA y fallback)
 from services.character_generation_service import generate_random_character_with_ai, RecruitmentContext
 from core.recruitment_logic import can_recruit
 from data.player_repository import get_player_credits, update_player_credits
 from data.character_repository import create_character, get_all_characters_by_player_id
-from data.world_repository import queue_player_action, has_pending_investigation # NUEVA FUNCION
+from data.world_repository import queue_player_action, has_pending_investigation
+from data.database import get_supabase
 from config.app_constants import DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS, DEFAULT_RECRUIT_LOCATION
 
 # --- CONSTANTES ---
-INVESTIGATION_COST = 150  # Costo por investigar antecedentes
+INVESTIGATION_COST = 150
+CRITICAL_SUCCESS_DISCOUNT = 0.30  # 30% descuento
+
+def _get_system_logs(player_id: int, limit: int = 10):
+    """Recupera logs recientes para buscar resultados de investigación."""
+    try:
+        db = get_supabase()
+        response = db.table("game_logs")\
+            .select("event_description")\
+            .eq("player_id", player_id)\
+            .order("created_at", desc=True)\
+            .limit(limit)\
+            .execute()
+        return response.data if response.data else []
+    except Exception:
+        return []
+
+def _update_pool_from_investigations(player_id: int):
+    """
+    Escanea logs recientes para actualizar el estado de los candidatos en sesión.
+    Busca patrones: SYSTEM_EVENT: INVESTIGATION_RESULT | target={name} | outcome={code}
+    """
+    if 'recruitment_pool' not in st.session_state:
+        return
+
+    logs = _get_system_logs(player_id, limit=20)
+    
+    # Mapeo de resultados encontrados
+    results_map = {} 
+    
+    for log in logs:
+        text = log.get("event_description", "")
+        if "SYSTEM_EVENT: INVESTIGATION_RESULT" in text:
+            # Parsear target y outcome
+            match = re.search(r"target=(.*?) \| outcome=(.*?)$", text)
+            if match:
+                target = match.group(1).strip()
+                outcome = match.group(2).strip()
+                # Solo guardamos el más reciente si hay duplicados (por el orden desc)
+                if target not in results_map:
+                    results_map[target] = outcome
+
+    # Aplicar efectos a la piscina
+    # Iteramos con índice para poder borrar si es necesario
+    indices_to_remove = []
+    
+    for i, candidate in enumerate(st.session_state.recruitment_pool):
+        name = candidate["nombre"]
+        
+        if name in results_map:
+            outcome = results_map[name]
+            
+            # Evitar re-procesar si ya tiene el flag (excepto fail que permite retry)
+            if candidate.get("last_outcome") == outcome:
+                continue
+                
+            candidate["last_outcome"] = outcome # Marcamos para no repetir lógica
+            
+            if outcome == "CRITICAL_SUCCESS":
+                candidate["investigado"] = True
+                candidate["discounted"] = True
+                # Aplicar descuento si no se aplicó
+                if not candidate.get("original_cost"):
+                    candidate["original_cost"] = candidate["costo"]
+                    candidate["costo"] = int(candidate["costo"] * (1 - CRITICAL_SUCCESS_DISCOUNT))
+                
+            elif outcome == "SUCCESS":
+                candidate["investigado"] = True
+                # Solo bio, sin descuento
+                
+            elif outcome == "CRITICAL_FAILURE":
+                indices_to_remove.append(i)
+                st.toast(f"❌ {name} ha retirado su solicitud tras detectar la investigación.")
+                
+            elif outcome == "FAILURE":
+                candidate["investigado"] = False # Permite reintentar
+                # No hacemos nada más, el botón se reactiva
+
+    # Eliminar candidatos (en orden inverso para no romper índices)
+    for i in sorted(indices_to_remove, reverse=True):
+        del st.session_state.recruitment_pool[i]
+
 
 def _generate_recruitment_pool(player_id: int, pool_size: int, existing_names: List[str], min_level: int = 1, max_level: int = 3) -> List[Dict[str, Any]]:
-    """
-    Genera una piscina de candidatos para reclutamiento.
-    """
     candidates = []
     names_in_use = list(existing_names)
-
-    # Contexto para el generador
-    context = RecruitmentContext(
-        player_id=player_id,
-        min_level=min_level,
-        max_level=max_level
-    )
+    context = RecruitmentContext(player_id=player_id, min_level=min_level, max_level=max_level)
 
     for _ in range(pool_size):
-        # 1. Generar datos crudos del personaje (Dict compatible con DB)
-        char_data = generate_random_character_with_ai(
-            context=context,
-            existing_names=names_in_use
-        )
-
-        # 2. Extraer datos de forma segura desde stats_json
+        char_data = generate_random_character_with_ai(context=context, existing_names=names_in_use)
         stats = char_data.get("stats_json", {})
         
         nivel = stats.get("progresion", {}).get("nivel")
@@ -51,13 +118,11 @@ def _generate_recruitment_pool(player_id: int, pool_size: int, existing_names: L
         clase = stats.get("progresion", {}).get("clase")
         if clase is None: clase = char_data.get("clase", "Recluta")
 
-        # 3. Calcular Costo
         atributos = stats.get("capacidades", {}).get("atributos", {})
         total_attrs = sum(atributos.values()) if atributos else 0
         costo = (nivel * 250) + (total_attrs * 5)
         if costo < 100: costo = 100
 
-        # 4. Construir objeto candidato para la UI
         candidate = {
             "nombre": char_data["nombre"],
             "nivel": nivel,
@@ -65,9 +130,9 @@ def _generate_recruitment_pool(player_id: int, pool_size: int, existing_names: L
             "clase": clase,
             "costo": int(costo),
             "stats_json": stats,
-            "investigado": False # Flag local para controlar reintentos en sesión
+            "investigado": False,
+            "discounted": False
         }
-
         candidates.append(candidate)
         names_in_use.append(char_data["nombre"])
 
@@ -80,7 +145,6 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
     stats = candidate.get("stats_json", {})
     bio = stats.get("bio", {})
     
-    # Rutas seguras a las capacidades
     capacidades = stats.get("capacidades", {})
     atributos = capacidades.get("atributos", {})
     habilidades = capacidades.get("habilidades", {})
@@ -89,8 +153,8 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
     can_afford = player_credits >= candidate["costo"]
     can_afford_investigation = player_credits >= INVESTIGATION_COST
     
-    # Check si ya fue investigado (flag en session)
     already_investigated = candidate.get("investigado", False)
+    is_discounted = candidate.get("discounted", False)
     
     border_color = "#26de81" if can_afford else "#ff6b6b"
 
@@ -122,7 +186,9 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
         # --- Bio ---
         bio_text = bio.get('bio_superficial') or bio.get('biografia_corta') or "Sin datos biométricos."
         if already_investigated:
-             st.info(f"🕵️ INTELIGENCIA: {bio.get('bio_conocida', 'Datos adicionales revelados.')}")
+             st.success(f"🕵️ DATOS REVELADOS: {bio.get('bio_conocida', 'Perfil psicológico detallado disponible.')}")
+             if is_discounted:
+                 st.caption("✅ Puntos de influencia detectados (Descuento aplicado).")
         else:
              st.caption(f"*{bio_text}*")
 
@@ -137,7 +203,7 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
             else:
                 st.write("Datos de atributos no disponibles.")
 
-        # --- Habilidades (Top 5 con colores) ---
+        # --- Habilidades ---
         with st.expander("Ver Habilidades", expanded=False):
             if habilidades:
                 sorted_skills = sorted(habilidades.items(), key=lambda x: -x[1])
@@ -150,7 +216,7 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
             else:
                 st.caption("Sin habilidades especializadas.")
 
-        # --- Rasgos/Feats ---
+        # --- Rasgos ---
         if feats:
             with st.expander("Ver Rasgos", expanded=False):
                 for feat in feats:
@@ -158,21 +224,31 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
 
         st.markdown("---")
 
-        # --- Footer: Acciones (Investigar / Contratar) ---
+        # --- Footer: Acciones ---
         col_cost, col_inv, col_recruit = st.columns([2, 1, 1])
 
         with col_cost:
             cost_color = "#26de81" if can_afford else "#ff6b6b"
-            st.markdown(f"""
-                <div style="text-align: center;">
-                    <span style="color: #888; font-size: 0.85em;">COSTO DE CONTRATACION</span><br>
-                    <span style="font-size: 1.8em; font-weight: bold; color: {cost_color};">{candidate['costo']:,} C</span>
-                </div>
-            """, unsafe_allow_html=True)
+            
+            if is_discounted and candidate.get("original_cost"):
+                # Mostrar precio tachado y nuevo
+                st.markdown(f"""
+                    <div style="text-align: center;">
+                        <span style="color: #888; font-size: 0.85em;">COSTO DE CONTRATACION</span><br>
+                        <span style="text-decoration: line-through; color: #888; font-size: 1.2em;">{candidate['original_cost']:,} C</span>
+                        <span style="font-size: 1.8em; font-weight: bold; color: #ffd700;"> {candidate['costo']:,} C</span>
+                    </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                    <div style="text-align: center;">
+                        <span style="color: #888; font-size: 0.85em;">COSTO DE CONTRATACION</span><br>
+                        <span style="font-size: 1.8em; font-weight: bold; color: {cost_color};">{candidate['costo']:,} C</span>
+                    </div>
+                """, unsafe_allow_html=True)
 
         # Botón Investigar
         with col_inv:
-            # Lógica de deshabilitado
             disable_inv = False
             inv_help = f"Costo: {INVESTIGATION_COST} C. Tarda 1 Tick."
             
@@ -181,7 +257,7 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
                 inv_help = "Créditos insuficientes."
             elif investigation_active:
                 disable_inv = True
-                inv_help = "Ya hay una investigación en curso. Espere al reporte."
+                inv_help = "Ya hay una investigación en curso."
             elif already_investigated:
                 disable_inv = True
                 inv_help = "Objetivo ya investigado con éxito."
@@ -189,10 +265,9 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
             if st.button("🕵️ Investigar", key=f"inv_{index}", disabled=disable_inv, help=inv_help, use_container_width=True):
                  _handle_investigation(player_id, candidate, player_credits, force_success=False)
 
-            # --- DEBUG: Botón Investigación Exitosa ---
-            # Solo visible si se activa modo debug global o para todos (aquí lo ponemos siempre para el usuario)
-            if st.checkbox("Debug Mode", key=f"dbg_{index}", value=False):
-                 if st.button("✅ Force Success", key=f"force_{index}", use_container_width=True):
+            # DEBUG
+            if st.checkbox("Debug", key=f"dbg_{index}", value=False):
+                 if st.button("✅ Force", key=f"force_{index}", use_container_width=True):
                       _handle_investigation(player_id, candidate, player_credits, force_success=True)
 
         # Botón Contratar
@@ -207,25 +282,22 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
 def _handle_investigation(player_id: int, candidate: Dict[str, Any], current_credits: int, force_success: bool = False):
     """Maneja la lógica de cobro y encolado de investigación."""
     if update_player_credits(player_id, current_credits - INVESTIGATION_COST):
-         # Datos reales ocultos
          stats = candidate.get("stats_json", {})
          bio = stats.get("bio", {})
          real_bio = bio.get('bio_profunda') or bio.get('bio_conocida') or "Sin secretos aparentes."
          
-         # Construir comando
          force_flag = "[DEBUG_FORCE_SUCCESS]" if force_success else ""
-         cmd = f"Inicia protocolo de investigación de antecedentes (Investigar) sobre el candidato '{candidate['nombre']}'. ID AUTORIZACION: {player_id}. {force_flag} (DATOS OCULTOS REALES: {real_bio})"
+         # Pasamos 'force_success' si es True para el parámetro de la tool también
+         force_param = " force_success=True" if force_success else ""
          
+         cmd = f"Inicia protocolo de investigación de antecedentes sobre '{candidate['nombre']}'. ID AUTORIZACION: {player_id}. {force_flag} (DATA: {real_bio})"
+         
+         # Si es force, podemos intentar meterlo en la cola de una forma que la IA lo entienda o simplemente confiar en el prompt
          if queue_player_action(player_id, cmd):
-             if force_success:
-                 st.toast(f"✅ [DEBUG] Éxito garantizado para {candidate['nombre']}.")
-                 candidate["investigado"] = True # Marcamos localmente como investigado
-             else:
-                 st.toast(f"⏳ Solicitud enviada. -{INVESTIGATION_COST} C.")
-             
+             st.toast(f"⏳ Solicitud enviada. -{INVESTIGATION_COST} C.")
              st.rerun()
          else:
-             st.error("Error al encolar orden. Se han reembolsado los créditos.")
+             st.error("Error al encolar orden.")
              update_player_credits(player_id, current_credits)
     else:
          st.error("Error en transacción financiera.")
@@ -281,12 +353,13 @@ def show_recruitment_center():
         return
 
     player_id = player.id
-    player_credits = get_player_credits(player_id)
     
-    # Check global de investigación activa
+    # 1. Actualizar estado basado en logs recientes (Sync asíncrono)
+    _update_pool_from_investigations(player_id)
+    
+    player_credits = get_player_credits(player_id)
     investigation_active = has_pending_investigation(player_id)
 
-    # --- Panel de Créditos ---
     col_credits, col_refresh = st.columns([3, 1])
 
     with col_credits:
@@ -321,11 +394,11 @@ def show_recruitment_center():
                 st.error("Error al actualizar créditos.")
 
     if investigation_active:
-        st.info("🕒 Hay una investigación de antecedentes en curso. Espere al próximo ciclo para iniciar otra.")
+        st.info("🕒 Investigación en curso...")
 
     st.markdown("---")
 
-    # --- Filtros ---
+    # Filtros
     with st.expander("Opciones de Búsqueda"):
         col_min, col_max = st.columns(2)
         with col_min:
@@ -342,7 +415,7 @@ def show_recruitment_center():
             st.session_state.recruit_max_level = max_level
             st.rerun()
 
-    # --- Generación ---
+    # Generación
     if 'recruitment_pool' not in st.session_state or not st.session_state.recruitment_pool:
         all_chars = get_all_characters_by_player_id(player_id)
         existing_names = []
@@ -365,7 +438,6 @@ def show_recruitment_center():
 
     candidates = st.session_state.recruitment_pool
 
-    # --- Renderizado ---
     if not candidates:
         st.info("No hay candidatos disponibles.")
         return
