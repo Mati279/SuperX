@@ -21,3 +21,18 @@ def get_game_config() -> Dict[str, str]:
     
     # Devuelve un diccionario vacío si hay un error o no hay configuración
     return {}
+
+def get_current_tick() -> int:
+    """
+    Obtiene el tick actual del juego.
+    Esta función actúa como puente hacia world_repository para evitar ciclos de importación
+    con character_repository.
+    """
+    try:
+        # Importación local para evitar ciclos de dependencia circulares
+        from data.world_repository import get_world_state
+        state = get_world_state()
+        return state.get("current_tick", 1)
+    except Exception as e:
+        log_event(f"Error recuperando current_tick en config: {e}", is_error=True)
+        return 1
