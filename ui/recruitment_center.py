@@ -174,9 +174,9 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
                      # 1. Cobrar
                      if update_player_credits(player_id, player_credits - INVESTIGATION_COST):
                          # 2. Encolar la orden
-                         # Intentamos pasar la Bio Real oculta en el prompt para que la IA pueda "descubrirla" si tiene éxito
+                         # FIX: Incluimos ID de autorización en el texto para ayudar a la IA
                          real_bio = bio.get('bio_profunda') or bio.get('bio_conocida') or "Sin secretos."
-                         cmd = f"Inicia protocolo de investigación de antecedentes (Investigar) sobre el candidato '{candidate['nombre']}'. (DATOS OCULTOS REALES DEL OBJETIVO PARA USO INTERNO DE IA: {real_bio})"
+                         cmd = f"Inicia protocolo de investigación de antecedentes (Investigar) sobre el candidato '{candidate['nombre']}'. ID AUTORIZACION: {player_id}. (DATOS OCULTOS REALES DEL OBJETIVO PARA USO INTERNO DE IA: {real_bio})"
                          
                          if queue_player_action(player_id, cmd):
                              st.toast(f"✅ -{INVESTIGATION_COST} C. Solicitud enviada. Inteligencia procesará a {candidate['nombre']} en el próximo ciclo.")

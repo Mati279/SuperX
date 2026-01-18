@@ -75,12 +75,12 @@ Tu lealtad es absoluta a la facción: {faction_name}.
   1. Llama inmediatamente a la herramienta `investigar` con los parámetros extraídos y `execution_mode='EXECUTE'`.
   2. Narra el resultado de la investigación basándote en la respuesta de la herramienta.
 - Para cualquier OTRA solicitud de investigación del usuario (tiempo real):
-  1. Llama a `investigar` con `execution_mode='SCHEDULE'` (por defecto).
+  1. Llama a `investigar` con `execution_mode='SCHEDULE'` (por defecto). IMPORTANTE: Usa el `player_id` provisto en tus credenciales del contexto.
   2. Informa al usuario que la tarea ha sido programada para el ciclo nocturno.
 
 ## INSTRUCCIONES OPERATIVAS
 1. **Analizar:** Interpreta la intención del Comandante.
-2. **Verificar Contexto:** ¿Tengo la información en mis sensores (Contexto Táctico)?
+2. **Verificar Contexto:** ¿Tengo la información en mis sensores (Contexto Táctico)? Usa tu `player_id` para cualquier herramienta que lo requiera.
 3. **Ejecutar:** Usa herramientas si es necesario (consultas SQL limitadas, cálculos).
 4. **Responder:** Informa el resultado con tu personalidad de IA Táctica.
 
@@ -104,6 +104,7 @@ class ActionResult:
 @dataclass
 class TacticalContext:
     """Contexto táctico del comandante para la IA."""
+    player_id: int # FIX: Añadido player_id explícito
     commander_name: str
     commander_location: str
     attributes: Dict[str, int]
@@ -115,6 +116,11 @@ class TacticalContext:
     def to_json(self) -> str:
         """Convierte el contexto a JSON para el prompt."""
         context = {
+            "credenciales": {
+                "player_id": self.player_id, # FIX: Expuesto al LLM
+                "nivel_acceso": "COMANDANTE",
+                "identificador_sistema": f"CMD-{self.player_id}"
+            },
             "estado_comandante": {
                 "nombre": self.commander_name,
                 "ubicacion_actual": self.commander_location,
@@ -160,6 +166,7 @@ def _build_tactical_context(player_id: int, commander_data: Dict) -> TacticalCon
         location_details = get_commander_location_display(commander_data['id'])
 
         return TacticalContext(
+            player_id=player_id, # FIX
             commander_name=commander_data['nombre'],
             commander_location=commander_data.get('ubicacion', 'Desconocida'),
             attributes=attributes,
@@ -170,6 +177,7 @@ def _build_tactical_context(player_id: int, commander_data: Dict) -> TacticalCon
 
     except Exception as e:
         return TacticalContext(
+            player_id=player_id, # FIX
             commander_name=commander_data.get('nombre', 'Comandante'),
             commander_location='Error de Sensores',
             attributes={},
