@@ -1,5 +1,5 @@
 # data/character_repository.py
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from data.database import get_supabase
 from data.log_repository import log_event
 
@@ -7,13 +7,15 @@ from data.log_repository import log_event
 def _get_db():
     """Obtiene el cliente de Supabase de forma segura."""
     return get_supabase()
+
+# Importamos KnowledgeLevel para tipado y validación
+from core.models import BiologicalSex, CharacterRole, KnowledgeLevel
 from core.rules import calculate_skills
 from config.app_constants import (
     COMMANDER_RANK,
     COMMANDER_STATUS,
     COMMANDER_LOCATION
 )
-from core.models import BiologicalSex, CharacterRole
 
 # Helper para migración/compatibilidad
 def _ensure_v2_structure(stats_json: Dict, name: str = "") -> Dict:
@@ -69,8 +71,11 @@ def create_commander(
     """
     Crea un Comandante usando el esquema V2.
     """
+    from data.game_config_repository import get_current_tick # Import local para evitar ciclo
+
     try:
         habilidades = calculate_skills(attributes)
+        current_tick = get_current_tick() # Obtener tick actual
         
         # Construir estructura V2 manualmente ya que recibimos piezas sueltas del wizard
         raza = bio_data.get("raza", "Humano")
@@ -129,12 +134,13 @@ def create_commander(
             "es_comandante": True,
             "stats_json": stats_json,
             "estado": COMMANDER_STATUS,
-            "ubicacion": COMMANDER_LOCATION
+            "ubicacion": COMMANDER_LOCATION,
+            "recruited_at_tick": current_tick # Persistencia del tick
         }
 
         response = _get_db().table("characters").insert(new_char_data).execute()
         if response.data:
-            log_event(f"Nuevo comandante V2 '{name}' creado.", player_id)
+            log_event(f"Nuevo comandante V2 '{name}' creado en tick {current_tick}.", player_id)
             return response.data[0]
         return None
 
@@ -190,9 +196,15 @@ def create_character(player_id: int, character_data: Dict[str, Any]) -> Optional
     """
     Persiste un personaje generado por character_engine (que ya viene en formato V2/DB ready).
     """
+    from data.game_config_repository import get_current_tick # Import local
+
     try:
         character_data["player_id"] = player_id
         
+        # Inyectar tick actual si no viene en data
+        if "recruited_at_tick" not in character_data:
+            character_data["recruited_at_tick"] = get_current_tick()
+
         response = _get_db().table("characters").insert(character_data).execute()
         
         if response.data:
@@ -315,3 +327,88 @@ def get_recruitment_candidates(
         min_level=min_level,
         max_level=max_level
     )
+
+# --- GESTIÓN DE CONOCIMIENTO (V2: SQL TABLE) ---
+
+def set_character_knowledge_level(
+    character_id: int,
+    observer_player_id: int,
+    knowledge_level: KnowledgeLevel
+) -> bool:
+    """
+    Establece el nivel de conocimiento usando la tabla relacional 'character_knowledge'.
+    Realiza un UPSERT (Insertar o Actualizar).
+    """
+    try:
+        # UPSERT en Supabase/Postgres
+        data = {
+            "character_id": character_id,
+            "observer_player_id": observer_player_id,
+            "knowledge_level": knowledge_level.value,
+            "updated_at": "now()"
+        }
+        
+        # Upsert basado en la constraint única (character_id, observer_player_id)
+        response = _get_db().table("character_knowledge").upsert(data, on_conflict="character_id, observer_player_id").execute()
+        
+        return bool(response.data)
+
+    except Exception as e:
+        log_event(f"Error setting knowledge level (SQL): {e}", observer_player_id, is_error=True)
+        return False
+
+def get_character_knowledge_level(
+    character_id: int,
+    observer_player_id: int
+) -> KnowledgeLevel:
+    """
+    Recupera el nivel de conocimiento desde la tabla SQL.
+    Por defecto UNKNOWN si no existe registro.
+    """
+    try:
+        # 1. Regla de Oro: Si es el dueño, es FRIEND automáticamente (ahorra query o sirve de fallback)
+        # Nota: Idealmente esto se chequearía antes, pero necesitamos saber quién es el dueño.
+        # Hacemos la query de conocimiento directa, es rápida.
+        
+        response = _get_db().table("character_knowledge")\
+            .select("knowledge_level")\
+            .eq("character_id", character_id)\
+            .eq("observer_player_id", observer_player_id)\
+            .maybe_single()\
+            .execute()
+            
+        if response.data:
+            return KnowledgeLevel(response.data["knowledge_level"])
+            
+        # 2. Fallback: Chequear si es el dueño (si no hay registro en knowledge table)
+        # Esto requiere traer el personaje, lo cual puede ser costoso si solo queríamos el nivel.
+        # Asumimos que si no está en la tabla de conocimiento y no preguntamos en contexto de "my_characters", es desconocido.
+        # PERO, para seguridad, podemos hacer un chequeo rápido si el caller no tiene el objeto character.
+        
+        char = get_character_by_id(character_id)
+        if char and char.get("player_id") == observer_player_id:
+            return KnowledgeLevel.FRIEND
+            
+        return KnowledgeLevel.UNKNOWN
+
+    except Exception:
+        return KnowledgeLevel.UNKNOWN
+
+def get_known_characters_by_player(player_id: int) -> List[Dict[str, Any]]:
+    """
+    Retorna todos los personajes que el jugador conoce (KNOWN o FRIEND),
+    uniendo con la tabla de characters.
+    """
+    try:
+        # Supabase permite joins si están configurados las Foreign Keys
+        # Sintaxis: characters!inner(...) hace un INNER JOIN
+        response = _get_db().table("character_knowledge")\
+            .select("knowledge_level, characters!inner(*)")\
+            .eq("observer_player_id", player_id)\
+            .execute()
+            
+        # Formatear salida plana si es necesario, o devolver estructura anidada
+        return response.data if response.data else []
+    except Exception as e:
+        log_event(f"Error fetching known characters: {e}", player_id, is_error=True)
+        return []

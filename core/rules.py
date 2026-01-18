@@ -1,86 +1,72 @@
 # core/rules.py
-from typing import Dict
-from .constants import (
-    SKILL_MAPPING, 
-    ATTRIBUTE_SOFT_CAP, 
-    ATTRIBUTE_COST_MULTIPLIER,
-    MIN_ATTRIBUTE_VALUE,
-    MAX_ATTRIBUTE_VALUE
-)
+from typing import Dict, Any, Tuple
+from core.constants import SKILL_MAPPING, ATTRIBUTE_COST_MULTIPLIER
+from core.models import KnowledgeLevel
 
 def calculate_skills(attributes: Dict[str, int]) -> Dict[str, int]:
     """
-    Calcula las habilidades de un personaje basándose en sus atributos.
-
-    Implementa la fórmula MPA (Media Ponderada de Atributos):
-    Habilidad = ((Atributo_Primario * 0.7) + (Atributo_Secundario * 0.3))
-
-    Nota: Se ha eliminado la división por 2 para que las skills compartan la 
-    escala 5-20 de los atributos según el documento de diseño.
+    Calcula los valores de habilidades basados en los atributos base.
+    Formula: (Attr1 + Attr2) * 2
     """
     skills = {}
-    if not attributes:
-        return {}
-
-    attrs_safe = {k.lower(): v for k, v in attributes.items()}
-
-    # Pesos para la Media Ponderada de Atributos (MPA)
-    PRIMARY_WEIGHT = 0.7
-    SECONDARY_WEIGHT = 0.3
-
-    for skill, (primary_attr, secondary_attr) in SKILL_MAPPING.items():
-        primary_val = attrs_safe.get(primary_attr, 0)
-        secondary_val = attrs_safe.get(secondary_attr, 0)
-
-        # Fórmula MPA corregida: (A1 * 0.7) + (A2 * 0.3)
-        weighted_avg = (primary_val * PRIMARY_WEIGHT) + (secondary_val * SECONDARY_WEIGHT)
-        skills[skill] = int(round(weighted_avg))
-
+    for skill_name, (attr1, attr2) in SKILL_MAPPING.items():
+        val1 = attributes.get(attr1, 0)
+        val2 = attributes.get(attr2, 0)
+        # Formula base: Suma de atributos asociados * 2
+        skills[skill_name] = (val1 + val2) * 2
     return skills
 
 def calculate_attribute_cost(start_val: int, target_val: int) -> int:
     """
-    Calcula el costo total en puntos para aumentar un atributo.
-    
-    REGLAS:
-    - Rango 5 a 15: Costo 1 punto por nivel.
-    - Rango 16 a 20: Costo 2 puntos por nivel (Soft Cap).
-    - Máximo absoluto: 20.
+    Calcula el costo de XP para subir un atributo.
+    Costo acumulativo triangular * multiplicador.
     """
-    # Validaciones de integridad
-    if start_val < MIN_ATTRIBUTE_VALUE:
-        # En teoría no debería pasar, pero asumimos costo desde el mínimo si está bugueado
-        start_val = MIN_ATTRIBUTE_VALUE
-        
-    if target_val > MAX_ATTRIBUTE_VALUE:
-        raise ValueError(f"El atributo no puede superar el máximo de {MAX_ATTRIBUTE_VALUE}")
-
-    if target_val <= start_val:
-        return 0
-
-    cost = 0
-    # Iteramos por cada punto que se quiere subir
-    for v in range(start_val + 1, target_val + 1):
-        if v > ATTRIBUTE_SOFT_CAP:
-            cost += ATTRIBUTE_COST_MULTIPLIER
-        else:
-            cost += 1
-            
-    return cost
+    total_cost = 0
+    for v in range(start_val, target_val):
+        # El costo de subir DE v A v+1
+        # Ejemplo: de 5 a 6 -> costo base basado en 6
+        cost = v * ATTRIBUTE_COST_MULTIPLIER
+        total_cost += cost
+    return total_cost
 
 def get_color_for_level(value: int) -> str:
+    """Retorna un color hex para UI según el nivel de atributo/skill."""
+    if value < 20: return "#888888" # Gris (Bajo)
+    if value < 40: return "#ffffff" # Blanco (Normal)
+    if value < 60: return "#56d59f" # Verde (Bueno)
+    if value < 80: return "#5eb5f5" # Azul (Superior)
+    if value < 100: return "#a06be0" # Púrpura (Élite)
+    return "#f6c45b" # Dorado (Legendario)
+
+# --- REGLAS DE CONOCIMIENTO (NUEVO) ---
+
+KNOWLEDGE_THRESHOLDS_TICKS = {
+    KnowledgeLevel.UNKNOWN: 0,
+    KnowledgeLevel.KNOWN: 50,    # ~2 días reales (si 1 tick = 1 hora)
+    KnowledgeLevel.FRIEND: 200   # ~1 semana real
+}
+
+def calculate_passive_knowledge_progress(
+    ticks_in_service: int,
+    current_level: KnowledgeLevel
+) -> Tuple[KnowledgeLevel, float]:
     """
-    Retorna un código de color Hexagonal basado en la escala 5-20.
-    - 5-8:  Rojo (Deficiente/Básico)
-    - 9-12: Naranja/Amarillo (Estándar)
-    - 13-16: Verde (Profesional)
-    - 17-20: Cian (Élite/Maestro)
+    Calcula si el personaje ha subido de nivel de conocimiento por mera convivencia (pasivo).
+    Retorna (Nuevo Nivel, Progreso %)
     """
-    if value <= 8:
-        return "#ff4b4b" # Rojo
-    elif value <= 12:
-        return "#f6c45b" # Ámbar
-    elif value <= 16:
-        return "#56d59f" # Verde
-    else:
-        return "#5bc0de" # Cian/Legendario
+    # Si ya es Amigo, max out
+    if current_level == KnowledgeLevel.FRIEND:
+        return KnowledgeLevel.FRIEND, 100.0
+
+    # Determinar siguiente hito
+    next_level = KnowledgeLevel.KNOWN if current_level == KnowledgeLevel.UNKNOWN else KnowledgeLevel.FRIEND
+    required_ticks = KNOWLEDGE_THRESHOLDS_TICKS[next_level]
+    
+    # Calcular progreso
+    if ticks_in_service >= required_ticks:
+        return next_level, 100.0
+    
+    # Progreso porcentual hacia el siguiente nivel
+    prev_ticks = KNOWLEDGE_THRESHOLDS_TICKS[current_level]
+    progress = ((ticks_in_service - prev_ticks) / (required_ticks - prev_ticks)) * 100
+    return current_level, max(0.0, min(100.0, progress))

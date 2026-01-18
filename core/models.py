@@ -228,6 +228,7 @@ class CommanderData(BaseModel):
     estado: str = "Disponible" # Columna DB legacy/sync
     stats_json: Dict[str, Any] = Field(default_factory=dict)
     faccion_id: Optional[int] = None
+    recruited_at_tick: int = 0 # <--- NUEVO CAMPO
 
     @property
     def sheet(self) -> CharacterSchema:
@@ -280,6 +281,10 @@ class CommanderData(BaseModel):
             attrs.fuerza + attrs.agilidad + attrs.tecnica +
             attrs.intelecto + attrs.voluntad + attrs.presencia
         )
+    
+    def get_ticks_in_service(self, current_tick: int) -> int:
+        """Calcula cuántos ticks lleva en servicio."""
+        return max(0, current_tick - self.recruited_at_tick)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'CommanderData':
