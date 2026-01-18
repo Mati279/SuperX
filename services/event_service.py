@@ -1,13 +1,16 @@
 # services/event_service.py
 """
 Event Service - IA Omnisciente (Director del Universo)
-Genera eventos narrativos globales que dan vida al universo en cada Tick.
+Genera eventos narrativos globales y procesa eventos de personajes.
 """
 
+from typing import List
 from google.genai import types
 from data.database import ai_client
 from data.log_repository import log_event
+from data.character_repository import get_all_player_characters, update_character_stats
 from config.app_constants import TEXT_MODEL_NAME
+from core.character_engine import update_character_access_level, BIO_ACCESS_DEEP
 
 # --- PROMPT DEL DIRECTOR DEL UNIVERSO ---
 
@@ -65,3 +68,44 @@ def generate_tick_event(tick_number: int) -> str:
         error_msg = f"Error generando evento narrativo: {str(e)}"
         log_event(error_msg, is_error=True)
         return "Interferencias en la red de noticias."
+
+def process_character_development_tick(player_id: int) -> List[str]:
+    """
+    Avanza el tiempo interno de los personajes del jugador:
+    - Incrementa ticks de servicio (antigüedad).
+    - Desbloquea niveles de biografía (Conocido/Profundo).
+    
+    Returns:
+        Lista de logs generados por desbloqueos.
+    """
+    chars = get_all_player_characters(player_id)
+    logs_generated = []
+
+    for char in chars:
+        stats = char.get('stats_json', {})
+        bio = stats.get('bio', {})
+        
+        # Incrementar Ticks
+        if "ticks_reclutado" in bio:
+            bio["ticks_reclutado"] += 1
+        else:
+            bio["ticks_reclutado"] = 1
+            
+        # Verificar desbloqueo
+        updated, new_level = update_character_access_level(stats)
+        
+        if updated:
+            # Guardar en BD
+            update_character_stats(char['id'], stats)
+            
+            # Notificar
+            char_name = char.get('nombre', 'Operativo')
+            level_name = "PROFUNDO" if new_level == BIO_ACCESS_DEEP else "CONFIDENCIAL"
+            msg = f"📂 INTELIGENCIA: Nuevos datos biográficos desbloqueados para {char_name}. Nivel de Acceso: {level_name}."
+            log_event(msg, player_id)
+            logs_generated.append(msg)
+        else:
+            # Guardar solo el incremento de ticks
+            update_character_stats(char['id'], stats)
+            
+    return logs_generated

@@ -14,6 +14,7 @@ from core.models import (
     CharacterRole, BiologicalSex
 )
 from data.character_repository import get_character_by_id
+from core.character_engine import get_visible_biography # NUEVA IMPORTACIÓN
 
 
 # =============================================================================
@@ -21,12 +22,9 @@ from data.character_repository import get_character_by_id
 # =============================================================================
 
 COLOR_PALETTE = {
-    # Fondos
     "bg_primary": "#1a1a2e",
     "bg_secondary": "#16213e",
     "bg_card": "rgba(30, 33, 40, 0.8)",
-
-    # Acentos
     "accent_green": "#26de81",
     "accent_red": "#ff6b6b",
     "accent_blue": "#45b7d1",
@@ -34,15 +32,12 @@ COLOR_PALETTE = {
     "accent_purple": "#a55eea",
     "accent_yellow": "#f9ca24",
     "accent_cyan": "#5bc0de",
-
-    # Escala de atributos
     "attr_low": "#ff4b4b",
     "attr_mid": "#f6c45b",
     "attr_high": "#56d59f",
     "attr_elite": "#5bc0de",
 }
 
-# Iconos para los 6 atributos del juego
 ATTRIBUTE_ICONS = {
     "voluntad": "🔥",
     "tecnica": "🔧",
@@ -50,7 +45,6 @@ ATTRIBUTE_ICONS = {
     "intelecto": "🧠",
     "presencia": "✨",
     "fuerza": "💪",
-    # Compatibilidad con nombres alternativos
     "destreza": "🎯",
     "constitucion": "❤️",
     "sabiduria": "👁️",
@@ -58,7 +52,6 @@ ATTRIBUTE_ICONS = {
     "inteligencia": "🧠",
 }
 
-# Categorías de habilidades (de core/constants.py SKILL_MAPPING)
 SKILL_CATEGORIES: Dict[str, List[str]] = {
     "Pilotaje y Vehiculos": [
         "Piloteo de naves pequeñas", "Piloteo de naves medianas",
@@ -95,10 +88,9 @@ SKILL_CATEGORIES: Dict[str, List[str]] = {
     ]
 }
 
-# CSS para toda la ficha
 SHEET_CSS = """
 <style>
-/* Header del personaje */
+/* CSS abreviado para no duplicar todo el bloque largo, mantiene el estilo original */
 .char-header {
     background: linear-gradient(90deg, rgba(69,183,209,0.15) 0%, rgba(38,222,129,0.08) 100%);
     border-bottom: 2px solid #45b7d1;
@@ -106,7 +98,6 @@ SHEET_CSS = """
     border-radius: 12px;
     margin-bottom: 15px;
 }
-
 .char-name {
     font-size: 1.8em;
     font-weight: bold;
@@ -114,13 +105,11 @@ SHEET_CSS = """
     margin: 0;
     text-shadow: 0 2px 4px rgba(0,0,0,0.3);
 }
-
 .char-subtitle {
     color: #888;
     font-size: 0.9em;
     margin-top: 6px;
 }
-
 .char-bio-text {
     font-style: italic;
     color: #a0a0a0;
@@ -131,203 +120,36 @@ SHEET_CSS = """
     border-radius: 0 8px 8px 0;
     font-size: 0.9em;
 }
-
-/* Barras de atributos */
-.attr-row {
-    display: flex;
-    align-items: center;
-    margin: 10px 0;
-    gap: 10px;
-}
-
-.attr-icon {
-    font-size: 1.2em;
-    width: 30px;
-    text-align: center;
-}
-
-.attr-name {
-    width: 90px;
-    color: #ccc;
-    font-size: 0.82em;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.attr-bar-container {
-    flex: 1;
-    height: 22px;
-    background: rgba(255,255,255,0.08);
-    border-radius: 11px;
-    overflow: hidden;
-    position: relative;
-}
-
-.attr-bar-fill {
-    height: 100%;
-    border-radius: 11px;
-    transition: width 0.3s ease;
-    box-shadow: 0 0 10px rgba(255,255,255,0.1);
-}
-
-.attr-value {
-    width: 35px;
-    text-align: right;
-    font-weight: bold;
-    font-family: 'Consolas', 'Monaco', monospace;
-    font-size: 1.1em;
-}
-
-/* Badges de habilidades */
-.skill-badge {
-    display: inline-block;
-    padding: 5px 12px;
-    margin: 4px;
-    border-radius: 16px;
-    font-size: 0.8em;
-    background: rgba(255,255,255,0.08);
-    border: 1px solid rgba(255,255,255,0.15);
-}
-
-.skill-badge-elite {
-    background: rgba(91,192,222,0.15);
-    border-color: #5bc0de;
-}
-
-.skill-badge-high {
-    background: rgba(86,213,159,0.15);
-    border-color: #56d59f;
-}
-
-/* Tags de estado */
-.status-tag {
-    display: inline-block;
-    padding: 5px 14px;
-    border-radius: 20px;
-    font-size: 0.75em;
-    font-weight: bold;
-    text-transform: uppercase;
-    margin: 3px;
-    letter-spacing: 0.5px;
-}
-
+.attr-row { display: flex; align-items: center; margin: 10px 0; gap: 10px; }
+.attr-icon { font-size: 1.2em; width: 30px; text-align: center; }
+.attr-name { width: 90px; color: #ccc; font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.5px; }
+.attr-bar-container { flex: 1; height: 22px; background: rgba(255,255,255,0.08); border-radius: 11px; overflow: hidden; position: relative; }
+.attr-bar-fill { height: 100%; border-radius: 11px; transition: width 0.3s ease; box-shadow: 0 0 10px rgba(255,255,255,0.1); }
+.attr-value { width: 35px; text-align: right; font-weight: bold; font-family: 'Consolas', 'Monaco', monospace; font-size: 1.1em; }
+.skill-badge { display: inline-block; padding: 5px 12px; margin: 4px; border-radius: 16px; font-size: 0.8em; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); }
+.skill-badge-elite { background: rgba(91,192,222,0.15); border-color: #5bc0de; }
+.skill-badge-high { background: rgba(86,213,159,0.15); border-color: #56d59f; }
+.status-tag { display: inline-block; padding: 5px 14px; border-radius: 20px; font-size: 0.75em; font-weight: bold; text-transform: uppercase; margin: 3px; letter-spacing: 0.5px; }
 .status-available { background: rgba(38,222,129,0.15); color: #26de81; border: 1px solid #26de81; }
 .status-mission { background: rgba(249,202,36,0.15); color: #f9ca24; border: 1px solid #f9ca24; }
 .status-injured { background: rgba(255,107,107,0.15); color: #ff6b6b; border: 1px solid #ff6b6b; }
 .status-training { background: rgba(165,94,234,0.15); color: #a55eea; border: 1px solid #a55eea; }
 .status-transit { background: rgba(69,183,209,0.15); color: #45b7d1; border: 1px solid #45b7d1; }
-
-/* Grid de info */
-.info-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
-    padding: 10px 0;
-}
-
-.info-item {
-    background: rgba(0,0,0,0.2);
-    padding: 12px;
-    border-radius: 8px;
-}
-
-.info-label {
-    color: #666;
-    font-size: 0.7em;
-    text-transform: uppercase;
-    margin-bottom: 5px;
-    letter-spacing: 1px;
-}
-
-.info-value {
-    color: #fff;
-    font-weight: 500;
-    font-size: 0.95em;
-}
-
-/* Categoria de habilidades */
-.skill-category {
-    background: rgba(69,183,209,0.08);
-    padding: 8px 12px;
-    border-radius: 6px;
-    margin: 12px 0 8px 0;
-    border-left: 3px solid #45b7d1;
-}
-
-.skill-category-title {
-    color: #45b7d1;
-    font-weight: 600;
-    font-size: 0.85em;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}
-
-/* Feat badge */
-.feat-badge {
-    display: inline-block;
-    padding: 6px 14px;
-    margin: 4px;
-    border-radius: 20px;
-    font-size: 0.8em;
-    background: rgba(255,215,0,0.12);
-    color: #ffd700;
-    border: 1px solid rgba(255,215,0,0.4);
-    font-weight: 500;
-}
-
-/* Barra de progreso XP */
-.xp-bar-container {
-    background: rgba(255,255,255,0.08);
-    height: 14px;
-    border-radius: 7px;
-    overflow: hidden;
-    margin: 8px 0;
-}
-
-.xp-bar-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #45b7d1, #26de81);
-    border-radius: 7px;
-    transition: width 0.3s ease;
-}
-
-/* Barra de slots */
-.slots-bar-container {
-    background: rgba(255,255,255,0.08);
-    height: 10px;
-    border-radius: 5px;
-    overflow: hidden;
-    margin: 6px 0;
-}
-
-.slots-bar-fill {
-    height: 100%;
-    border-radius: 5px;
-}
-
-/* Rasgo de personalidad */
-.trait-badge {
-    display: inline-block;
-    padding: 5px 12px;
-    margin: 3px;
-    border-radius: 15px;
-    font-size: 0.8em;
-    background: rgba(165,94,234,0.12);
-    color: #a55eea;
-    border: 1px solid rgba(165,94,234,0.3);
-}
-
-/* Equipo item */
-.equip-item {
-    background: rgba(0,0,0,0.15);
-    padding: 8px 12px;
-    border-radius: 6px;
-    margin: 5px 0;
-    border-left: 2px solid #45b7d1;
-}
+.info-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 10px 0; }
+.info-item { background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px; }
+.info-label { color: #666; font-size: 0.7em; text-transform: uppercase; margin-bottom: 5px; letter-spacing: 1px; }
+.info-value { color: #fff; font-weight: 500; font-size: 0.95em; }
+.skill-category { background: rgba(69,183,209,0.08); padding: 8px 12px; border-radius: 6px; margin: 12px 0 8px 0; border-left: 3px solid #45b7d1; }
+.skill-category-title { color: #45b7d1; font-weight: 600; font-size: 0.85em; text-transform: uppercase; letter-spacing: 1px; }
+.feat-badge { display: inline-block; padding: 6px 14px; margin: 4px; border-radius: 20px; font-size: 0.8em; background: rgba(255,215,0,0.12); color: #ffd700; border: 1px solid rgba(255,215,0,0.4); font-weight: 500; }
+.xp-bar-container { background: rgba(255,255,255,0.08); height: 14px; border-radius: 7px; overflow: hidden; margin: 8px 0; }
+.xp-bar-fill { height: 100%; background: linear-gradient(90deg, #45b7d1, #26de81); border-radius: 7px; transition: width 0.3s ease; }
+.slots-bar-container { background: rgba(255,255,255,0.08); height: 10px; border-radius: 5px; overflow: hidden; margin: 6px 0; }
+.slots-bar-fill { height: 100%; border-radius: 5px; }
+.trait-badge { display: inline-block; padding: 5px 12px; margin: 3px; border-radius: 15px; font-size: 0.8em; background: rgba(165,94,234,0.12); color: #a55eea; border: 1px solid rgba(165,94,234,0.3); }
+.equip-item { background: rgba(0,0,0,0.15); padding: 8px 12px; border-radius: 6px; margin: 5px 0; border-left: 2px solid #45b7d1; }
 </style>
 """
-
 
 # =============================================================================
 # FUNCIONES HELPER
@@ -409,6 +231,10 @@ def _render_header(sheet: CharacterSchema) -> None:
 
     # Obtener valor del sexo (puede ser enum o string)
     sexo_val = bio.sexo.value if hasattr(bio.sexo, 'value') else str(bio.sexo)
+    
+    # IMPORTANTE: Usamos la función de lógica de visibilidad
+    # Convertimos sheet a dict para pasarle a la funcion helper del engine
+    visible_bio = get_visible_biography(sheet.model_dump())
 
     header_html = f"""
     <div class="char-header">
@@ -420,7 +246,7 @@ def _render_header(sheet: CharacterSchema) -> None:
             <span style="color: #a55eea;">{tax.raza}</span> |
             <span style="color: #888;">{bio.edad} años, {sexo_val}</span>
         </div>
-        <div class="char-bio-text">"{bio.biografia_corta}"</div>
+        <div class="char-bio-text">"{visible_bio}"</div>
     </div>
     """
     st.markdown(header_html, unsafe_allow_html=True)
@@ -429,10 +255,7 @@ def _render_header(sheet: CharacterSchema) -> None:
 def _render_bio_section(bio: CharacterBio, tax: CharacterTaxonomy) -> None:
     """Seccion de identificadores y taxonomia."""
     with st.expander("Identificadores de Entidad", expanded=False):
-        # Obtener valor del sexo
         sexo_val = bio.sexo.value if hasattr(bio.sexo, 'value') else str(bio.sexo)
-
-        # Transformaciones
         trans = tax.transformaciones if tax.transformaciones else ["Ninguna"]
         trans_str = ", ".join(trans)
 
@@ -469,14 +292,9 @@ def _render_bio_section(bio: CharacterBio, tax: CharacterTaxonomy) -> None:
 def _render_progression_section(prog: CharacterProgression) -> None:
     """Seccion de progresion con barra de XP."""
     with st.expander("Progresion y Jerarquia", expanded=False):
-        # Calcular porcentaje XP
         xp_current = prog.xp
         xp_next = prog.xp_next if prog.xp_next > 0 else 500
-
-        if prog.nivel >= 20:
-            xp_percent = 100
-        else:
-            xp_percent = min(100, max(0, (xp_current / xp_next) * 100))
+        xp_percent = 100 if prog.nivel >= 20 else min(100, max(0, (xp_current / xp_next) * 100))
 
         st.markdown(f"""
         <div style="text-align: center; margin-bottom: 20px;">
@@ -512,13 +330,11 @@ def _render_progression_section(prog: CharacterProgression) -> None:
 def _render_attributes_section(attrs: CharacterAttributes) -> None:
     """Seccion de atributos con barras visuales."""
     with st.expander("Atributos Primarios", expanded=True):
-        # Obtener atributos como dict
         if hasattr(attrs, 'model_dump'):
             attrs_dict = attrs.model_dump()
         else:
             attrs_dict = {k: v for k, v in vars(attrs).items() if not k.startswith('_')}
 
-        # Generar HTML de barras
         html_bars = ""
         total = 0
         for attr_name, value in attrs_dict.items():
@@ -530,7 +346,6 @@ def _render_attributes_section(attrs: CharacterAttributes) -> None:
 
         st.markdown(html_bars, unsafe_allow_html=True)
 
-        # Total de puntos de merito
         st.markdown(f"""
         <div style="text-align: right; color: #888; font-size: 0.85em; margin-top: 15px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);">
             Puntos de Merito Total: <span style="color: #ffd700; font-weight: bold; font-size: 1.1em;">{total}</span>
@@ -543,14 +358,10 @@ def _render_skills_section(caps: CharacterCapabilities) -> None:
     with st.expander("Habilidades y Rasgos", expanded=False):
         skills = caps.habilidades or {}
         feats = caps.feats or []
-
         has_skills = False
 
-        # Mostrar por categorias
         for category, skill_list in SKILL_CATEGORIES.items():
-            # Filtrar skills que el personaje tiene
             cat_skills = {s: skills.get(s, 0) for s in skill_list if s in skills and skills.get(s, 0) > 0}
-
             if cat_skills:
                 has_skills = True
                 st.markdown(f"""
@@ -558,22 +369,17 @@ def _render_skills_section(caps: CharacterCapabilities) -> None:
                     <span class="skill-category-title">{category}</span>
                 </div>
                 """, unsafe_allow_html=True)
-
-                # Ordenar por valor descendente
                 sorted_skills = sorted(cat_skills.items(), key=lambda x: -x[1])
-
                 badges_html = ""
                 for skill_name, value in sorted_skills:
                     badge_class = _get_skill_badge_class(value)
                     color = _get_color_for_attr(value)
                     badges_html += f'<span class="{badge_class}" style="color: {color};">{skill_name}: {value}</span>'
-
                 st.markdown(badges_html, unsafe_allow_html=True)
 
         if not has_skills:
             st.caption("Sin habilidades calculadas.")
 
-        # Feats/Rasgos
         if feats:
             st.markdown("---")
             st.markdown("**Rasgos Especiales (Feats)**")
@@ -584,7 +390,6 @@ def _render_skills_section(caps: CharacterCapabilities) -> None:
 def _render_behavior_section(behavior: CharacterBehavior) -> None:
     """Seccion de personalidad y relaciones."""
     with st.expander("Comportamiento y Relaciones", expanded=False):
-        # Rasgos de personalidad
         traits = behavior.rasgos_personalidad or []
         if traits:
             st.markdown("**Rasgos de Personalidad**")
@@ -594,8 +399,6 @@ def _render_behavior_section(behavior: CharacterBehavior) -> None:
             st.caption("Sin rasgos de personalidad registrados.")
 
         st.write("")
-
-        # Relaciones
         relations = behavior.relaciones or []
         if relations:
             st.markdown("**Relaciones de Parentesco**")
@@ -617,12 +420,10 @@ def _render_behavior_section(behavior: CharacterBehavior) -> None:
 def _render_logistics_section(logistics: CharacterLogistics) -> None:
     """Seccion de equipo e inventario."""
     with st.expander("Logistica y Equipamiento", expanded=False):
-        # Slots
         slots_used = logistics.slots_ocupados
         slots_max = logistics.slots_maximos if logistics.slots_maximos > 0 else 10
         slots_percent = (slots_used / slots_max * 100) if slots_max > 0 else 0
 
-        # Color segun uso
         if slots_percent < 70:
             slots_color = COLOR_PALETTE["accent_green"]
         elif slots_percent < 90:
@@ -642,7 +443,6 @@ def _render_logistics_section(logistics: CharacterLogistics) -> None:
         </div>
         """, unsafe_allow_html=True)
 
-        # Equipo
         equipo = logistics.equipo or []
         if equipo:
             st.markdown("**Equipo Asignado**")
@@ -665,7 +465,6 @@ def _render_logistics_section(logistics: CharacterLogistics) -> None:
 def _render_state_section(state: CharacterDynamicState) -> None:
     """Seccion de estado dinamico actual."""
     with st.expander("Estado Actual y Ubicacion", expanded=False):
-        # Estados activos
         estados = state.estados_activos or []
         if estados:
             st.markdown("**Estados Activos**")
@@ -675,11 +474,7 @@ def _render_state_section(state: CharacterDynamicState) -> None:
             st.markdown(_render_status_tag_html("Disponible"), unsafe_allow_html=True)
 
         st.write("")
-
-        # Ubicacion
         loc = state.ubicacion
-
-        # Rol asignado (puede ser enum o string)
         rol_val = state.rol_asignado.value if hasattr(state.rol_asignado, 'value') else str(state.rol_asignado)
 
         st.markdown(f"""
@@ -703,7 +498,6 @@ def _render_state_section(state: CharacterDynamicState) -> None:
         </div>
         """, unsafe_allow_html=True)
 
-        # Coordenadas si existen
         if loc.coordenadas:
             coords = loc.coordenadas
             st.markdown(f"""
@@ -724,29 +518,24 @@ def _render_state_section(state: CharacterDynamicState) -> None:
 def show_character_sheet(character_id: int) -> None:
     """
     Modal principal que muestra la ficha completa del personaje.
-
     Args:
         character_id: ID del personaje en la base de datos
     """
-    # Inyectar CSS
     st.markdown(SHEET_CSS, unsafe_allow_html=True)
 
-    # Obtener datos del personaje
     char_data = get_character_by_id(character_id)
 
     if not char_data:
         st.error("No se pudo cargar el expediente del personaje.")
         return
 
-    # Parsear a CharacterSchema usando el wrapper de CommanderData
     try:
         commander = CommanderData.from_dict(char_data)
-        sheet = commander.sheet  # Usa la propiedad que valida y migra datos
+        sheet = commander.sheet 
     except Exception as e:
         st.error(f"Error al procesar datos del personaje: {e}")
         return
 
-    # Renderizar todas las secciones
     _render_header(sheet)
     _render_bio_section(sheet.bio, sheet.taxonomia)
     _render_progression_section(sheet.progresion)

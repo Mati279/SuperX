@@ -1,16 +1,7 @@
 # services/character_generation_service.py
 """
 Servicio de Generación de Personajes con IA.
-Coordina la creación de personajes aleatorios integrando:
-- Generación de atributos (character_engine)
-- Generación de identidad por IA (nombre, apellido, biografía)
-- Reglas de reclutamiento (raza predominante, clase por nivel)
-- Persistencia en base de datos
-
-El flujo es:
-1. Generar estructura base del personaje (character_engine)
-2. IA genera nombre, apellido y biografía basándose en los atributos
-3. Guardar en BD
+Actualizado para generar Biografías Escalonadas (Tiered Biography System).
 """
 
 import random
@@ -39,7 +30,8 @@ from core.character_engine import (
     MAX_ATTRIBUTE_VALUE,
     SKILL_POINTS_PER_LEVEL,
     ATTRIBUTE_POINT_LEVELS,
-    FEAT_LEVELS
+    FEAT_LEVELS,
+    BIO_ACCESS_SUPERFICIAL # Constante nueva
 )
 
 from config.app_constants import TEXT_MODEL_NAME
@@ -54,10 +46,10 @@ AGE_MAX = 70
 PREDOMINANT_RACE_CHANCE = 0.5
 DEFAULT_RANK = "Iniciado"
 
-# Prompt simplificado porque el Schema se encarga del formato
+# Prompt actualizado para 3 niveles de biografía
 IDENTITY_GENERATION_PROMPT = """
-Actúa como un Oficial de Reclutamiento Veterano de una facción galáctica.
-Genera la identidad para un nuevo operativo con estos datos:
+Actúa como un Oficial de Inteligencia de una facción galáctica.
+Genera el dossier completo para un nuevo operativo con estos datos:
 
 DATOS TÉCNICOS:
 - Raza: {race}
@@ -68,11 +60,15 @@ DATOS TÉCNICOS:
 - Personalidad: {traits}
 - Atributos top: {top_attributes}
 
-INSTRUCCIONES:
-1. Genera NOMBRE y APELLIDO adecuados a la raza y cultura (sci-fi).
-2. Escribe una BIOGRAFÍA (50-80 palabras) en español.
-   - Debe incluir trasfondo breve, perfil psicológico y rol táctico.
-   - Tono profesional/militar.
+INSTRUCCIONES DE GENERACIÓN DE PERFIL (3 NIVELES):
+1. NOMBRE y APELLIDO: Coherentes con la raza.
+2. BIO SUPERFICIAL (Público): Una sola frase descriptiva visual o de rol básico (ej: "Mercenario alto con cicatrices visibles.").
+3. BIO CONOCIDA (Estándar): Resumen profesional (40-60 palabras). Formación, carrera visible y reputación.
+4. BIO PROFUNDA (Clasificado): Secretos, traumas, motivaciones ocultas o eventos pasados oscuros que podrían disparar eventos futuros (60-90 palabras).
+
+⚠️ REGLAS CRÍTICAS JSON ⚠️
+- Responde SOLO con JSON válido.
+- NO uses comillas dobles dentro de los textos.
 """
 
 
@@ -95,7 +91,9 @@ class RecruitmentContext:
 class GeneratedIdentity:
     nombre: str
     apellido: str
-    biografia: str
+    bio_superficial: str
+    bio_conocida: str
+    bio_profunda: str
 
 
 # =============================================================================
@@ -184,10 +182,15 @@ def _generate_fallback_identity(race: str, sex: BiologicalSex) -> GeneratedIdent
     race_names = names_by_race.get(race, names_by_race["Humano"])
     sex_names = race_names.get(sex, race_names[BiologicalSex.MALE])
     
+    name = random.choice(sex_names)
+    surname = random.choice(surnames)
+
     return GeneratedIdentity(
-        nombre=random.choice(sex_names),
-        apellido=random.choice(surnames),
-        biografia=f"{race} reclutado recientemente. Identidad provisional por fallo de enlace neuronal."
+        nombre=name,
+        apellido=surname,
+        bio_superficial=f"{race} reclutado. Apariencia estándar.",
+        bio_conocida=f"Historial corrompido. Se sabe que sirvió brevemente antes de perder la memoria en un incidente de salto.",
+        bio_profunda=f"ARCHIVOS CLASIFICADOS INACCESIBLES. Posiblemente un agente durmiente o simplemente un error burocrático."
     )
 
 
@@ -205,12 +208,11 @@ def generate_identity_with_ai_sync(
     attributes: Dict[str, int]
 ) -> GeneratedIdentity:
     """
-    Versión síncrona de generación de identidad con IA usando Schema Estricto y Reintentos.
+    Versión síncrona de generación de identidad con IA usando Schema Estricto para 3 BIOS.
     """
     container = get_service_container()
 
     if not container.is_ai_available():
-        print("⚠️ IA no disponible. Usando fallback.")
         return _generate_fallback_identity(race, sex)
 
     ai_client = container.ai
@@ -225,19 +227,20 @@ def generate_identity_with_ai_sync(
         top_attributes=_get_top_attributes(attributes)
     )
 
-    # 1. Definir Schema Estricto (Structured Output)
+    # 1. Schema Estricto para las 3 biografías
     identity_schema = types.Schema(
         type=types.Type.OBJECT,
         properties={
             "nombre": types.Schema(type=types.Type.STRING),
             "apellido": types.Schema(type=types.Type.STRING),
-            "biografia": types.Schema(type=types.Type.STRING),
+            "bio_superficial": types.Schema(type=types.Type.STRING, description="Máx 15 palabras. Descripción visual."),
+            "bio_conocida": types.Schema(type=types.Type.STRING, description="Perfil profesional estándar."),
+            "bio_profunda": types.Schema(type=types.Type.STRING, description="Secretos, traumas y detalles ocultos."),
         },
-        required=["nombre", "apellido", "biografia"]
+        required=["nombre", "apellido", "bio_superficial", "bio_conocida", "bio_profunda"]
     )
 
-    # 2. Configuración de Generación y Seguridad
-    # Bloquear nada para evitar truncamientos por falsos positivos en biografías de combate
+    # 2. Configuración
     safety_config = [
         types.SafetySetting(
             category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -258,14 +261,14 @@ def generate_identity_with_ai_sync(
     ]
 
     generation_config = types.GenerateContentConfig(
-        temperature=0.8,
-        max_output_tokens=1000,
+        temperature=0.85,
+        max_output_tokens=1200,
         response_mime_type="application/json",
         response_schema=identity_schema,
         safety_settings=safety_config
     )
 
-    # 3. Loop de Reintentos (Robustez)
+    # 3. Loop de Reintentos
     max_retries = 3
     for attempt in range(max_retries):
         try:
@@ -276,40 +279,22 @@ def generate_identity_with_ai_sync(
             )
 
             if response and response.text:
-                # Al usar schema, el text debería ser JSON válido directamente
                 try:
                     data = json.loads(response.text)
                     return GeneratedIdentity(
                         nombre=data.get("nombre", "SinNombre"),
                         apellido=data.get("apellido", ""),
-                        biografia=data.get("biografia", f"{race} {char_class}.")
+                        bio_superficial=data.get("bio_superficial", f"Operativo {race}."),
+                        bio_conocida=data.get("bio_conocida", f"Historial estándar de {char_class}."),
+                        bio_profunda=data.get("bio_profunda", "Sin secretos registrados.")
                     )
-                except json.JSONDecodeError as json_err:
-                    print(f"⚠️ Intento {attempt+1}/{max_retries} falló parseo JSON: {json_err}. Raw: {response.text[:50]}...")
-                    # Si falla, continuamos al siguiente intento
+                except json.JSONDecodeError:
                     continue
-            else:
-                print(f"⚠️ Intento {attempt+1}/{max_retries}: Respuesta vacía o bloqueada.")
-                # Chequear finish_reason si es posible (debug)
-                if response.candidates:
-                    print(f"   Razón de fin: {response.candidates[0].finish_reason}")
-                
-        except Exception as e:
-            print(f"⚠️ Intento {attempt+1}/{max_retries} Excepción: {e}")
-            # Pequeña pausa antes de reintentar por si es problema de red momentáneo
+        except Exception:
             time.sleep(1)
 
-    # Si agotamos los intentos, fallback
-    print("❌ Todos los intentos de IA fallaron. Usando identidad fallback.")
-    log_event(f"Fallo total generación IA tras {max_retries} intentos. Usando fallback.", is_error=True)
+    log_event(f"Fallo generación IA (3 layers). Usando fallback.", is_error=True)
     return _generate_fallback_identity(race, sex)
-
-
-# Async wrapper si fuera necesario
-async def _generate_identity_with_ai(
-    race: str, char_class: str, level: int, sex: BiologicalSex, age: int, traits: List[str], attributes: Dict[str, int]
-) -> GeneratedIdentity:
-    return generate_identity_with_ai_sync(race, char_class, level, sex, age, traits, attributes)
 
 
 # =============================================================================
@@ -349,7 +334,7 @@ def generate_random_character_with_ai(
     feats = random.sample(AVAILABLE_FEATS, min(num_feats, len(AVAILABLE_FEATS)))
     traits = random.sample(PERSONALITY_TRAITS, k=2)
 
-    # Generación de identidad (con reintentos internos)
+    # Generación de identidad (3 Capas)
     identity = generate_identity_with_ai_sync(
         race=race_name,
         char_class=class_name,
@@ -364,10 +349,11 @@ def generate_random_character_with_ai(
     attempts = 0
     while full_name in existing_names and attempts < 5:
         fallback_id = _generate_fallback_identity(race_name, sex)
-        # Si la identidad original vino de IA (tiene biografía rica), intentamos conservarla
-        # si no es "Identidad provisional..."
-        new_bio = identity.biografia if "Identidad provisional" not in identity.biografia else fallback_id.biografia
-        identity = GeneratedIdentity(fallback_id.nombre, fallback_id.apellido, new_bio)
+        # Intentar preservar biografías si son válidas
+        identity = GeneratedIdentity(
+            fallback_id.nombre, fallback_id.apellido, 
+            identity.bio_superficial, identity.bio_conocida, identity.bio_profunda
+        )
         full_name = f"{identity.nombre} {identity.apellido}"
         attempts += 1
 
@@ -382,13 +368,21 @@ def generate_random_character_with_ai(
         except Exception:
             pass
 
+    # Estructura JSON actualizada con las 3 capas
     stats_json = {
         "bio": {
             "nombre": identity.nombre,
             "apellido": identity.apellido,
             "edad": age,
             "sexo": sex.value,
-            "biografia_corta": identity.biografia
+            # Campo legacy para compatibilidad
+            "biografia_corta": identity.bio_conocida,
+            # NUEVOS CAMPOS
+            "bio_superficial": identity.bio_superficial,
+            "bio_conocida": identity.bio_conocida,
+            "bio_profunda": identity.bio_profunda,
+            "nivel_acceso": BIO_ACCESS_SUPERFICIAL,
+            "ticks_reclutado": 0
         },
         "taxonomia": {
             "raza": race_name,
@@ -442,6 +436,7 @@ def recruit_character_with_ai(
     max_level: int = 1,
     existing_names: Optional[List[str]] = None
 ) -> Optional[Dict[str, Any]]:
+    # Wrapper simple
     context = RecruitmentContext(
         player_id=player_id,
         location_planet_id=location_planet_id,
@@ -463,7 +458,6 @@ def recruit_character_with_ai(
         log_event(f"Error en reclutamiento con IA: {e}", player_id, is_error=True)
         return None
 
-
 def generate_character_pool(
     player_id: int,
     pool_size: int = 3,
@@ -472,6 +466,7 @@ def generate_character_pool(
     min_level: int = 1,
     max_level: int = 1
 ) -> List[Dict[str, Any]]:
+    # Wrapper simple
     context = RecruitmentContext(
         player_id=player_id,
         location_planet_id=location_planet_id,

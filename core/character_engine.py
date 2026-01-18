@@ -58,6 +58,17 @@ PERSONALITY_TRAITS = [
 ]
 
 # =============================================================================
+# CONSTANTES DE BIOGRAFÍA Y ACCESO
+# =============================================================================
+
+BIO_ACCESS_SUPERFICIAL = "superficial"
+BIO_ACCESS_KNOWN = "conocido"
+BIO_ACCESS_DEEP = "profundo"
+
+TICK_THRESHOLD_KNOWN = 20
+TICK_THRESHOLD_DEEP = 50
+
+# =============================================================================
 # FUNCIONES DE GENERACIÓN DE PERSONAJES
 # =============================================================================
 
@@ -124,13 +135,22 @@ def generate_random_character(
 
     # 8. Ensamblar Estructura V2 (Mapping a CharacterSchema)
     
+    # Bio local básica (Fallback)
+    bio_text = f"{race_name} {class_name}. {traits[0]} y {traits[1]}."
+
     stats_json = {
         "bio": {
             "nombre": name,
             "apellido": surname,
             "edad": age,
             "sexo": sex.value,
-            "biografia_corta": f"{race_name} {class_name}. {traits[0]} y {traits[1]}."
+            "biografia_corta": bio_text,
+            # Nuevos campos de biografía escalonada (valores por defecto)
+            "bio_superficial": f"Recluta {race_name}. Apariencia estándar.",
+            "bio_conocida": bio_text,
+            "bio_profunda": "Sin datos clasificados disponibles.",
+            "nivel_acceso": BIO_ACCESS_SUPERFICIAL,
+            "ticks_reclutado": 0
         },
         "taxonomia": {
             "raza": race_name,
@@ -281,10 +301,8 @@ def apply_level_up(character_data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict
     new_feats = new_caps.get("feats", []).copy()
 
     # 1. Clase a Nivel 3 (Lógica especial)
-    # Si sube a nivel 3, debería elegir clase. Aquí simulamos o dejamos pendiente.
     if new_level == 3 and new_prog.get("clase") == "Novato":
         changes["bonificaciones"].append("¡ELECCIÓN DE CLASE DISPONIBLE!")
-        # Por defecto asignamos una random si no hay input (o se manejaría en UI)
         new_class_name, _ = random.choice(list(CLASSES.items()))
         new_prog["clase"] = new_class_name 
         changes["bonificaciones"].append(f"Clase asignada: {new_class_name}")
@@ -337,3 +355,63 @@ def calculate_recruitment_cost(character: Dict[str, Any]) -> int:
     base_cost = level * 200
     attr_sum = sum(attrs.values()) if attrs else 30
     return int((base_cost + attr_sum * 5) * random.uniform(0.9, 1.1))
+
+# =============================================================================
+# FUNCIONES DE GESTIÓN DE BIOGRAFÍAS (NUEVO)
+# =============================================================================
+
+def get_visible_biography(stats_json: Dict[str, Any]) -> str:
+    """
+    Retorna la biografía apropiada según el nivel de acceso desbloqueado.
+    Prioridad: Profunda > Conocida > Superficial.
+    Maneja retrocompatibilidad con personajes viejos.
+    """
+    bio_data = stats_json.get("bio", {})
+    access_level = bio_data.get("nivel_acceso", BIO_ACCESS_KNOWN) # Legacy -> conocido
+    
+    # Textos disponibles (con fallbacks)
+    default_bio = bio_data.get("biografia_corta", "Datos no disponibles.")
+    
+    bio_sup = bio_data.get("bio_superficial", default_bio)
+    bio_known = bio_data.get("bio_conocida", default_bio)
+    bio_deep = bio_data.get("bio_profunda", bio_known)
+    
+    if access_level == BIO_ACCESS_DEEP:
+        return bio_deep
+    elif access_level == BIO_ACCESS_KNOWN:
+        return bio_known
+    else: # Superficial
+        return bio_sup
+
+def update_character_access_level(stats_json: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    Calcula si debe subir el nivel de acceso basado en ticks reclutado.
+    Retorna (True, NuevoNivel) si hubo cambio.
+    """
+    bio_data = stats_json.get("bio", {})
+    
+    # Inicializar contador si no existe
+    if "ticks_reclutado" not in bio_data:
+        bio_data["ticks_reclutado"] = 0
+        
+    ticks = bio_data["ticks_reclutado"]
+    current_level = bio_data.get("nivel_acceso", BIO_ACCESS_SUPERFICIAL)
+    
+    # Si es personaje legacy (sin nivel_acceso), lo asumimos conocido y no cambiamos nada
+    if "nivel_acceso" not in bio_data:
+        bio_data["nivel_acceso"] = BIO_ACCESS_KNOWN
+        return False, ""
+
+    # Lógica de escalado
+    new_level = current_level
+    
+    if ticks >= TICK_THRESHOLD_DEEP:
+        new_level = BIO_ACCESS_DEEP
+    elif ticks >= TICK_THRESHOLD_KNOWN and current_level == BIO_ACCESS_SUPERFICIAL:
+        new_level = BIO_ACCESS_KNOWN
+        
+    if new_level != current_level:
+        bio_data["nivel_acceso"] = new_level
+        return True, new_level
+        
+    return False, ""
