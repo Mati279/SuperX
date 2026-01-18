@@ -29,24 +29,37 @@ def get_color_for_level(value: int) -> str:
     if value < 100: return "#a06be0"
     return "#f6c45b"
 
-# --- REGLAS DE CONOCIMIENTO (MODIFICADO) ---
+# --- REGLAS DE CONOCIMIENTO ---
 
-# Umbral fijo solo para nivel AMIGO (o lo que definas a futuro)
-KNOWLEDGE_THRESHOLDS_FIXED = {
-    KnowledgeLevel.FRIEND: 100   # ~1 semana real (ejemplo)
-}
+# Umbral base para nivel FRIEND (ajustado por Presencia)
+KNOWLEDGE_THRESHOLD_FRIEND_BASE = 50  # 50 ticks base siendo KNOWN
+
 
 def calculate_ticks_required_for_known(presence_value: int) -> int:
     """
-    Calcula los ticks necesarios para alcanzar el nivel KNOWN.
+    Calcula los ticks necesarios para alcanzar el nivel KNOWN desde UNKNOWN.
     Regla: 20 ticks + (10 - Presencia)
-    - Si Presencia > 10, reduce el tiempo.
-    - Si Presencia < 10, aumenta el tiempo.
+    - Si Presencia > 10, reduce el tiempo (personajes carismáticos se abren antes).
+    - Si Presencia < 10, aumenta el tiempo (personajes reservados tardan más).
     """
     base_ticks = 20
     modifier = 10 - presence_value
-    # Aseguramos un mínimo de 1 tick para evitar lógica negativa o instantánea absurda
     return max(1, base_ticks + modifier)
+
+
+def calculate_ticks_required_for_friend(presence_value: int) -> int:
+    """
+    Calcula los ticks TOTALES necesarios para alcanzar FRIEND desde reclutamiento.
+    Incluye los ticks de UNKNOWN->KNOWN más los ticks de KNOWN->FRIEND.
+
+    Regla: (ticks para KNOWN) + 50 + (10 - Presencia)
+    """
+    ticks_for_known = calculate_ticks_required_for_known(presence_value)
+    friend_base = KNOWLEDGE_THRESHOLD_FRIEND_BASE
+    modifier = 10 - presence_value
+    ticks_for_friend_phase = max(1, friend_base + modifier)
+    return ticks_for_known + ticks_for_friend_phase
+
 
 def calculate_passive_knowledge_progress(
     ticks_in_service: int,
@@ -56,38 +69,41 @@ def calculate_passive_knowledge_progress(
     """
     Calcula el progreso de conocimiento pasivo.
     Requiere los atributos del personaje para aplicar la fórmula de Presencia.
+
+    Returns:
+        Tuple de (nuevo_nivel, porcentaje_progreso)
     """
-    # Si ya es Amigo, max out
+    # Si ya es Amigo, ya completó todo
     if current_level == KnowledgeLevel.FRIEND:
         return KnowledgeLevel.FRIEND, 100.0
 
-    # 1. Determinar meta y ticks requeridos
-    if current_level == KnowledgeLevel.UNKNOWN:
-        # Fórmula Dinámica para llegar a KNOWN
-        presence = character_attributes.get("presencia", 5) # Default 5 (media baja) si no hay dato
-        required_ticks = calculate_ticks_required_for_known(presence)
-        target_level = KnowledgeLevel.KNOWN
-        prev_ticks_milestone = 0
-    else:
-        # Fórmula Fija para llegar a FRIEND (de momento)
-        required_ticks = KNOWLEDGE_THRESHOLDS_FIXED[KnowledgeLevel.FRIEND]
-        target_level = KnowledgeLevel.FRIEND
-        # Para calcular % de KNOWN a FRIEND, necesitamos saber cuándo empezó KNOWN
-        # Como es complejo rastrear el tick exacto del cambio anterior sin más columnas,
-        # simplificamos usando el requisito de KNOWN como piso.
-        presence = character_attributes.get("presencia", 5)
-        prev_ticks_milestone = calculate_ticks_required_for_known(presence)
+    presence = character_attributes.get("presencia", 10)
 
-    # 2. Verificar cumplimiento
-    if ticks_in_service >= required_ticks:
-        return target_level, 100.0
-    
-    # 3. Calcular Porcentaje de Progreso
-    # Evitar división por cero
-    denom = required_ticks - prev_ticks_milestone
-    if denom <= 0: denom = 1
-    
-    current_progress_ticks = ticks_in_service - prev_ticks_milestone
-    progress = (current_progress_ticks / denom) * 100
-    
-    return current_level, max(0.0, min(100.0, progress))
+    if current_level == KnowledgeLevel.UNKNOWN:
+        # Progreso hacia KNOWN
+        required_ticks = calculate_ticks_required_for_known(presence)
+
+        if ticks_in_service >= required_ticks:
+            return KnowledgeLevel.KNOWN, 100.0
+
+        # Calcular porcentaje de progreso
+        progress = (ticks_in_service / required_ticks) * 100 if required_ticks > 0 else 0
+        return KnowledgeLevel.UNKNOWN, max(0.0, min(100.0, progress))
+
+    else:
+        # current_level == KNOWN, progreso hacia FRIEND
+        ticks_for_known = calculate_ticks_required_for_known(presence)
+        total_required = calculate_ticks_required_for_friend(presence)
+
+        if ticks_in_service >= total_required:
+            return KnowledgeLevel.FRIEND, 100.0
+
+        # Calcular porcentaje de progreso en la fase KNOWN->FRIEND
+        ticks_in_friend_phase = ticks_in_service - ticks_for_known
+        friend_phase_duration = total_required - ticks_for_known
+
+        if friend_phase_duration <= 0:
+            friend_phase_duration = 1
+
+        progress = (ticks_in_friend_phase / friend_phase_duration) * 100 if ticks_in_friend_phase > 0 else 0
+        return KnowledgeLevel.KNOWN, max(0.0, min(100.0, progress))

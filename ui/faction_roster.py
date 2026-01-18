@@ -7,7 +7,8 @@ from data.character_repository import (
 )
 from core.models import CharacterRole, KnowledgeLevel
 from core.constants import SKILL_MAPPING
-from core.mrg_engine import resolve_action, DIFFICULTY_NORMAL
+from core.mrg_engine import resolve_action, ResultType
+from core.mrg_constants import DIFFICULTY_NORMAL
 from ui.character_sheet import render_character_sheet
 from data.player_repository import get_player_by_id
 
@@ -67,8 +68,8 @@ def render_faction_roster(player_id: int):
                     if st.button(f"🕵️ Investigar", key=f"investigate_{char_id}", help="Realiza una tirada de Inteligencia para desbloquear la ficha completa."):
                         # Tirada MRG sin efectos críticos (House Rule para Roster)
                         result = resolve_action(merit_points=player_intellect, difficulty=DIFFICULTY_NORMAL)
-                        
-                        if result.is_success:
+
+                        if result.success:
                             # Éxito (Crítico o Normal) -> Pasa a Conocido
                             success = set_character_knowledge_level(char_id, player_id, KnowledgeLevel.KNOWN)
                             if success:
@@ -76,7 +77,8 @@ def render_faction_roster(player_id: int):
                                 st.rerun()
                         else:
                             # Fallo (Crítico o Normal) -> Solo falla, no se va.
-                            msg = "Fallo Crítico: La investigación atrajo atención no deseada, pero no se obtuvo información." if result.is_critical_failure else "Fallo: No se encontró información relevante."
+                            is_critical = result.result_type == ResultType.CRITICAL_FAILURE
+                            msg = "Fallo Crítico: La investigación atrajo atención no deseada, pero no se obtuvo información." if is_critical else "Fallo: No se encontró información relevante."
                             st.error(msg)
             else:
                 # Si ya es Conocido o Amigo, mostramos el indicador discreto

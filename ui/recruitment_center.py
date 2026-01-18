@@ -282,10 +282,20 @@ def _render_candidate_card(
         border_color = "#45b7d1"  # Azul para investigacion en curso
 
     with st.container(border=True):
-        # Header
+        # Header badges
         investigating_badge = ""
+        knowledge_badge = ""
+
         if is_being_investigated:
             investigating_badge = '<span style="background: #45b7d1; color: #fff; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; margin-left: 8px;">INVESTIGANDO</span>'
+
+        # Badge de nivel de conocimiento
+        if already_investigated or nivel_acceso == BIO_ACCESS_KNOWN:
+            knowledge_badge = '<span style="background: rgba(69,183,209,0.2); color: #45b7d1; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; margin-left: 8px; border: 1px solid #45b7d1;">CONOCIDO</span>'
+        elif nivel_acceso == BIO_ACCESS_DEEP:
+            knowledge_badge = '<span style="background: rgba(38,222,129,0.2); color: #26de81; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; margin-left: 8px; border: 1px solid #26de81;">AMIGO</span>'
+        else:
+            knowledge_badge = '<span style="background: rgba(255,107,107,0.15); color: #ff6b6b; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; margin-left: 8px; border: 1px solid #ff6b6b;">DESCONOCIDO</span>'
 
         st.markdown(f"""
             <div style="
@@ -296,7 +306,7 @@ def _render_candidate_card(
                 margin-bottom: 12px;
             ">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-size: 1.1em; font-weight: bold; color: #fff;">{candidate['nombre']}{investigating_badge}</span>
+                    <span style="font-size: 1.1em; font-weight: bold; color: #fff;">{candidate['nombre']}{knowledge_badge}{investigating_badge}</span>
                     <span style="font-size: 1.3em; font-weight: bold; color: #45b7d1;">Nv. {candidate['nivel']}</span>
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 0.85em; margin-top: 4px;">

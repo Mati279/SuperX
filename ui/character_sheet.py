@@ -5,16 +5,20 @@ Muestra todos los datos del CharacterSchema V2 de forma interactiva.
 """
 
 import streamlit as st
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 from core.models import (
     CommanderData, CharacterSchema, CharacterBio, CharacterTaxonomy,
     CharacterProgression, CharacterAttributes, CharacterCapabilities,
     CharacterBehavior, CharacterLogistics, CharacterDynamicState,
-    CharacterRole, BiologicalSex
+    CharacterRole, BiologicalSex, KnowledgeLevel
 )
-from data.character_repository import get_character_by_id
-from core.character_engine import get_visible_biography
+from data.character_repository import get_character_by_id, get_character_knowledge_level
+from core.character_engine import (
+    get_visible_biography,
+    get_visible_feats,
+    get_visible_skills
+)
 
 # CONSTANTES DE COLOR
 COLOR_PALETTE = {
@@ -125,19 +129,33 @@ def _get_skill_badge_class(value: int) -> str:
     elif value >= 13: return "skill-badge skill-badge-high"
     return "skill-badge"
 
-def _render_header(sheet: CharacterSchema) -> None:
+
+def _render_knowledge_badge(knowledge_level: KnowledgeLevel) -> str:
+    """Genera el HTML para el badge de nivel de conocimiento."""
+    if knowledge_level == KnowledgeLevel.FRIEND:
+        return '<span style="background: rgba(38,222,129,0.2); color: #26de81; padding: 4px 12px; border-radius: 12px; font-size: 0.75em; font-weight: bold; border: 1px solid #26de81; margin-left: 10px;">AMIGO</span>'
+    elif knowledge_level == KnowledgeLevel.KNOWN:
+        return '<span style="background: rgba(69,183,209,0.2); color: #45b7d1; padding: 4px 12px; border-radius: 12px; font-size: 0.75em; font-weight: bold; border: 1px solid #45b7d1; margin-left: 10px;">CONOCIDO</span>'
+    else:
+        return '<span style="background: rgba(255,107,107,0.2); color: #ff6b6b; padding: 4px 12px; border-radius: 12px; font-size: 0.75em; font-weight: bold; border: 1px solid #ff6b6b; margin-left: 10px;">DESCONOCIDO</span>'
+
+
+def _render_header(sheet: CharacterSchema, knowledge_level: KnowledgeLevel = KnowledgeLevel.FRIEND) -> None:
     bio = sheet.bio
     prog = sheet.progresion
     tax = sheet.taxonomia
     full_name = f"{bio.nombre} {bio.apellido}".strip()
     sexo_val = bio.sexo.value if hasattr(bio.sexo, 'value') else str(bio.sexo)
-    
-    # USAR LA LÓGICA DE VISIBILIDAD
-    visible_bio = get_visible_biography(sheet.model_dump())
+
+    # USAR LA LÓGICA DE VISIBILIDAD según nivel de conocimiento
+    visible_bio = get_visible_biography(sheet.model_dump(), knowledge_level)
+
+    # Badge de nivel de conocimiento
+    knowledge_badge = _render_knowledge_badge(knowledge_level)
 
     header_html = f"""
     <div class="char-header">
-        <h2 class="char-name">{full_name}</h2>
+        <h2 class="char-name">{full_name} {knowledge_badge}</h2>
         <div class="char-subtitle">
             <span style="color: #ffd700;">{prog.rango}</span> |
             <span style="color: #45b7d1;">Nivel {prog.nivel}</span>
@@ -179,10 +197,16 @@ def _render_attributes_section(attrs: CharacterAttributes) -> None:
         st.markdown(html_bars, unsafe_allow_html=True)
         st.markdown(f"""<div style="text-align: right; color: #888; font-size: 0.85em; margin-top: 15px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);">Puntos de Merito Total: <span style="color: #ffd700; font-weight: bold; font-size: 1.1em;">{total}</span></div>""", unsafe_allow_html=True)
 
-def _render_skills_section(caps: CharacterCapabilities) -> None:
+def _render_skills_section(caps: CharacterCapabilities, knowledge_level: KnowledgeLevel = KnowledgeLevel.FRIEND) -> None:
     with st.expander("Habilidades y Rasgos", expanded=False):
-        skills = caps.habilidades or {}
-        feats = caps.feats or []
+        # Filtrar habilidades según nivel de conocimiento
+        all_skills = caps.habilidades or {}
+        skills = get_visible_skills(all_skills, knowledge_level)
+
+        # Mostrar nota si es UNKNOWN
+        if knowledge_level == KnowledgeLevel.UNKNOWN:
+            st.caption("*Solo se muestran las 5 mejores habilidades conocidas.*")
+
         has_skills = False
         for category, skill_list in SKILL_CATEGORIES.items():
             cat_skills = {s: skills.get(s, 0) for s in skill_list if s in skills and skills.get(s, 0) > 0}
@@ -196,22 +220,43 @@ def _render_skills_section(caps: CharacterCapabilities) -> None:
                     color = _get_color_for_attr(value)
                     badges_html += f'<span class="{badge_class}" style="color: {color};">{skill_name}: {value}</span>'
                 st.markdown(badges_html, unsafe_allow_html=True)
-        if not has_skills: st.caption("Sin habilidades calculadas.")
-        if feats:
+        if not has_skills:
+            st.caption("Sin habilidades calculadas.")
+
+        # Filtrar feats según nivel de conocimiento
+        all_feats = caps.feats or []
+        visible_feats = get_visible_feats(all_feats, knowledge_level)
+
+        if visible_feats:
             st.markdown("---")
             st.markdown("**Rasgos Especiales (Feats)**")
-            feats_html = "".join([f'<span class="feat-badge">{feat}</span>' for feat in feats])
+            feats_html = ""
+            for feat in visible_feats:
+                # Puede ser dict o string (legacy)
+                feat_name = feat.get("nombre", feat) if isinstance(feat, dict) else feat
+                feats_html += f'<span class="feat-badge">{feat_name}</span>'
             st.markdown(feats_html, unsafe_allow_html=True)
+        elif knowledge_level == KnowledgeLevel.UNKNOWN:
+            st.caption("*Rasgos especiales desconocidos.*")
 
-def _render_behavior_section(behavior: CharacterBehavior) -> None:
+def _render_behavior_section(behavior: CharacterBehavior, knowledge_level: KnowledgeLevel = KnowledgeLevel.FRIEND) -> None:
     with st.expander("Comportamiento y Relaciones", expanded=False):
+        # Si es UNKNOWN, no mostrar información de comportamiento
+        if knowledge_level == KnowledgeLevel.UNKNOWN:
+            st.warning("Necesitas conocer mejor a este personaje para acceder a esta información.")
+            st.caption("*Investiga o pasa más tiempo con este personaje para desbloquear sus rasgos de personalidad y relaciones.*")
+            return
+
         traits = behavior.rasgos_personalidad or []
         if traits:
             st.markdown("**Rasgos de Personalidad**")
             traits_html = "".join([f'<span class="trait-badge">{t}</span>' for t in traits])
             st.markdown(traits_html, unsafe_allow_html=True)
-        else: st.caption("Sin rasgos de personalidad registrados.")
+        else:
+            st.caption("Sin rasgos de personalidad registrados.")
+
         st.write("")
+
         relations = behavior.relaciones or []
         if relations:
             st.markdown("**Relaciones de Parentesco**")
@@ -221,7 +266,8 @@ def _render_behavior_section(behavior: CharacterBehavior) -> None:
                 nivel = rel.get("nivel", "")
                 nivel_str = f" - {nivel}" if nivel else ""
                 st.markdown(f"""<div class="equip-item"><span style="color: #fff;">{nombre}</span><span style="color: #888; font-size: 0.85em;"> ({tipo}{nivel_str})</span></div>""", unsafe_allow_html=True)
-        else: st.caption("Sin relaciones registradas.")
+        else:
+            st.caption("Sin relaciones registradas.")
 
 def _render_logistics_section(logistics: CharacterLogistics) -> None:
     with st.expander("Logistica y Equipamiento", expanded=False):
@@ -260,23 +306,79 @@ def _render_state_section(state: CharacterDynamicState) -> None:
             st.markdown(f"""<div style="margin-top: 10px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 6px;"><span style="color: #666; font-size: 0.75em;">COORDENADAS: </span><span style="color: #45b7d1; font-family: monospace;">X:{coords.get('x', 0):.2f} Y:{coords.get('y', 0):.2f} Z:{coords.get('z', 0):.2f}</span></div>""", unsafe_allow_html=True)
 
 @st.dialog("Expediente de Personal", width="large")
-def show_character_sheet(character_id: int) -> None:
+def show_character_sheet(character_id: int, observer_player_id: Optional[int] = None) -> None:
+    """
+    Muestra la ficha completa de un personaje como diálogo modal.
+
+    Args:
+        character_id: ID del personaje a mostrar
+        observer_player_id: ID del jugador que observa (para filtrar según conocimiento).
+                           Si es None, se muestra toda la información.
+    """
     st.markdown(SHEET_CSS, unsafe_allow_html=True)
     char_data = get_character_by_id(character_id)
     if not char_data:
         st.error("No se pudo cargar el expediente del personaje.")
         return
+
     try:
         commander = CommanderData.from_dict(char_data)
-        sheet = commander.sheet 
+        sheet = commander.sheet
     except Exception as e:
         st.error(f"Error al procesar datos del personaje: {e}")
         return
-    _render_header(sheet)
+
+    # Determinar nivel de conocimiento
+    if observer_player_id is not None:
+        # Si el observador es el dueño, siempre es FRIEND
+        if char_data.get("player_id") == observer_player_id:
+            knowledge_level = KnowledgeLevel.FRIEND
+        else:
+            knowledge_level = get_character_knowledge_level(character_id, observer_player_id)
+    else:
+        # Sin observador especificado, mostrar todo (FRIEND)
+        knowledge_level = KnowledgeLevel.FRIEND
+
+    _render_header(sheet, knowledge_level)
     _render_bio_section(sheet.bio, sheet.taxonomia)
     _render_progression_section(sheet.progresion)
     _render_attributes_section(sheet.capacidades.atributos)
-    _render_skills_section(sheet.capacidades)
-    _render_behavior_section(sheet.comportamiento)
+    _render_skills_section(sheet.capacidades, knowledge_level)
+    _render_behavior_section(sheet.comportamiento, knowledge_level)
     _render_logistics_section(sheet.logistica)
+    _render_state_section(sheet.estado)
+
+
+def render_character_sheet(char_data: Dict[str, Any], observer_player_id: int) -> None:
+    """
+    Renderiza la ficha de un personaje inline (sin diálogo modal).
+    Usado desde faction_roster.py.
+
+    Args:
+        char_data: Diccionario con los datos del personaje (de la DB)
+        observer_player_id: ID del jugador que observa
+    """
+    st.markdown(SHEET_CSS, unsafe_allow_html=True)
+
+    try:
+        commander = CommanderData.from_dict(char_data)
+        sheet = commander.sheet
+    except Exception as e:
+        st.error(f"Error al procesar datos del personaje: {e}")
+        return
+
+    character_id: int = char_data.get("id", 0)
+
+    # Determinar nivel de conocimiento
+    if char_data.get("player_id") == observer_player_id:
+        knowledge_level = KnowledgeLevel.FRIEND
+    elif character_id > 0:
+        knowledge_level = get_character_knowledge_level(character_id, observer_player_id)
+    else:
+        knowledge_level = KnowledgeLevel.UNKNOWN
+
+    # Renderizar secciones (sin header ya que está en el expander del roster)
+    _render_attributes_section(sheet.capacidades.atributos)
+    _render_skills_section(sheet.capacidades, knowledge_level)
+    _render_behavior_section(sheet.comportamiento, knowledge_level)
     _render_state_section(sheet.estado)

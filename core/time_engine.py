@@ -110,7 +110,10 @@ def _execute_game_logic_tick(execution_time: datetime):
 
     # 7. Fase de Limpieza y Auditoría
     _phase_cleanup_and_audit()
-    
+
+    # 8. Fase de Progresión de Conocimiento de Personal
+    _phase_knowledge_progression(current_tick)
+
     duration = (datetime.now() - tick_start).total_seconds()
     log_event(f"✅ Ciclo solar completado en {duration:.2f}s. Sistemas nominales.")
 
@@ -467,6 +470,35 @@ def _phase_cleanup_and_audit():
 
     except Exception as e:
         log_event(f"Error in cleanup phase: {e}", is_error=True)
+
+def _phase_knowledge_progression(current_tick: int):
+    """
+    Fase 8: Progresión de Conocimiento Pasivo.
+    Verifica si los personajes avanzan de nivel de conocimiento por tiempo.
+    La IAA comunica los cambios en la terminal del jugador.
+    """
+    log_event("running phase 8: Progresión de Conocimiento...")
+
+    try:
+        from core.character_engine import process_passive_knowledge_updates
+
+        players = get_all_players()
+
+        for player in players:
+            player_id = player['id']
+            # Procesar actualizaciones de conocimiento para este jugador
+            updates = process_passive_knowledge_updates(player_id, current_tick)
+
+            # Los mensajes ya fueron logueados dentro de process_passive_knowledge_updates
+            # pero podemos agregar un resumen si hubo cambios
+            if updates:
+                log_event(f"📊 {len(updates)} actualización(es) de conocimiento procesada(s).", player_id)
+
+    except ImportError as e:
+        log_event(f"Error importing character_engine: {e}", is_error=True)
+    except Exception as e:
+        log_event(f"Error in knowledge progression phase: {e}", is_error=True)
+
 
 def get_world_status_display() -> dict:
     """Genera la información para el widget del reloj en la UI."""

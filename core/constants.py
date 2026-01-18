@@ -81,3 +81,75 @@ MIN_ATTRIBUTE_VALUE: int = 5
 MAX_ATTRIBUTE_VALUE: int = 20
 ATTRIBUTE_SOFT_CAP: int = 15     # A partir de aquí cuesta el doble
 ATTRIBUTE_COST_MULTIPLIER: int = 2
+
+# --- Constantes de Progresión de Personajes ---
+
+# Tabla de XP requerido para cada nivel (acumulativo)
+XP_TABLE: Dict[int, int] = {
+    1: 0,
+    2: 500,
+    3: 1500,
+    4: 3000,
+    5: 5500,
+    6: 9000,
+    7: 13500,
+    8: 19000,
+    9: 25500,
+    10: 33000,
+    11: 42000,
+    12: 52500,
+    13: 64500,
+    14: 78000,
+    15: 93000,
+    16: 110000,
+    17: 129000,
+    18: 150000,
+    19: 173000,
+    20: 200000
+}
+
+# Puntos de habilidad ganados por nivel
+SKILL_POINTS_PER_LEVEL: int = 5
+
+# Niveles en los que se gana un punto de atributo extra
+ATTRIBUTE_POINT_LEVELS: Tuple[int, ...] = (3, 6, 9, 12, 15, 18)
+
+# Niveles en los que se gana un feat
+FEAT_LEVELS: Tuple[int, ...] = (1, 4, 8, 12, 16, 20)
+
+# Atributos base para generación de personajes
+BASE_ATTRIBUTE_MIN: int = 5
+BASE_ATTRIBUTE_MAX: int = 12
+
+# Pool de Feats disponibles con visibilidad
+# Los feats físicos obvios son "visible: True"
+AVAILABLE_FEATS: Tuple[Dict[str, Any], ...] = (
+    # Feats físicos visibles
+    {"nombre": "Tuerto", "visible": True, "desc": "Perdió un ojo en combate."},
+    {"nombre": "Cicatrizado", "visible": True, "desc": "Rostro marcado por heridas."},
+    {"nombre": "Imponente", "visible": True, "desc": "Físico intimidante."},
+    {"nombre": "Brazo Cibernético", "visible": True, "desc": "Prótesis mecánica visible."},
+    {"nombre": "Albino", "visible": True, "desc": "Piel y cabello sin pigmento."},
+    # Feats no visibles (requieren conocer al personaje)
+    {"nombre": "Liderazgo Táctico", "visible": False, "desc": "Talento natural para comandar."},
+    {"nombre": "Reflejos Mejorados", "visible": False, "desc": "Reacciona más rápido que lo normal."},
+    {"nombre": "Conexiones Políticas", "visible": False, "desc": "Tiene contactos en el gobierno."},
+    {"nombre": "Mente Analítica", "visible": False, "desc": "Procesa información rápidamente."},
+    {"nombre": "Memoria Eidética", "visible": False, "desc": "Recuerda todo lo que ve."},
+    {"nombre": "Resistencia al Dolor", "visible": False, "desc": "Soporta heridas sin debilitarse."},
+    {"nombre": "Instinto de Supervivencia", "visible": False, "desc": "Sabe cuándo retirarse."},
+    {"nombre": "Mecánico Nato", "visible": False, "desc": "Repara cualquier cosa."},
+    {"nombre": "Piloto Prodigio", "visible": False, "desc": "Vuela como si naciera en una nave."},
+    {"nombre": "Negociador", "visible": False, "desc": "Siempre consigue un buen trato."},
+    {"nombre": "Infiltrador", "visible": False, "desc": "Se mueve sin ser detectado."},
+    {"nombre": "Tirador Experto", "visible": False, "desc": "Precisión letal con armas."},
+)
+
+# Pool de rasgos de personalidad
+PERSONALITY_TRAITS: Tuple[str, ...] = (
+    "Leal", "Ambicioso", "Cauteloso", "Temerario", "Calculador",
+    "Compasivo", "Despiadado", "Honorable", "Pragmático", "Idealista",
+    "Solitario", "Carismático", "Reservado", "Impulsivo", "Metódico",
+    "Optimista", "Pesimista", "Curioso", "Disciplinado", "Rebelde",
+    "Protector", "Vengativo", "Paciente", "Ansioso", "Estoico"
+)

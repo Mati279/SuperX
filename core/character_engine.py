@@ -1,72 +1,335 @@
 # core/character_engine.py
+"""
+Motor de Personajes - Gestión de conocimiento, progresión y biografías.
+"""
 from typing import Dict, Any, Tuple, List, Optional
 import random
-from core.constants import SKILL_POINTS_PER_LEVEL, AVAILABLE_FEATS, XP_TABLE
-# Importamos la nueva función y quitamos la constante vieja
-from core.rules import calculate_passive_knowledge_progress
-from core.models import KnowledgeLevel
-from data.character_repository import (
-    get_known_characters_by_player, 
-    set_character_knowledge_level,
-    get_character_knowledge_level,
-    update_character
+
+from core.constants import (
+    SKILL_POINTS_PER_LEVEL,
+    AVAILABLE_FEATS,
+    XP_TABLE,
+    ATTRIBUTE_POINT_LEVELS,
+    FEAT_LEVELS,
+    BASE_ATTRIBUTE_MIN,
+    BASE_ATTRIBUTE_MAX,
+    MAX_ATTRIBUTE_VALUE,
+    PERSONALITY_TRAITS
 )
+from core.rules import calculate_passive_knowledge_progress
+from core.models import KnowledgeLevel, SecretType
 from data.log_repository import log_event
 
-# ... (Mantener resto del archivo: generate_random_character, etc.) ...
+
+# --- Constantes de Nivel de Acceso a Biografía ---
+BIO_ACCESS_UNKNOWN = "desconocido"
+BIO_ACCESS_KNOWN = "conocido"
+BIO_ACCESS_DEEP = "profundo"
+
+
+# --- Funciones de XP y Progresión ---
+
+def get_xp_for_level(level: int) -> int:
+    """Retorna el XP acumulado necesario para un nivel dado."""
+    if level <= 1:
+        return 0
+    return XP_TABLE.get(level, XP_TABLE.get(20, 200000))
+
+
+def get_xp_required_for_next_level(current_level: int) -> int:
+    """Retorna el XP necesario para el siguiente nivel."""
+    next_level = min(current_level + 1, 20)
+    return XP_TABLE.get(next_level, XP_TABLE.get(20, 200000))
+
+
+# --- Funciones de Biografía ---
+
+def get_visible_biography(
+    stats_json: Dict[str, Any],
+    knowledge_level: KnowledgeLevel = None
+) -> str:
+    """
+    Retorna la biografía visible según el nivel de conocimiento.
+
+    Args:
+        stats_json: El diccionario stats_json del personaje (estructura V2)
+        knowledge_level: Nivel de conocimiento del observador.
+                         Si es None, usa el campo nivel_acceso del bio.
+
+    Returns:
+        - UNKNOWN: biografia_corta (o bio_superficial)
+        - KNOWN: bio_conocida
+        - FRIEND: bio_conocida + " " + bio_profunda
+    """
+    bio = stats_json.get("bio", {})
+
+    # Determinar nivel efectivo
+    if knowledge_level is None:
+        # Usar el campo interno si no se especifica
+        nivel_acceso = bio.get("nivel_acceso", BIO_ACCESS_UNKNOWN)
+        if nivel_acceso == BIO_ACCESS_DEEP:
+            knowledge_level = KnowledgeLevel.FRIEND
+        elif nivel_acceso == BIO_ACCESS_KNOWN:
+            knowledge_level = KnowledgeLevel.KNOWN
+        else:
+            knowledge_level = KnowledgeLevel.UNKNOWN
+
+    # Obtener textos disponibles
+    bio_superficial = bio.get("bio_superficial") or bio.get("biografia_corta", "Sin datos biográficos.")
+    bio_conocida = bio.get("bio_conocida", "")
+    bio_profunda = bio.get("bio_profunda", "")
+
+    # Retornar según nivel
+    if knowledge_level == KnowledgeLevel.FRIEND:
+        # Concatenar conocida + profunda
+        if bio_conocida and bio_profunda:
+            return f"{bio_conocida} {bio_profunda}"
+        elif bio_profunda:
+            return bio_profunda
+        elif bio_conocida:
+            return bio_conocida
+        return bio_superficial
+
+    elif knowledge_level == KnowledgeLevel.KNOWN:
+        return bio_conocida if bio_conocida else bio_superficial
+
+    else:  # UNKNOWN
+        return bio_superficial
+
+
+def get_visible_feats(
+    feats: List[Any],
+    knowledge_level: KnowledgeLevel
+) -> List[Dict[str, Any]]:
+    """
+    Filtra los feats según el nivel de conocimiento.
+
+    Args:
+        feats: Lista de feats (pueden ser strings o dicts)
+        knowledge_level: Nivel de conocimiento del observador
+
+    Returns:
+        - UNKNOWN: Solo feats con visible=True
+        - KNOWN/FRIEND: Todos los feats
+    """
+    if knowledge_level in (KnowledgeLevel.KNOWN, KnowledgeLevel.FRIEND):
+        # Retornar todos, normalizados a dict
+        return _normalize_feats(feats)
+
+    # UNKNOWN: Solo visibles
+    normalized = _normalize_feats(feats)
+    return [f for f in normalized if f.get("visible", False)]
+
+
+def _normalize_feats(feats: List[Any]) -> List[Dict[str, Any]]:
+    """Normaliza feats a formato Dict con campo visible."""
+    result = []
+    for feat in feats:
+        if isinstance(feat, str):
+            # Legacy: string simple, asumir no visible
+            result.append({"nombre": feat, "visible": False})
+        elif isinstance(feat, dict):
+            result.append(feat)
+    return result
+
+
+def get_visible_skills(
+    skills: Dict[str, int],
+    knowledge_level: KnowledgeLevel,
+    top_n: int = 5
+) -> Dict[str, int]:
+    """
+    Filtra las habilidades según el nivel de conocimiento.
+
+    Args:
+        skills: Diccionario de habilidades {nombre: valor}
+        knowledge_level: Nivel de conocimiento del observador
+        top_n: Número de top habilidades a mostrar para UNKNOWN
+
+    Returns:
+        - UNKNOWN: Solo las top N habilidades
+        - KNOWN/FRIEND: Todas las habilidades
+    """
+    if knowledge_level in (KnowledgeLevel.KNOWN, KnowledgeLevel.FRIEND):
+        return skills
+
+    # UNKNOWN: Solo top N
+    if not skills:
+        return {}
+
+    sorted_skills = sorted(skills.items(), key=lambda x: -x[1])[:top_n]
+    return dict(sorted_skills)
+
+
+# --- Funciones de Secretos ---
+
+def reveal_secret_on_friend(
+    character_id: int,
+    player_id: int,
+    stats_json: Dict[str, Any]
+) -> Tuple[SecretType, str, Dict[str, Any]]:
+    """
+    Revela un secreto aleatorio al alcanzar nivel FRIEND y aplica el efecto.
+
+    Args:
+        character_id: ID del personaje
+        player_id: ID del jugador observador
+        stats_json: Stats actuales del personaje
+
+    Returns:
+        Tuple de (tipo_secreto, mensaje, stats_actualizados)
+    """
+    from data.character_repository import update_character
+
+    # Seleccionar tipo de secreto aleatorio
+    secret_type = random.choice(list(SecretType))
+
+    # Obtener datos del personaje
+    char_name = stats_json.get("bio", {}).get("nombre", "Personaje")
+    nivel = stats_json.get("progresion", {}).get("nivel", 1)
+
+    msg = ""
+
+    if secret_type == SecretType.PROFESSIONAL:
+        # +XP fijo según nivel (nivel * 100)
+        xp_bonus = nivel * 100
+        current_xp = stats_json.get("progresion", {}).get("xp", 0)
+        stats_json["progresion"]["xp"] = current_xp + xp_bonus
+        msg = f"🎓 SECRETO PROFESIONAL: {char_name} revela técnicas de entrenamiento avanzadas. +{xp_bonus} XP."
+
+    elif secret_type == SecretType.PERSONAL:
+        # +2 Voluntad
+        current_vol = stats_json.get("capacidades", {}).get("atributos", {}).get("voluntad", 10)
+        new_vol = min(20, current_vol + 2)  # Cap en 20
+        if "capacidades" not in stats_json:
+            stats_json["capacidades"] = {}
+        if "atributos" not in stats_json["capacidades"]:
+            stats_json["capacidades"]["atributos"] = {}
+        stats_json["capacidades"]["atributos"]["voluntad"] = new_vol
+        msg = f"💚 SECRETO PERSONAL: {char_name} encuentra un sentido de pertenencia contigo. +2 Voluntad."
+
+    elif secret_type == SecretType.CRITICAL:
+        # Flag de misión personal
+        if "comportamiento" not in stats_json:
+            stats_json["comportamiento"] = {}
+        stats_json["comportamiento"]["mision_personal_disponible"] = True
+        msg = f"⚠️ SECRETO CRÍTICO: {char_name} revela algo importante de su pasado. Se desbloquea una misión personal."
+
+    # Guardar secreto revelado
+    if "secreto_revelado" not in stats_json:
+        stats_json["secreto_revelado"] = {}
+    stats_json["secreto_revelado"] = {
+        "tipo": secret_type.value,
+        "revelado_tick": None  # Se llena desde el caller con el tick actual
+    }
+
+    # Actualizar en DB
+    update_character(character_id, {"stats_json": stats_json})
+
+    return secret_type, msg, stats_json
+
+
+def update_character_access_level(
+    character_id: int,
+    new_level: str
+) -> bool:
+    """
+    Actualiza el nivel de acceso interno del personaje (campo nivel_acceso en bio).
+    Usado por event_service para actualización directa.
+    """
+    from data.character_repository import get_character_by_id, update_character
+
+    char = get_character_by_id(character_id)
+    if not char:
+        return False
+
+    stats = char.get("stats_json", {})
+    if "bio" not in stats:
+        stats["bio"] = {}
+
+    stats["bio"]["nivel_acceso"] = new_level
+
+    result = update_character(character_id, {"stats_json": stats})
+    return result is not None
+
+
+# --- Función Principal de Progresión Pasiva ---
 
 def process_passive_knowledge_updates(player_id: int, current_tick: int) -> List[str]:
     """
     Se ejecuta cada Tick. Revisa todos los personajes de la facción.
     Aplica la fórmula dinámica basada en Presencia.
+    Revela secretos al alcanzar nivel FRIEND.
     """
+    from data.character_repository import (
+        get_all_player_characters,
+        set_character_knowledge_level,
+        get_character_knowledge_level
+    )
+
     updates_log = []
-    
-    from data.character_repository import get_all_player_characters
     characters = get_all_player_characters(player_id)
-    
+
     for char in characters:
+        # Saltar comandantes (siempre son FRIEND implícito)
         if char.get("es_comandante", False):
             continue
-            
+
         char_id = char["id"]
         current_level_enum = get_character_knowledge_level(char_id, player_id)
-        
+
+        # Si ya es FRIEND, no hay más progreso
         if current_level_enum == KnowledgeLevel.FRIEND:
             continue
 
-        # Obtener Ticks
+        # Obtener ticks en servicio
         recruited_tick = char.get("recruited_at_tick", current_tick)
         ticks_in_service = max(0, current_tick - recruited_tick)
-        
-        # Obtener Atributos para la fórmula (Stats V2)
+
+        # Obtener atributos (estructura V2 o legacy)
         stats = char.get("stats_json", {})
         attributes = {}
-        # Búsqueda defensiva de atributos en estructura V2 o legacy
         if "capacidades" in stats and "atributos" in stats["capacidades"]:
             attributes = stats["capacidades"]["atributos"]
         elif "atributos" in stats:
             attributes = stats["atributos"]
-        
-        # Verificar reglas con atributos
+
+        # Calcular nuevo nivel
         new_level_enum, progress_pct = calculate_passive_knowledge_progress(
-            ticks_in_service, 
-            current_level_enum, 
+            ticks_in_service,
+            current_level_enum,
             attributes
         )
-        
-        # Actualización
+
+        # Si hay cambio de nivel
         if new_level_enum != current_level_enum:
             success = set_character_knowledge_level(char_id, player_id, new_level_enum)
             if success:
                 char_name = char.get("nombre", "Unidad")
-                msg = ""
+
                 if new_level_enum == KnowledgeLevel.KNOWN:
                     msg = f"ℹ️ Conocimiento actualizado: Has pasado suficiente tiempo con **{char_name}** para conocer sus capacidades."
+                    updates_log.append(msg)
+                    log_event(msg, player_id)
+
+                    # Actualizar nivel_acceso interno
+                    update_character_access_level(char_id, BIO_ACCESS_KNOWN)
+
                 elif new_level_enum == KnowledgeLevel.FRIEND:
                     msg = f"🤝 Vínculo fortalecido: **{char_name}** ahora confía plenamente en ti."
-                
-                updates_log.append(msg)
-                log_event(msg, player_id)
-    
+                    updates_log.append(msg)
+                    log_event(msg, player_id)
+
+                    # Actualizar nivel_acceso interno
+                    update_character_access_level(char_id, BIO_ACCESS_DEEP)
+
+                    # Revelar secreto
+                    secret_type, secret_msg, _ = reveal_secret_on_friend(
+                        char_id,
+                        player_id,
+                        stats
+                    )
+                    updates_log.append(secret_msg)
+                    log_event(secret_msg, player_id)
+
     return updates_log
