@@ -183,33 +183,260 @@ def _phase_concurrency_resolution():
     - Transacciones: Prioridad por Timestamp.
     - Posicionales: Protocolo de Intercepción (Bloqueo si hay disputa).
     - Ejecución de órdenes diferidas (Lock-in).
+    - Procesamiento de comandos internos (SEARCH_CANDIDATES, INVESTIGATION).
     """
     log_event("running phase 2: Resolución de Simultaneidad...")
-    
+
+    # Obtener tick actual para referencias
+    world_state = get_world_state()
+    current_tick = world_state.get('current_tick', 1)
+
     # Procesar la cola de acciones pendientes (Lock-in del día anterior)
     pending_actions = get_all_pending_actions()
-    
-    if pending_actions:
-        log_event(f"📂 Procesando {len(pending_actions)} acciones encolada(s)...")
-        
-        # Importación local para evitar Circular Import Error
-        from services.gemini_service import resolve_player_action
-        
-        for item in pending_actions:
-            player_id = item['player_id']
-            action_text = item['action_text']
-            action_id = item['id']
-            
-            try:
-                log_event(f"▶ Ejecutando orden diferida ID {action_id}...", player_id)
-                resolve_player_action(action_text, player_id)
+
+    if not pending_actions:
+        return
+
+    log_event(f"Procesando {len(pending_actions)} acciones encolada(s)...")
+
+    # Importación local para evitar Circular Import Error
+    from services.gemini_service import resolve_player_action
+
+    for item in pending_actions:
+        player_id = item['player_id']
+        action_text = item['action_text']
+        action_id = item['id']
+
+        try:
+            # 1. Busqueda de candidatos de reclutamiento
+            if "[INTERNAL_SEARCH_CANDIDATES]" in action_text:
+                _process_candidate_search(player_id, current_tick)
                 mark_action_processed(action_id, "PROCESSED")
-                
+                continue
+
+            # 2. Investigacion de personajes (candidatos o miembros)
+            if "[INTERNAL_EXECUTE_INVESTIGATION]" in action_text:
+                _process_investigation(player_id, action_text)
+                mark_action_processed(action_id, "PROCESSED")
+                continue
+
+            # 3. Resto de acciones -> gemini_service
+            log_event(f"Ejecutando orden diferida ID {action_id}...", player_id)
+            resolve_player_action(action_text, player_id)
+            mark_action_processed(action_id, "PROCESSED")
+
+        except Exception as e:
+            log_event(f"Error procesando orden diferida {action_id}: {e}", player_id, is_error=True)
+            mark_action_processed(action_id, "ERROR")
+
+
+def _process_candidate_search(player_id: int, current_tick: int):
+    """
+    Procesa la búsqueda de nuevos candidatos de reclutamiento.
+    Genera candidatos y los persiste en la base de datos.
+    """
+    from data.recruitment_repository import (
+        add_candidate,
+        get_tracked_candidate,
+        get_recruitment_candidates
+    )
+    from services.character_generation_service import generate_random_character_with_ai, RecruitmentContext
+    from data.character_repository import get_all_characters_by_player_id
+
+    try:
+        # Verificar si hay candidato seguido (genera uno menos)
+        tracked = get_tracked_candidate(player_id)
+        pool_size = 3 if not tracked else 2
+
+        # Obtener nombres existentes para evitar duplicados
+        existing_chars = get_all_characters_by_player_id(player_id)
+        existing_candidates = get_recruitment_candidates(player_id)
+
+        existing_names = []
+        for c in existing_chars:
+            existing_names.append(c.get('nombre', ''))
+        for c in existing_candidates:
+            existing_names.append(c.get('nombre', ''))
+
+        # Contexto de reclutamiento
+        context = RecruitmentContext(player_id=player_id, min_level=1, max_level=3)
+
+        # Generar candidatos
+        generated_count = 0
+        for _ in range(pool_size):
+            try:
+                char_data = generate_random_character_with_ai(context=context, existing_names=existing_names)
+
+                if char_data:
+                    stats = char_data.get("stats_json", {})
+                    nivel = stats.get("progresion", {}).get("nivel", 1)
+
+                    # Calcular costo
+                    atributos = stats.get("capacidades", {}).get("atributos", {})
+                    total_attrs = sum(atributos.values()) if atributos else 0
+                    costo = (nivel * 250) + (total_attrs * 5)
+                    if costo < 100:
+                        costo = 100
+
+                    candidate_data = {
+                        "nombre": char_data.get("nombre", "Desconocido"),
+                        "stats_json": stats,
+                        "costo": int(costo)
+                    }
+
+                    if add_candidate(player_id, candidate_data, current_tick):
+                        existing_names.append(char_data.get("nombre", ""))
+                        generated_count += 1
+
             except Exception as e:
-                log_event(f"❌ Error procesando orden diferida {action_id}: {e}", player_id, is_error=True)
-                mark_action_processed(action_id, "ERROR")
+                log_event(f"Error generando candidato: {e}", player_id, is_error=True)
+
+        log_event(f"RECLUTAMIENTO: {generated_count} nuevos candidatos disponibles en el Centro de Reclutamiento.", player_id)
+
+    except Exception as e:
+        log_event(f"Error en búsqueda de candidatos: {e}", player_id, is_error=True)
+
+
+def _process_investigation(player_id: int, action_text: str):
+    """
+    Procesa una investigación de personaje (candidato o miembro).
+    Usa MRG con Sigilo+Infiltración del comandante vs del objetivo.
+    """
+    import re
+    from data.character_repository import get_commander_by_player_id, get_character_by_id
+    from data.recruitment_repository import get_candidate_by_id
+
+    try:
+        # Parsear parámetros del comando
+        target_type = "CANDIDATE"
+        target_id = None
+        debug_outcome = None
+
+        type_match = re.search(r"target_type=(\w+)", action_text)
+        if type_match:
+            target_type = type_match.group(1)
+
+        id_match = re.search(r"(?:candidate_id|character_id)=(\d+)", action_text)
+        if id_match:
+            target_id = int(id_match.group(1))
+
+        debug_match = re.search(r"debug_outcome=(\w+)", action_text)
+        if debug_match:
+            debug_outcome = debug_match.group(1)
+
+        if not target_id:
+            log_event("INTEL: Error - No se especificó objetivo de investigación.", player_id)
+            return
+
+        # Obtener datos del comandante
+        commander = get_commander_by_player_id(player_id)
+        if not commander:
+            log_event("INTEL: Error - Comandante no encontrado.", player_id)
+            return
+
+        commander_stats = commander.get("stats_json", {})
+        commander_skills = commander_stats.get("capacidades", {}).get("habilidades", {})
+
+        # Habilidades del comandante (Sigilo físico + Infiltración urbana)
+        cmd_sigilo = commander_skills.get("Sigilo físico", 5)
+        cmd_infiltracion = commander_skills.get("Infiltración urbana", 5)
+        cmd_merit = (cmd_sigilo + cmd_infiltracion) // 2
+
+        # Obtener datos del objetivo
+        target_name = "Objetivo"
+        target_merit = 50  # Dificultad base
+
+        if target_type == "CANDIDATE":
+            candidate = get_candidate_by_id(target_id)
+            if not candidate:
+                log_event("INTEL: Error - Candidato no encontrado en roster.", player_id)
+                return
+
+            target_name = candidate.get("nombre", "Candidato")
+            target_stats = candidate.get("stats_json", {})
+            target_skills = target_stats.get("capacidades", {}).get("habilidades", {})
+            tgt_sigilo = target_skills.get("Sigilo físico", 5)
+            tgt_infiltracion = target_skills.get("Infiltración urbana", 5)
+            target_merit = (tgt_sigilo + tgt_infiltracion) // 2 + 40  # Base + habilidades
+
+        else:  # MEMBER
+            character = get_character_by_id(target_id)
+            if not character:
+                log_event("INTEL: Error - Miembro no encontrado.", player_id)
+                return
+
+            target_name = character.get("nombre", "Miembro")
+            target_stats = character.get("stats_json", {})
+            target_skills = target_stats.get("capacidades", {}).get("habilidades", {})
+            tgt_sigilo = target_skills.get("Sigilo físico", 5)
+            tgt_infiltracion = target_skills.get("Infiltración urbana", 5)
+            target_merit = (tgt_sigilo + tgt_infiltracion) // 2 + 40
+
+        # Resolver MRG (o usar debug_outcome)
+        if debug_outcome:
+            # Forzar resultado para debug
+            outcome = debug_outcome
+        else:
+            result = resolve_action(
+                merit_points=cmd_merit,
+                difficulty=target_merit,
+                action_description=f"Investigación sobre {target_name}"
+            )
+
+            # Mapear resultado MRG a outcome
+            if result.result_type == ResultType.CRITICAL_SUCCESS:
+                outcome = "CRIT_SUCCESS"
+            elif result.result_type in [ResultType.TOTAL_SUCCESS, ResultType.PARTIAL_SUCCESS]:
+                outcome = "SUCCESS"
+            elif result.result_type == ResultType.CRITICAL_FAILURE:
+                outcome = "CRIT_FAIL"
+            else:
+                outcome = "FAIL"
+
+        # Aplicar consecuencias según tipo de objetivo
+        if target_type == "CANDIDATE":
+            _apply_candidate_investigation_result(player_id, target_id, target_name, outcome)
+        else:
+            _apply_member_investigation_result(player_id, target_id, target_name, outcome)
+
+    except Exception as e:
+        log_event(f"Error en investigación: {e}", player_id, is_error=True)
+
+
+def _apply_candidate_investigation_result(player_id: int, candidate_id: int, name: str, outcome: str):
+    """Aplica resultado de investigación a un candidato."""
+    from data.recruitment_repository import apply_investigation_result, remove_candidate, set_investigation_state
+
+    if outcome == "CRIT_SUCCESS":
+        apply_investigation_result(candidate_id, outcome)
+        log_event(f"INTEL CRITICO: Información comprometedora descubierta sobre {name}. Descuento de 30% aplicado al reclutamiento.", player_id)
+
+    elif outcome == "SUCCESS":
+        apply_investigation_result(candidate_id, outcome)
+        log_event(f"INTEL: Investigación exitosa. Expediente de {name} actualizado con datos verificados.", player_id)
+
+    elif outcome == "CRIT_FAIL":
+        # Candidato detectó la investigación y huye
+        set_investigation_state(candidate_id, False)  # Quitar estado de investigación
+        remove_candidate(candidate_id)
+        log_event(f"INTEL FALLIDO: {name} detectó la investigación y abandonó la estación. Ya no está disponible.", player_id)
+
+    else:  # FAIL
+        set_investigation_state(candidate_id, False)
+        log_event(f"INTEL: Investigación sobre {name} no arrojó resultados. Puede reintentarse.", player_id)
+
+
+def _apply_member_investigation_result(player_id: int, character_id: int, name: str, outcome: str):
+    """Aplica resultado de investigación a un miembro (sin efectos críticos)."""
+    from data.character_repository import set_character_knowledge_level
+    from core.models import KnowledgeLevel
+
+    # Para miembros, los críticos no tienen efecto especial
+    if outcome in ["CRIT_SUCCESS", "SUCCESS"]:
+        set_character_knowledge_level(character_id, player_id, KnowledgeLevel.KNOWN)
+        log_event(f"INTEL: Investigación exitosa. Datos de {name} actualizados a nivel CONOCIDO.", player_id)
     else:
-        pass
+        log_event(f"INTEL: Investigación sobre {name} no arrojó resultados. Puede reintentarse.", player_id)
 
 def _phase_prestige_calculation():
     """
@@ -427,10 +654,28 @@ def _phase_mission_resolution():
 def _phase_cleanup_and_audit():
     """
     Fase 7: Limpieza y Mantenimiento.
+    - Expiración de candidatos de reclutamiento.
     - Cobro de upkeep (costos de mantenimiento).
     - Archivar logs viejos.
     """
     log_event("running phase 7: Limpieza...")
+
+    # Obtener tick actual
+    world_state = get_world_state()
+    current_tick = world_state.get('current_tick', 1)
+
+    # Expirar candidatos de reclutamiento viejos
+    try:
+        from data.recruitment_repository import expire_old_candidates
+
+        players = get_all_players()
+        for player in players:
+            expire_old_candidates(player['id'], current_tick)
+
+    except ImportError:
+        pass  # Recruitment repository not available
+    except Exception as e:
+        log_event(f"Error expirando candidatos: {e}", is_error=True)
 
     try:
         db = _get_db()

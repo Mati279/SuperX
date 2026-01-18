@@ -42,16 +42,81 @@ def has_pending_investigation(player_id: int) -> bool:
             .eq("player_id", player_id)\
             .eq("status", "PENDING")\
             .execute()
-        
+
         if not response.data:
             return False
-            
+
         for action in response.data:
             if "[INTERNAL_EXECUTE_INVESTIGATION]" in action.get("action_text", ""):
                 return True
         return False
     except Exception:
         return False
+
+
+def has_pending_search(player_id: int) -> bool:
+    """Verifica si el jugador tiene una busqueda de candidatos pendiente."""
+    try:
+        response = _get_db().table("action_queue")\
+            .select("action_text")\
+            .eq("player_id", player_id)\
+            .eq("status", "PENDING")\
+            .execute()
+
+        if not response.data:
+            return False
+
+        for action in response.data:
+            if "[INTERNAL_SEARCH_CANDIDATES]" in action.get("action_text", ""):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def get_investigating_target_info(player_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene informacion sobre la investigacion pendiente.
+    Retorna dict con target_type, target_id, target_name si existe.
+    """
+    try:
+        response = _get_db().table("action_queue")\
+            .select("action_text")\
+            .eq("player_id", player_id)\
+            .eq("status", "PENDING")\
+            .execute()
+
+        if not response.data:
+            return None
+
+        import re
+        for action in response.data:
+            text = action.get("action_text", "")
+            if "[INTERNAL_EXECUTE_INVESTIGATION]" not in text:
+                continue
+
+            result = {}
+
+            # Extraer target_type
+            type_match = re.search(r"target_type=(\w+)", text)
+            if type_match:
+                result["target_type"] = type_match.group(1)
+
+            # Extraer candidate_id o character_id
+            id_match = re.search(r"(?:candidate_id|character_id)=(\d+)", text)
+            if id_match:
+                result["target_id"] = int(id_match.group(1))
+
+            # Extraer nombre (formato antiguo: sobre 'nombre')
+            name_match = re.search(r"sobre '([^']+)'", text)
+            if name_match:
+                result["target_name"] = name_match.group(1)
+
+            return result if result else None
+
+        return None
+    except Exception:
+        return None
 
 def try_trigger_db_tick(target_date_iso: str) -> bool:
     """Llama a la función RPC de Supabase para intentar reclamar el Tick."""
