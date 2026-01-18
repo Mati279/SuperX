@@ -69,6 +69,15 @@ Tu lealtad es absoluta a la facción: {faction_name}.
 - Si el Comandante pregunta por la ubicación de enemigos, bases ocultas o recursos en sistemas no explorados, **DEBES RESPONDER QUE NO TIENES DATOS**.
 - No inventes coordenadas ni hechos sobre otros jugadores.
 
+## PROTOCOLO DE INVESTIGACIÓN DEFERIDA (IMPORTANTE)
+- Si recibes una orden o texto que comience con `[INTERNAL_EXECUTE_INVESTIGATION]`, significa que es una acción programada ejecutándose en el Tick.
+- EN ESTE CASO ESPECÍFICO:
+  1. Llama inmediatamente a la herramienta `investigar` con los parámetros extraídos y `execution_mode='EXECUTE'`.
+  2. Narra el resultado de la investigación basándote en la respuesta de la herramienta.
+- Para cualquier OTRA solicitud de investigación del usuario (tiempo real):
+  1. Llama a `investigar` con `execution_mode='SCHEDULE'` (por defecto).
+  2. Informa al usuario que la tarea ha sido programada para el ciclo nocturno.
+
 ## INSTRUCCIONES OPERATIVAS
 1. **Analizar:** Interpreta la intención del Comandante.
 2. **Verificar Contexto:** ¿Tengo la información en mis sensores (Contexto Táctico)?
@@ -194,6 +203,10 @@ def _is_informational_query(action_text: str) -> bool:
     # Si tiene signo de interrogación, es consulta
     if "?" in action_text:
         return True
+    
+    # Si es un comando interno de investigación, NO es consulta informativa (requiere tool)
+    if "[INTERNAL_EXECUTE_INVESTIGATION]" in action_text:
+        return False
 
     # Verificar palabras clave
     return any(text_lower.startswith(keyword) for keyword in QUERY_KEYWORDS)
@@ -315,8 +328,11 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
         msg = "❄️ SISTEMA: Cronología congelada por administración."
         log_event(msg, player_id)
         return {"narrative": msg, "mrg_result": None, "function_calls_made": []}
+    
+    # Check especial: Si es una acción interna diferida, saltamos el bloqueo de lock-in
+    is_internal_action = "[INTERNAL_EXECUTE_INVESTIGATION]" in action_text
 
-    if is_lock_in_window():
+    if is_lock_in_window() and not is_internal_action:
         queue_player_action(player_id, action_text)
         msg = "⏱️ SISTEMA: Ventana de Salto Temporal activa. Orden encolada para el próximo ciclo."
         log_event(msg, player_id)
@@ -355,7 +371,7 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
             roll: Optional[int] = None
 
         mrg_result = DummyResult()
-        mrg_info_block = ">>> TIPO: SOLICITUD DE INFORMACIÓN. No requiere tirada de habilidad."
+        mrg_info_block = ">>> TIPO: SOLICITUD DE INFORMACIÓN O EJECUCIÓN INTERNA. No requiere tirada de habilidad externa."
     else:
         # Calcular puntos de mérito y resolver acción
         stats = commander.get('stats_json', {})

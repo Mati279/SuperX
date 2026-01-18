@@ -45,7 +45,7 @@ SKILL_MAPPING: Dict[str, Tuple[str, str]] = {
     "Interfaz con sistemas": ("tecnica", "intelecto"),
     # 4. Ciencia e Investigación
     "Investigación científica": ("intelecto", "tecnica"),
-    "Análisis de datos": ("intelecto", "voluntad"),
+    "Recopilación de Información": ("intelecto", "voluntad"), # RENOMBRADO de 'Análisis de datos'
     "Ingeniería inversa": ("intelecto", "tecnica"),
     "Evaluación de amenazas": ("intelecto", "presencia"),
     # 5. Sigilo e Infiltración
