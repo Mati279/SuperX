@@ -3,7 +3,8 @@ from data.character_repository import (
     get_all_player_characters, 
     update_character_stats, 
     get_character_knowledge_level,
-    set_character_knowledge_level
+    set_character_knowledge_level,
+    recruit_random_character_with_ai
 )
 from core.models import CharacterRole, KnowledgeLevel
 from core.constants import SKILL_MAPPING
@@ -34,6 +35,40 @@ def render_faction_roster():
     player_intellect = 60 # Default
     # Si tuviéramos stats del jugador (PlayerData), los usaríamos aquí. 
     # Por ahora usamos un valor fijo competente para la acción de gestión.
+
+    # --- LÓGICA DE BIENVENIDA / STARTER PACK ---
+    # Contamos los personajes que NO son comandantes.
+    # Si la cuenta es 0, mostramos el botón de "Conocer a la tripulación".
+    non_commander_count = sum(1 for c in characters if not c.get("es_comandante", False))
+
+    if non_commander_count == 0:
+        st.info("👋 Parece que tu facción recién se está estableciendo. Reúne a tu equipo inicial.")
+        
+        if st.button("👋 Conocer a la tripulación", type="primary", help="Genera tu equipo inicial con ayuda de la IA"):
+            try:
+                with st.spinner("🛰️ Convocando personal y estableciendo enlaces neuronales..."):
+                    # 1. Un personaje Nivel 5 (Conocido) - El veterano
+                    vet = recruit_random_character_with_ai(player_id, min_level=5, max_level=5)
+                    if vet:
+                        set_character_knowledge_level(vet['id'], player_id, KnowledgeLevel.KNOWN)
+                    
+                    # 2. Dos personajes Nivel 3 (Conocidos) - Los oficiales
+                    for _ in range(2):
+                        off = recruit_random_character_with_ai(player_id, min_level=3, max_level=3)
+                        if off:
+                            set_character_knowledge_level(off['id'], player_id, KnowledgeLevel.KNOWN)
+
+                    # 3. Tres personajes Nivel 1 (Desconocidos) - Los reclutas
+                    for _ in range(3):
+                        # Por defecto nacen UNKNOWN, no hace falta setearlo explícitamente,
+                        # pero el sistema lo maneja.
+                        recruit_random_character_with_ai(player_id, min_level=1, max_level=1)
+                
+                st.success("¡La tripulación se ha reportado en el puente!")
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"Error durante el proceso de reclutamiento inicial: {e}")
 
     if not characters:
         st.info("No hay personal reclutado en tu facción.")
