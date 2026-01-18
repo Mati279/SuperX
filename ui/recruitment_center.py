@@ -501,33 +501,27 @@ def show_recruitment_center():
 
         st.subheader(f"Candidatos Disponibles ({len(candidates)}){tracked_msg}")
 
-        # Determinar layout segun cantidad
-        if len(candidates) <= 3:
-            cols = st.columns(len(candidates))
-            for i, candidate in enumerate(candidates):
-                with cols[i]:
-                    _render_candidate_card(
-                        candidate,
-                        player_credits,
-                        player_id,
-                        investigation_active,
-                        current_tick
-                    )
-        else:
-            # Mas de 3, usar 2 columnas
-            for i in range(0, len(candidates), 2):
-                cols = st.columns(2)
-                for j, col in enumerate(cols):
-                    idx = i + j
-                    if idx < len(candidates):
-                        with col:
-                            _render_candidate_card(
-                                candidates[idx],
-                                player_credits,
-                                player_id,
-                                investigation_active,
-                                current_tick
-                            )
+        # --- GRID SYSTEM 4 COLUMNAS ---
+        # Creamos una fila de 4 columnas inicialmente.
+        # Si hubiera mas de 4 (defensa contra bugs), el loop reinicia la fila.
+        cols = st.columns(4)
+        
+        for i, candidate in enumerate(candidates):
+            # Indice de columna (0, 1, 2, 3)
+            col_idx = i % 4
+            
+            # Si completamos una fila de 4 y empezamos otra, crear nuevas columnas
+            if i > 0 and col_idx == 0:
+                cols = st.columns(4)
+                
+            with cols[col_idx]:
+                _render_candidate_card(
+                    candidate,
+                    player_credits,
+                    player_id,
+                    investigation_active,
+                    current_tick
+                )
 
     st.markdown("---")
     st.caption(f"Los candidatos expiran despues de {CANDIDATE_LIFESPAN_TICKS} ciclos si no son reclutados o seguidos.")
