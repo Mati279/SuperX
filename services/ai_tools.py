@@ -73,7 +73,7 @@ TOOL_DECLARATIONS = [
             ),
              types.FunctionDeclaration(
                 name="investigar",
-                description="Inicia una operación de inteligencia para obtener datos ocultos de un objetivo. IMPORTANTE: Extrae siempre el 'player_id' del contexto.",
+                description="Inicia una operación de inteligencia para obtener datos ocultos de un objetivo. IMPORTANTE: Extrae siempre el 'player_id' del contexto. Puede recibir flag 'force_success' en el prompt.",
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
@@ -93,6 +93,10 @@ TOOL_DECLARATIONS = [
                             type=types.Type.STRING,
                             description="USO INTERNO: 'SCHEDULE' (Default) para programar, 'EXECUTE' para resolver.",
                             enum=["SCHEDULE", "EXECUTE"]
+                        ),
+                        "force_success": types.Schema(
+                            type=types.Type.BOOLEAN,
+                            description="Debug: Si es true, garantiza el éxito de la investigación."
                         )
                     },
                     required=["target_name", "player_id"]
@@ -206,19 +210,23 @@ def check_route_safety(origin_system: str, destination_system: str) -> str:
     }, ensure_ascii=False)
 
 
-def investigar(target_name: str, player_id: int, focus: str = "general", execution_mode: str = "SCHEDULE") -> str:
+def investigar(target_name: str, player_id: int, focus: str = "general", execution_mode: str = "SCHEDULE", force_success: bool = False) -> str:
     """
     Realiza una investigación sobre un objetivo.
     Modo SCHEDULE: Programa la acción para el Tick (wait 1 tick).
     Modo EXECUTE: Ejecuta la lógica MRG y revela información.
+    Flag force_success: Bypass del sistema MRG para debug.
     """
-    print(f"🕵️ DEBUG: llamada a investigar() - Target: {target_name}, Mode: {execution_mode}, PID: {player_id}")
+    print(f"🕵️ DEBUG: llamada a investigar() - Target: {target_name}, Mode: {execution_mode}, PID: {player_id}, Force: {force_success}")
     try:
         # MODO 1: PROGRAMACIÓN (Default)
         # El usuario ordena investigar. La IA programa la acción.
         if execution_mode == "SCHEDULE":
+            # Detectar si hay flag de éxito forzado en el contexto (pasado como argumento o implícito)
+            force_flag = " force_success=True" if force_success else ""
+            
             # Crear el comando interno que disparará el modo EXECUTE en el próximo tick
-            internal_command = f"[INTERNAL_EXECUTE_INVESTIGATION] target='{target_name}' focus='{focus}' player_id={player_id}"
+            internal_command = f"[INTERNAL_EXECUTE_INVESTIGATION] target='{target_name}' focus='{focus}' player_id={player_id}{force_flag}"
             
             queue_ok = queue_player_action(player_id, internal_command)
             
@@ -236,7 +244,6 @@ def investigar(target_name: str, player_id: int, focus: str = "general", executi
         elif execution_mode == "EXECUTE":
             commander = get_commander_by_player_id(player_id)
             if not commander:
-                print(f"❌ DEBUG: Comandante no encontrado para PID {player_id}")
                 return json.dumps({"error": "Comandante no encontrado."})
 
             # Obtener stats y habilidad nueva
@@ -249,28 +256,34 @@ def investigar(target_name: str, player_id: int, focus: str = "general", executi
             skill_bonus = skills.get('Recopilación de Información', 0) # NUEVA HABILIDAD
             total_merit = base_merit + skill_bonus
 
-            print(f"🎲 DEBUG: Tirada MRG. Mérito total: {total_merit}")
+            print(f"🎲 DEBUG: Tirada MRG. Mérito total: {total_merit}. Force: {force_success}")
 
-            # Resolución MRG
-            result = resolve_action(
-                merit_points=total_merit,
-                difficulty=DIFFICULTY_NORMAL, # 50
-                action_description=f"Investigación de {target_name}"
-            )
+            # Resolución MRG (o bypass)
+            if force_success:
+                # Objeto dummy para simular éxito
+                class MockResult:
+                    result_type = ResultType.CRITICAL_SUCCESS
+                    roll = type('obj', (object,), {'total': 100})
+                    margin = 50
+                result = MockResult()
+            else:
+                result = resolve_action(
+                    merit_points=total_merit,
+                    difficulty=DIFFICULTY_NORMAL, # 50
+                    action_description=f"Investigación de {target_name}"
+                )
             
             print(f"🎲 DEBUG: Resultado MRG: {result.result_type} (Roll: {result.roll.total})")
 
             # Generar resultado basado en éxito/fracaso
             if result.result_type in [ResultType.CRITICAL_SUCCESS, ResultType.TOTAL_SUCCESS, ResultType.PARTIAL_SUCCESS]:
                 # Éxito: Revelar lore
-                # NOTA: Si el target_name tiene datos ocultos pasados en el prompt (workaround), la IA los usará para narrar.
                 lore_fragment = f"INFORME DE INTELIGENCIA SOBRE: {target_name}\n"
                 lore_fragment += "------------------------------------------------\n"
-                lore_fragment += "Los agentes han logrado infiltrarse en las bases de datos locales. "
-                lore_fragment += "Se ha confirmado la identidad y antecedentes del sujeto."
+                lore_fragment += "Búsqueda en archivos descentralizados completada. Se han recuperado fragmentos de su historial personal y operativo."
                 
                 if result.result_type == ResultType.CRITICAL_SUCCESS:
-                    lore_fragment += " [CRÍTICO] ¡Se han interceptado comunicaciones privadas que revelan sus verdaderas intenciones!"
+                    lore_fragment += " [CRÍTICO] Datos biométricos y psicológicos profundos desencriptados."
                 
                 return json.dumps({
                     "status": "SUCCESS",
@@ -280,12 +293,12 @@ def investigar(target_name: str, player_id: int, focus: str = "general", executi
                 }, ensure_ascii=False)
             
             else:
-                # Fracaso
+                # Fracaso Narrativo (No técnico)
                 return json.dumps({
                     "status": "FAILURE",
                     "mrg_roll": result.roll.total,
-                    "resultado": f"La investigación sobre {target_name} no arrojó resultados concluyentes. Contramedidas de inteligencia detectadas.",
-                    "analisis": "Fallo operativo. Se recomienda intentarlo nuevamente con mejores sensores o espías."
+                    "resultado": f"La búsqueda de información sobre {target_name} ha concluido sin hallazgos significativos. Los registros parecen haber sido purgados o nunca existieron en las redes accesibles.",
+                    "analisis": "Sin datos. No se encontraron huellas digitales ni registros públicos vinculados al objetivo en este sector."
                 }, ensure_ascii=False)
                 
         else:

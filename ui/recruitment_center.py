@@ -12,7 +12,7 @@ from services.character_generation_service import generate_random_character_with
 from core.recruitment_logic import can_recruit
 from data.player_repository import get_player_credits, update_player_credits
 from data.character_repository import create_character, get_all_characters_by_player_id
-from data.world_repository import queue_player_action # NECESARIO para el botón Investigar
+from data.world_repository import queue_player_action, has_pending_investigation # NUEVA FUNCION
 from config.app_constants import DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS, DEFAULT_RECRUIT_LOCATION
 
 # --- CONSTANTES ---
@@ -42,18 +42,14 @@ def _generate_recruitment_pool(player_id: int, pool_size: int, existing_names: L
         # 2. Extraer datos de forma segura desde stats_json
         stats = char_data.get("stats_json", {})
         
-        # Extracción robusta de datos (FIX KeyError anterior)
         nivel = stats.get("progresion", {}).get("nivel")
-        if nivel is None:
-            nivel = char_data.get("nivel", 1)
+        if nivel is None: nivel = char_data.get("nivel", 1)
 
         raza = stats.get("taxonomia", {}).get("raza")
-        if raza is None:
-            raza = char_data.get("raza", "Desconocido")
+        if raza is None: raza = char_data.get("raza", "Desconocido")
 
         clase = stats.get("progresion", {}).get("clase")
-        if clase is None:
-            clase = char_data.get("clase", "Recluta")
+        if clase is None: clase = char_data.get("clase", "Recluta")
 
         # 3. Calcular Costo
         atributos = stats.get("capacidades", {}).get("atributos", {})
@@ -68,7 +64,8 @@ def _generate_recruitment_pool(player_id: int, pool_size: int, existing_names: L
             "raza": raza,
             "clase": clase,
             "costo": int(costo),
-            "stats_json": stats
+            "stats_json": stats,
+            "investigado": False # Flag local para controlar reintentos en sesión
         }
 
         candidates.append(candidate)
@@ -77,7 +74,7 @@ def _generate_recruitment_pool(player_id: int, pool_size: int, existing_names: L
     return candidates
 
 
-def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits: int, player_id: int):
+def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits: int, player_id: int, investigation_active: bool):
     """Renderiza la tarjeta de un candidato con todos sus detalles."""
 
     stats = candidate.get("stats_json", {})
@@ -91,6 +88,9 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
 
     can_afford = player_credits >= candidate["costo"]
     can_afford_investigation = player_credits >= INVESTIGATION_COST
+    
+    # Check si ya fue investigado (flag en session)
+    already_investigated = candidate.get("investigado", False)
     
     border_color = "#26de81" if can_afford else "#ff6b6b"
 
@@ -121,7 +121,10 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
 
         # --- Bio ---
         bio_text = bio.get('bio_superficial') or bio.get('biografia_corta') or "Sin datos biométricos."
-        st.caption(f"*{bio_text}*")
+        if already_investigated:
+             st.info(f"🕵️ INTELIGENCIA: {bio.get('bio_conocida', 'Datos adicionales revelados.')}")
+        else:
+             st.caption(f"*{bio_text}*")
 
         # --- Atributos ---
         with st.expander("Ver Atributos", expanded=False):
@@ -167,27 +170,30 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
                 </div>
             """, unsafe_allow_html=True)
 
-        # Botón Investigar (Antecedentes)
+        # Botón Investigar
         with col_inv:
-            if can_afford_investigation:
-                if st.button("🕵️ Investigar", key=f"inv_{index}", help=f"Inicia protocolo de inteligencia. Costo: {INVESTIGATION_COST} C. Tarda 1 Tick.", use_container_width=True):
-                     # 1. Cobrar
-                     if update_player_credits(player_id, player_credits - INVESTIGATION_COST):
-                         # 2. Encolar la orden
-                         # FIX: Incluimos ID de autorización en el texto para ayudar a la IA
-                         real_bio = bio.get('bio_profunda') or bio.get('bio_conocida') or "Sin secretos."
-                         cmd = f"Inicia protocolo de investigación de antecedentes (Investigar) sobre el candidato '{candidate['nombre']}'. ID AUTORIZACION: {player_id}. (DATOS OCULTOS REALES DEL OBJETIVO PARA USO INTERNO DE IA: {real_bio})"
-                         
-                         if queue_player_action(player_id, cmd):
-                             st.toast(f"✅ -{INVESTIGATION_COST} C. Solicitud enviada. Inteligencia procesará a {candidate['nombre']} en el próximo ciclo.")
-                             st.rerun()
-                         else:
-                             st.error("Error al encolar orden. Se han reembolsado los créditos.")
-                             update_player_credits(player_id, player_credits) # Reembolso
-                     else:
-                         st.error("Error en transacción financiera.")
-            else:
-                 st.button(f"INV ({INVESTIGATION_COST})", key=f"inv_{index}", disabled=True, help="Créditos insuficientes para investigación", use_container_width=True)
+            # Lógica de deshabilitado
+            disable_inv = False
+            inv_help = f"Costo: {INVESTIGATION_COST} C. Tarda 1 Tick."
+            
+            if not can_afford_investigation:
+                disable_inv = True
+                inv_help = "Créditos insuficientes."
+            elif investigation_active:
+                disable_inv = True
+                inv_help = "Ya hay una investigación en curso. Espere al reporte."
+            elif already_investigated:
+                disable_inv = True
+                inv_help = "Objetivo ya investigado con éxito."
+
+            if st.button("🕵️ Investigar", key=f"inv_{index}", disabled=disable_inv, help=inv_help, use_container_width=True):
+                 _handle_investigation(player_id, candidate, player_credits, force_success=False)
+
+            # --- DEBUG: Botón Investigación Exitosa ---
+            # Solo visible si se activa modo debug global o para todos (aquí lo ponemos siempre para el usuario)
+            if st.checkbox("Debug Mode", key=f"dbg_{index}", value=False):
+                 if st.button("✅ Force Success", key=f"force_{index}", use_container_width=True):
+                      _handle_investigation(player_id, candidate, player_credits, force_success=True)
 
         # Botón Contratar
         with col_recruit:
@@ -196,6 +202,33 @@ def _render_candidate_card(candidate: Dict[str, Any], index: int, player_credits
                     _process_recruitment(player_id, candidate, player_credits)
             else:
                 st.button("SIN FONDOS", key=f"recruit_{index}", disabled=True, use_container_width=True)
+
+
+def _handle_investigation(player_id: int, candidate: Dict[str, Any], current_credits: int, force_success: bool = False):
+    """Maneja la lógica de cobro y encolado de investigación."""
+    if update_player_credits(player_id, current_credits - INVESTIGATION_COST):
+         # Datos reales ocultos
+         stats = candidate.get("stats_json", {})
+         bio = stats.get("bio", {})
+         real_bio = bio.get('bio_profunda') or bio.get('bio_conocida') or "Sin secretos aparentes."
+         
+         # Construir comando
+         force_flag = "[DEBUG_FORCE_SUCCESS]" if force_success else ""
+         cmd = f"Inicia protocolo de investigación de antecedentes (Investigar) sobre el candidato '{candidate['nombre']}'. ID AUTORIZACION: {player_id}. {force_flag} (DATOS OCULTOS REALES: {real_bio})"
+         
+         if queue_player_action(player_id, cmd):
+             if force_success:
+                 st.toast(f"✅ [DEBUG] Éxito garantizado para {candidate['nombre']}.")
+                 candidate["investigado"] = True # Marcamos localmente como investigado
+             else:
+                 st.toast(f"⏳ Solicitud enviada. -{INVESTIGATION_COST} C.")
+             
+             st.rerun()
+         else:
+             st.error("Error al encolar orden. Se han reembolsado los créditos.")
+             update_player_credits(player_id, current_credits)
+    else:
+         st.error("Error en transacción financiera.")
 
 
 def _process_recruitment(player_id: int, candidate: Dict[str, Any], player_credits: int):
@@ -249,6 +282,9 @@ def show_recruitment_center():
 
     player_id = player.id
     player_credits = get_player_credits(player_id)
+    
+    # Check global de investigación activa
+    investigation_active = has_pending_investigation(player_id)
 
     # --- Panel de Créditos ---
     col_credits, col_refresh = st.columns([3, 1])
@@ -283,6 +319,9 @@ def show_recruitment_center():
                 st.rerun()
             else:
                 st.error("Error al actualizar créditos.")
+
+    if investigation_active:
+        st.info("🕒 Hay una investigación de antecedentes en curso. Espere al próximo ciclo para iniciar otra.")
 
     st.markdown("---")
 
@@ -336,7 +375,7 @@ def show_recruitment_center():
     cols = st.columns(len(candidates))
     for i, candidate in enumerate(candidates):
         with cols[i]:
-            _render_candidate_card(candidate, i, player_credits, player_id)
+            _render_candidate_card(candidate, i, player_credits, player_id, investigation_active)
 
     st.markdown("---")
     st.caption("Los candidatos son generados proceduralmente por la IA central.")

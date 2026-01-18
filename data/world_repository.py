@@ -33,12 +33,31 @@ def queue_player_action(player_id: int, action_text: str) -> bool:
         log_event(f"Error encolando acción: {e}", player_id, is_error=True)
         return False
 
+def has_pending_investigation(player_id: int) -> bool:
+    """Verifica si el jugador ya tiene una investigación en curso (PENDING)."""
+    try:
+        # Buscamos acciones pendientes que contengan el comando interno de investigación
+        response = _get_db().table("action_queue")\
+            .select("action_text")\
+            .eq("player_id", player_id)\
+            .eq("status", "PENDING")\
+            .execute()
+        
+        if not response.data:
+            return False
+            
+        for action in response.data:
+            if "[INTERNAL_EXECUTE_INVESTIGATION]" in action.get("action_text", ""):
+                return True
+        return False
+    except Exception:
+        return False
+
 def try_trigger_db_tick(target_date_iso: str) -> bool:
     """Llama a la función RPC de Supabase para intentar reclamar el Tick."""
     try:
-        # FIX: Usar _get_db() en lugar de 'supabase' que no estaba definido
         response = _get_db().rpc("try_process_tick", {"target_date": target_date_iso}).execute()
-        return response.data # True o False
+        return response.data 
     except Exception as e:
         log_event(f"Error RPC try_process_tick: {e}", is_error=True)
         return False
@@ -150,12 +169,7 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
 # --- FUNCIONES PARA OBTENER SISTEMAS Y PLANETAS DE LA BD ---
 
 def get_all_systems_from_db() -> List[Dict[str, Any]]:
-    """
-    Obtiene todos los sistemas estelares de la base de datos.
-
-    Returns:
-        Lista de sistemas con id, name, x, y, star_class
-    """
+    """Obtiene todos los sistemas estelares de la base de datos."""
     try:
         response = _get_db().table("systems").select("*").execute()
         return response.data if response.data else []
@@ -165,15 +179,7 @@ def get_all_systems_from_db() -> List[Dict[str, Any]]:
 
 
 def get_system_by_id(system_id: int) -> Optional[Dict[str, Any]]:
-    """
-    Obtiene un sistema por su ID.
-
-    Args:
-        system_id: ID del sistema
-
-    Returns:
-        Diccionario con datos del sistema o None
-    """
+    """Obtiene un sistema por su ID."""
     try:
         response = _get_db().table("systems").select("*").eq("id", system_id).single().execute()
         return response.data if response.data else None
@@ -182,15 +188,7 @@ def get_system_by_id(system_id: int) -> Optional[Dict[str, Any]]:
 
 
 def get_planets_by_system_id(system_id: int) -> List[Dict[str, Any]]:
-    """
-    Obtiene todos los planetas de un sistema.
-
-    Args:
-        system_id: ID del sistema
-
-    Returns:
-        Lista de planetas del sistema
-    """
+    """Obtiene todos los planetas de un sistema."""
     try:
         response = _get_db().table("planets").select("*").eq("system_id", system_id).order("orbital_ring").execute()
         return response.data if response.data else []
@@ -200,12 +198,7 @@ def get_planets_by_system_id(system_id: int) -> List[Dict[str, Any]]:
 
 
 def get_starlanes_from_db() -> List[Dict[str, Any]]:
-    """
-    Obtiene todas las rutas estelares (conexiones entre sistemas).
-
-    Returns:
-        Lista de starlanes con system_a_id, system_b_id, distance
-    """
+    """Obtiene todas las rutas estelares."""
     try:
         response = _get_db().table("starlanes").select("*").execute()
         return response.data if response.data else []
