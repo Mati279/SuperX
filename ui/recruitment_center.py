@@ -95,9 +95,7 @@ def _render_candidate_card(
     # Extraer datos basicos
     nivel = stats.get("progresion", {}).get("nivel", 1)
     raza = stats.get("taxonomia", {}).get("raza", "Desconocido")
-    sexo = stats.get("taxonomia", {}).get("sexo", "N/D")
     clase = stats.get("progresion", {}).get("clase", "Recluta")
-    edad = bio.get("edad", "??")
 
     # Estados
     can_afford = player_credits >= candidate["costo"]
@@ -124,6 +122,23 @@ def _render_candidate_card(
         border_color = "#ffd700"
 
     with st.container(border=True):
+        # Header con badges
+        badges_html = ""
+
+        # Badge de seguimiento
+        if is_tracked:
+            badges_html += '<span style="background: #ffd700; color: #000; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; margin-left: 8px;">SEGUIDO</span>'
+
+        # Badge de investigacion
+        if is_being_investigated:
+            badges_html += '<span style="background: #45b7d1; color: #fff; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; margin-left: 8px;">INVESTIGANDO</span>'
+
+        # Badge de conocimiento
+        if already_investigated:
+            badges_html += '<span style="background: rgba(69,183,209,0.2); color: #45b7d1; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; margin-left: 8px; border: 1px solid #45b7d1;">CONOCIDO</span>'
+        else:
+            badges_html += '<span style="background: rgba(255,107,107,0.15); color: #ff6b6b; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; margin-left: 8px; border: 1px solid #ff6b6b;">DESCONOCIDO</span>'
+
         st.markdown(f"""
             <div style="
                 background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
@@ -133,11 +148,11 @@ def _render_candidate_card(
                 margin-bottom: 12px;
             ">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-size: 1.1em; font-weight: bold; color: #fff;">{candidate['nombre']}</span>
+                    <span style="font-size: 1.1em; font-weight: bold; color: #fff;">{candidate['nombre']}{badges_html}</span>
                     <span style="font-size: 1.3em; font-weight: bold; color: #45b7d1;">Nv. {nivel}</span>
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 0.85em; margin-top: 4px;">
-                    <div><span style="color: #a55eea;">{raza}</span> | {sexo} | <span style="color: #f9ca24;">{clase}</span> | {edad} años</div>
+                    <div><span style="color: #a55eea;">{raza}</span> | <span style="color: #f9ca24;">{clase}</span></div>
                     <div style="color: {'#ff6b6b' if ticks_left <= 1 else '#888'};">Expira en: {max(0, ticks_left)} Tick{'s' if ticks_left != 1 else ''}</div>
                 </div>
             </div>
@@ -153,25 +168,25 @@ def _render_candidate_card(
             bio_text = bio.get('bio_superficial') or bio.get('biografia_corta') or "Sin datos biometricos."
             st.caption(f"*{bio_text}*")
 
-        # Atributos (Visible siempre)
-        st.markdown("**Atributos:**")
-        if atributos:
-            cols = st.columns(3)
-            for i, (attr, value) in enumerate(atributos.items()):
-                with cols[i % 3]:
-                    color = _get_skill_color(value)
-                    st.markdown(f"<span style='color:{color};'>{attr.upper()}: **{value}**</span>", unsafe_allow_html=True)
+        # Top 5 Habilidades
+        st.markdown("**Habilidades Destacadas:**")
+        _render_top_skills(habilidades, count=5)
 
-        # Habilidades (Toggle)
-        with st.expander("Ver Habilidades", expanded=False):
-            _render_top_skills(habilidades, count=20)
-        
         # Rasgos de personalidad
         if show_traits and rasgos:
             traits_html = " ".join([f'<span style="display: inline-block; padding: 2px 8px; margin: 2px; border-radius: 10px; background: rgba(165,94,234,0.15); color: #a55eea; font-size: 0.75em; border: 1px solid #a55eea40;">{t}</span>' for t in rasgos])
             st.markdown(f"**Personalidad:** {traits_html}", unsafe_allow_html=True)
         elif not show_traits:
             st.caption("*Rasgos de personalidad: Desconocidos*")
+
+        # Stats expandibles
+        with st.expander("Ver Atributos", expanded=False):
+            if atributos:
+                cols = st.columns(3)
+                for i, (attr, value) in enumerate(atributos.items()):
+                    with cols[i % 3]:
+                        color = _get_skill_color(value)
+                        st.markdown(f"<span style='color:{color};'>{attr.upper()}: **{value}**</span>", unsafe_allow_html=True)
 
         # --- Visualizacion del Costo (Movido arriba del footer) ---
         cost_color = "#26de81" if can_afford else "#ff6b6b"
@@ -199,7 +214,7 @@ def _render_candidate_card(
 
         # 1. Boton de Seguimiento
         with col_track:
-            track_icon = "👁"
+            track_icon = "⭐" if is_tracked else "☆"
             track_help = "Quitar seguimiento" if is_tracked else "Marcar para seguimiento (no expirara)"
 
             if st.button(track_icon, key=f"track_{candidate['id']}", help=track_help, use_container_width=True):
@@ -213,13 +228,13 @@ def _render_candidate_card(
         # 2. Boton Investigar
         with col_inv:
             disable_inv = False
-            inv_label = "🕵️‍♂️ Investigar"
+            inv_label = "Investigar"
             inv_help = f"Costo: {INVESTIGATION_COST} C. Tarda 1 Tick."
             button_type = "secondary"
 
             if is_being_investigated:
                 disable_inv = True
-                inv_label = "🕵️‍♂️ Investigando..."
+                inv_label = "Investigando..."
                 inv_help = "Investigacion en curso. Resultado en el proximo Tick."
                 button_type = "primary"
             elif not can_afford_investigation:
@@ -230,7 +245,7 @@ def _render_candidate_card(
                 inv_help = "Otra investigacion en curso. Espere al reporte."
             elif already_investigated:
                 disable_inv = True
-                inv_label = "🕵️‍♂️ Investigado"
+                inv_label = "Investigado"
                 inv_help = "Objetivo ya investigado con exito."
 
             if st.button(
@@ -262,7 +277,7 @@ def _render_candidate_card(
         with col_recruit:
             if can_afford:
                 # El costo ya se muestra arriba, aqui solo el boton limpio
-                if st.button("CONTRATAR", key=f"recruit_{candidate['id']}", type="secondary", use_container_width=True):
+                if st.button("CONTRATAR", key=f"recruit_{candidate['id']}", type="primary", use_container_width=True):
                     _process_recruitment(player_id, candidate, player_credits)
             else:
                 st.button("SIN FONDOS", key=f"recruit_{candidate['id']}", disabled=True, use_container_width=True)
