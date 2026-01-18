@@ -43,13 +43,10 @@ def render_character_sheet(character_data, player_id):
     char_id = character_data['id']
     stats = character_data.get('stats_json', {})
     
-    # Determinar nivel de conocimiento
-    is_owner = character_data.get('player_id') == player_id
-    
-    if is_owner:
-        knowledge_level = KnowledgeLevel.FRIEND
-    else:
-        knowledge_level = get_character_knowledge_level(char_id, player_id)
+    # Determinar nivel de conocimiento REAL
+    # NOTA: Ya no forzamos KnowledgeLevel.FRIEND si es el dueño, 
+    # para respetar la mecánica de "conocer a tu tripulación".
+    knowledge_level = get_character_knowledge_level(char_id, player_id)
 
     # --- ENCABEZADO (Siempre visible) ---
     col_avatar, col_basic = st.columns([1, 3])
@@ -91,7 +88,7 @@ def render_character_sheet(character_data, player_id):
     st.divider()
 
     # --- PESTAÑAS DE DETALLE ---
-    # Solo accesibles si es KNOWN o FRIEND
+    # Solo accesibles si es KNOWN o FRIEND (Ya filtrado arriba por el return temprano)
     
     tab_attrs, tab_skills, tab_bio, tab_debug = st.tabs(["📊 Capacidades", "🛠️ Habilidades", "📝 Biografía", "🕷️ Debug"])
     
@@ -151,10 +148,11 @@ def render_character_sheet(character_data, player_id):
         bio_text = bio.get('biografia_corta') or bio.get('bio_superficial') or "Sin datos."
         st.write(bio_text)
         
-        # Bio Conocida
-        if 'bio_conocida' in bio and bio['bio_conocida']:
-            st.markdown("**Expediente de Servicio:**")
-            st.info(bio['bio_conocida'])
+        # Bio Conocida (Solo si es KNOWN o superior)
+        if knowledge_level in [KnowledgeLevel.KNOWN, KnowledgeLevel.FRIEND]:
+            if 'bio_conocida' in bio and bio['bio_conocida']:
+                st.markdown("**Expediente de Servicio:**")
+                st.info(bio['bio_conocida'])
             
         # Bio Profunda (Solo FRIEND)
         if knowledge_level == KnowledgeLevel.FRIEND:
@@ -164,21 +162,15 @@ def render_character_sheet(character_data, player_id):
             else:
                 st.caption("No hay secretos profundos revelados.")
         else:
-            st.caption("🔒 *Información confidencial encriptada. Requiere mayor nivel de confianza.*")
-            
-        # Personalidad
-        st.markdown("---")
-        st.markdown("**Perfil Psicológico:**")
-        traits = _safe_get_data(stats, ['comportamiento', 'rasgos_personalidad'], ['rasgos', 'personalidad'])
-        
-        if traits:
-            st.write(", ".join([f"`{t}`" for t in traits]))
-        else:
-            st.caption("Análisis de personalidad pendiente.")
+            # Mensaje para KNOWN que no es FRIEND
+            if knowledge_level == KnowledgeLevel.KNOWN:
+                st.caption("🔒 *Información confidencial encriptada. Requiere mayor nivel de confianza (FRIEND).*")
 
     with tab_debug:
-        if is_owner:
-            st.caption("Vista de depuración (Solo visible para el dueño)")
+        # Solo el dueño real puede ver debug, independientemente del nivel de conocimiento simulado
+        if character_data.get('player_id') == player_id:
+            st.caption(f"Nivel de Conocimiento Actual: {knowledge_level.name}")
+            st.caption("Vista de depuración (Dueño)")
             st.json(stats)
         else:
             st.caption("Acceso denegado.")
