@@ -1,11 +1,7 @@
 # ui/main_game_page.py
-import os
 import streamlit as st
 import time
 from .state import logout_user, get_player, get_commander
-
-# Debug mode - only enable with environment variable
-IS_DEBUG_MODE = os.environ.get("SUPERX_DEBUG", "false").lower() == "true"
 from data.log_repository import get_recent_logs, log_event
 from services.gemini_service import resolve_player_action
 
@@ -331,27 +327,26 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             logout_user(cookie_manager)
             st.rerun()
 
-        # --- DEBUG ZONE: Only visible when SUPERX_DEBUG=true ---
-        if IS_DEBUG_MODE:
-            st.write("")
-            st.write("")
-            st.markdown("---")
-            st.caption("DEBUG TOOLS (Development Only)")
+        # --- DEBUG ZONE ---
+        st.write("")
+        st.write("")
+        st.markdown("---")
+        st.caption("🛠️ DEBUG TOOLS")
 
-            if st.button("+5000 Credits (DEBUG)", use_container_width=True):
-                if add_player_credits(player.id, 5000):
-                    st.toast("5000 Credits added")
-                    st.rerun()
-                else:
-                    st.error("Error adding credits.")
+        if st.button("💰 +5000 Créditos", use_container_width=True):
+            if add_player_credits(player.id, 5000):
+                st.toast("✅ 5000 Créditos añadidos")
+                st.rerun()
+            else:
+                st.error("Error al añadir créditos.")
 
-            if st.button("DELETE ACCOUNT (DEBUG)", type="secondary", use_container_width=True, help="Permanently deletes player and data."):
-                if delete_player_account(player.id):
-                    st.success("Account deleted.")
-                    logout_user(cookie_manager)
-                    st.rerun()
-                else:
-                    st.error("Error deleting account.")
+        if st.button("🗑️ ELIMINAR CUENTA", type="secondary", use_container_width=True, help="Elimina permanentemente el jugador y todos sus datos."):
+            if delete_player_account(player.id):
+                st.success("Cuenta eliminada.")
+                logout_user(cookie_manager)
+                st.rerun()
+            else:
+                st.error("Error al eliminar cuenta.")
 
 
 def _render_war_room_page():
