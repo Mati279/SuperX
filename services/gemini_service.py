@@ -416,16 +416,32 @@ Usa este resultado para narrar el éxito o fracaso de la acción.
 
     try:
         # 6. Iniciar Chat con Gemini
+        
+        # FIX: Preparar configuración de herramientas de forma segura
+        # La API espera una lista de objetos Tool, no una lista directa de FunctionDeclaration.
+        # Además, si TOOL_DECLARATIONS está vacío, no debemos enviar tool_config con modo AUTO.
+        
+        gemini_tools = None
+        gemini_tool_config = None
+
+        if TOOL_DECLARATIONS:
+            # Envolvemos las declaraciones en un objeto Tool
+            tool = types.Tool(function_declarations=TOOL_DECLARATIONS)
+            gemini_tools = [tool]
+            
+            # Solo configuramos el modo AUTO si hay herramientas
+            gemini_tool_config = types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(
+                    mode=types.FunctionCallingConfigMode.AUTO
+                )
+            )
+
         chat = ai_client.chats.create(
             model=TEXT_MODEL_NAME,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
-                tools=TOOL_DECLARATIONS,
-                tool_config=types.ToolConfig(
-                    function_calling_config=types.FunctionCallingConfig(
-                        mode=types.FunctionCallingConfigMode.AUTO
-                    )
-                ),
+                tools=gemini_tools,
+                tool_config=gemini_tool_config,
                 temperature=AI_TEMPERATURE,
                 max_output_tokens=AI_MAX_TOKENS,
                 top_p=AI_TOP_P
