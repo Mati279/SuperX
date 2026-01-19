@@ -27,6 +27,7 @@ class CharacterStatus(str, Enum):
     DECEASED = "Fallecido"
     TRAINING = "Entrenando"
     TRANSIT = "En Tránsito"
+    CANDIDATE = "Candidato"  # <--- NUEVO ESTADO PARA RECLUTAMIENTO
 
 class BiologicalSex(str, Enum):
     MALE = "Masculino"

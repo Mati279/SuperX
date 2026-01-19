@@ -1,22 +1,15 @@
 # core/recruitment_logic.py
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 from config.app_constants import (
     DEFAULT_RECRUIT_RANK,
     DEFAULT_RECRUIT_STATUS,
     DEFAULT_RECRUIT_LOCATION
 )
-from core.models import KnowledgeLevel
+from core.models import KnowledgeLevel, CharacterStatus
 
 def can_recruit(player_credits: int, candidate_cost: int) -> Tuple[bool, str]:
     """
     Verifica si un jugador tiene suficientes créditos para reclutar a un candidato.
-
-    Args:
-        player_credits: Los créditos actuales del jugador.
-        candidate_cost: El costo del candidato.
-
-    Returns:
-        Una tupla (bool, str) indicando si es posible y un mensaje.
     """
     if player_credits >= candidate_cost:
         return True, "Créditos suficientes."
@@ -30,49 +23,53 @@ def process_recruitment(
     candidate: Dict[str, Any]
 ) -> Tuple[int, Dict[str, Any]]:
     """
-    Prepara los datos para el reclutamiento.
-    Calcula el nuevo total de créditos y prepara el diccionario del nuevo personaje.
-
+    Prepara la ACTUALIZACIÓN del personaje para convertirlo de Candidato a Activo.
+    
     Args:
-        player_id: ID del jugador que recluta.
-        player_credits: Créditos actuales del jugador.
-        candidate: El diccionario completo del candidato a reclutar.
+        player_id: ID del jugador.
+        player_credits: Créditos actuales.
+        candidate: El diccionario del personaje (recuperado de characters DB).
 
     Returns:
-        Una tupla con (nuevos_creditos_del_jugador, datos_del_nuevo_personaje_para_db).
+        Tuple: (nuevos_creditos, update_data_para_db)
     """
-    # 1. Validar si es posible (aunque la UI ya debería haberlo hecho)
-    can_afford, _ = can_recruit(player_credits, candidate['costo'])
+    # 1. Validar fondos (UI debe pre-validar, pero por seguridad)
+    # Nota: candidate["costo"] viene inyectado por el repositorio en el refactor
+    costo = candidate.get("costo", 100)
+    
+    can_afford, _ = can_recruit(player_credits, costo)
     if not can_afford:
         raise ValueError("Intento de reclutar sin créditos suficientes.")
 
-    # 2. Calcular el nuevo balance de créditos
-    new_credits = player_credits - candidate['costo']
+    # 2. Calcular balance
+    new_credits = player_credits - costo
     
-    # 3. Determinar nivel de conocimiento inicial
-    # Default: UNKNOWN
+    # 3. Determinar conocimiento inicial (basado en si fue investigado)
     initial_knowledge = KnowledgeLevel.UNKNOWN
-
-    # Lógica corregida: Verificar si existe un resultado de investigación.
-    # investigation_outcome suele ser "SUCCESS", "CRIT_SUCCESS", etc.
     outcome = candidate.get("investigation_outcome")
-    
-    if outcome and outcome is not None:
-        # Si hubo cualquier resultado de investigación registrado, el jugador conoce al personaje.
+    if outcome and outcome in ["SUCCESS", "CRIT_SUCCESS"]:
         initial_knowledge = KnowledgeLevel.KNOWN
 
-    # 4. Preparar el registro del nuevo personaje para la base de datos
-    new_character_data = {
-        "player_id": player_id,
-        "nombre": candidate["nombre"],
+    # 4. Preparar payload de ACTUALIZACIÓN (no creación)
+    # Limpiamos la metadata de reclutamiento del JSON para no ensuciar,
+    # o la dejamos como histórico. Preferiblemente limpiar o marcar como reclutado.
+    
+    stats = candidate.get("stats_json", {}).copy()
+    if "recruitment_data" in stats:
+        # Opcional: Podríamos borrar stats["recruitment_data"] 
+        # o dejarlo como log. Vamos a actualizar ticks_reclutado.
+        pass
+    
+    # IMPORTANTE: La actualización del nivel de conocimiento se debe manejar
+    # externamente (repo set_character_knowledge_level) ya que ahora es tabla relacional.
+    # Aquí devolvemos los datos para actualizar la entidad Character.
+
+    update_data = {
         "rango": DEFAULT_RECRUIT_RANK,
-        "es_comandante": False,
-        "stats_json": candidate["stats_json"],
-        "costo": candidate["costo"],
-        "estado": DEFAULT_RECRUIT_STATUS,
+        "estado": DEFAULT_RECRUIT_STATUS, # "Disponible"
         "ubicacion": DEFAULT_RECRUIT_LOCATION,
-        # Campo temporal para transportar esta info al repositorio
+        # Señal para el controller/repo de que debe actualizar el conocimiento también
         "initial_knowledge_level": initial_knowledge 
     }
 
-    return new_credits, new_character_data
+    return new_credits, update_data

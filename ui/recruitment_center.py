@@ -2,11 +2,10 @@
 """
 Centro de Reclutamiento Galactico - Contratacion de nuevos operativos.
 
-Sistema de Reclutamiento v2 (Actualizado):
-- Generacion SINCRONA e inmediata de candidatos.
-- Persistencia automatica en DB.
+Sistema de Reclutamiento v2 (Homologado):
+- Generacion SINCRONA e inmediata de candidatos en tabla maestra (characters).
+- Persistencia unificada.
 - Candidatos expiran en 4 Ticks.
-- Sistema de seguimiento e investigacion.
 """
 
 import streamlit as st
@@ -14,10 +13,10 @@ from typing import Dict, Any
 
 from ui.state import get_player
 from data.player_repository import get_player_credits, update_player_credits
-from data.character_repository import create_character
+from data.character_repository import update_character, set_character_knowledge_level
 from data.recruitment_repository import (
     get_recruitment_candidates,
-    remove_candidate,
+    remove_candidate, # Usado para expiración manual/debug si necesario
     set_candidate_tracked,
     get_tracked_candidate,
     clear_untracked_candidates,
@@ -32,6 +31,7 @@ from data.world_repository import (
 from data.log_repository import log_event
 from config.app_constants import DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS, DEFAULT_RECRUIT_LOCATION
 from core.character_engine import BIO_ACCESS_UNKNOWN, BIO_ACCESS_KNOWN
+from core.recruitment_logic import process_recruitment
 
 # --- NUEVO IMPORT PARA GENERACION INMEDIATA ---
 from services.character_generation_service import generate_character_pool
@@ -116,8 +116,9 @@ def _render_candidate_card(
     # Extraer edad
     edad = bio.get("edad", "??")
 
-    # Estados
-    can_afford = player_credits >= candidate["costo"]
+    # Estados (inyectados por el adaptador del repositorio)
+    costo = candidate.get("costo", 100)
+    can_afford = player_credits >= costo
     can_afford_investigation = player_credits >= INVESTIGATION_COST
     is_tracked = candidate.get("is_tracked", False)
     is_being_investigated = candidate.get("is_being_investigated", False)
@@ -126,7 +127,6 @@ def _render_candidate_card(
 
     # Nivel de acceso (basado en resultado de investigacion)
     already_investigated = investigation_outcome in ["SUCCESS", "CRIT_SUCCESS"]
-    nivel_acceso = BIO_ACCESS_KNOWN if already_investigated else BIO_ACCESS_UNKNOWN
     show_traits = already_investigated
 
     # Info de expiracion
@@ -210,13 +210,19 @@ def _render_candidate_card(
 
         # --- Visualizacion del Costo ---
         cost_color = "#26de81" if can_afford else "#ff6b6b"
-        original_cost = candidate.get("original_cost") if discount_applied else None
+        
+        # Recuperar costo original si hubo descuento
+        original_cost = None
+        if discount_applied:
+             # Recalcular aproximado inverso o guardar en metadata si fuera necesario
+             # Por simplicidad visual, mostramos solo el actual rebajado
+             pass
         
         cost_display_html = ""
-        if discount_applied and original_cost:
-             cost_display_html = f'<span style="text-decoration: line-through; color: #888; font-size: 0.9em;">{original_cost:,}</span> <span style="color: #ffd700; font-weight: bold; font-size: 1.1em;">{candidate["costo"]:,} C</span> (Oferta)'
+        if discount_applied:
+             cost_display_html = f'<span style="color: #ffd700; font-weight: bold; font-size: 1.1em;">{costo:,} C</span> (Oferta)'
         else:
-             cost_display_html = f'<span style="color: {cost_color}; font-weight: bold; font-size: 1.1em;">{candidate["costo"]:,} C</span>'
+             cost_display_html = f'<span style="color: {cost_color}; font-weight: bold; font-size: 1.1em;">{costo:,} C</span>'
 
         st.markdown(f"""
             <div style="text-align: right; margin-top: 10px; margin-bottom: -12px; font-size: 0.9em; color: #aaa;">
@@ -295,7 +301,7 @@ def _render_candidate_card(
         with col_recruit:
             if can_afford:
                 if st.button("CONTRATAR", key=f"recruit_{candidate['id']}", type="primary", use_container_width=True):
-                    _process_recruitment(player_id, candidate, player_credits)
+                    _process_recruitment_ui(player_id, candidate, player_credits)
             else:
                 st.button("SIN FONDOS", key=f"recruit_{candidate['id']}", disabled=True, use_container_width=True)
 
@@ -329,48 +335,36 @@ def _handle_investigation(player_id: int, candidate: Dict[str, Any], current_cre
         set_investigation_state(candidate['id'], False)
 
 
-def _process_recruitment(player_id: int, candidate: Dict[str, Any], player_credits: int):
-    """Procesa el reclutamiento final."""
+def _process_recruitment_ui(player_id: int, candidate: Dict[str, Any], player_credits: int):
+    """
+    Procesa el reclutamiento final (Actualizacion de Estado).
+    """
     try:
-        costo = candidate['costo']
+        # Usamos la logica core para calcular balances y payload
+        new_credits, update_data = process_recruitment(player_id, player_credits, candidate)
+        initial_knowledge = update_data.pop("initial_knowledge_level", None)
 
-        if player_credits < costo:
-            st.error("Creditos insuficientes.")
+        # 1. Cobrar
+        if not update_player_credits(player_id, new_credits):
+            st.error("Error en transaccion financiera.")
             return
 
-        new_credits = player_credits - costo
+        # 2. Actualizar Personaje (De Candidato a Activo)
+        updated_char = update_character(candidate["id"], update_data)
 
-        # Preparar datos del personaje
-        stats = candidate.get("stats_json", {})
+        if updated_char:
+            # 3. Establecer Conocimiento (si corresponde)
+            if initial_knowledge:
+                set_character_knowledge_level(candidate["id"], player_id, initial_knowledge)
 
-        # Si fue investigado exitosamente, actualizar nivel de acceso
-        if candidate.get("investigation_outcome") in ["SUCCESS", "CRIT_SUCCESS"]:
-            bio_data = stats.get("bio", {})
-            if bio_data.get("nivel_acceso") == BIO_ACCESS_UNKNOWN:
-                bio_data["nivel_acceso"] = BIO_ACCESS_KNOWN
-
-        new_character_data = {
-            "player_id": player_id,
-            "nombre": candidate["nombre"],
-            "rango": DEFAULT_RECRUIT_RANK,
-            "es_comandante": False,
-            "stats_json": stats,
-            "estado": DEFAULT_RECRUIT_STATUS,
-            "ubicacion": DEFAULT_RECRUIT_LOCATION
-        }
-
-        update_ok = update_player_credits(player_id, new_credits)
-        char_ok = create_character(player_id, new_character_data)
-
-        if update_ok and char_ok:
-            # Eliminar candidato del roster
-            remove_candidate(candidate['id'])
             st.success(f"¡{candidate['nombre']} se ha unido a tu faccion!")
-            log_event(f"RECLUTAMIENTO: {candidate['nombre']} contratado.", player_id)
+            log_event(f"RECLUTAMIENTO: {candidate['nombre']} contratado (ID: {candidate['id']}).", player_id)
             st.rerun()
         else:
-            st.error("Error critico al procesar el reclutamiento.")
+            st.error("Error critico al actualizar el estado del personal.")
 
+    except ValueError as ve:
+        st.error(str(ve))
     except Exception as e:
         st.error(f"Error inesperado: {e}")
 
@@ -378,7 +372,7 @@ def _process_recruitment(player_id: int, candidate: Dict[str, Any], player_credi
 def _handle_search_new_sync(player_id: int, player_credits: int):
     """
     Maneja la solicitud de buscar nuevos candidatos de forma SINCRONA e INMEDIATA.
-    Genera candidatos con IA y los persiste en DB al instante.
+    Genera candidatos con IA y los persiste en DB (tabla characters) al instante.
     """
 
     if player_credits < SEARCH_COST:
@@ -409,12 +403,10 @@ def _handle_search_new_sync(player_id: int, player_credits: int):
             st.rerun()
         else:
             st.error("La red de reclutamiento no ha encontrado candidatos viables.")
-            # Opcional: Reembolsar si falla totalmente, pero el costo suele ser por el intento.
             
     except Exception as e:
         st.error(f"Error en el sistema de reclutamiento: {e}")
-        # Rollback creditos si hubo excepcion critica antes de generar nada
-        update_player_credits(player_id, player_credits)
+        update_player_credits(player_id, player_credits) # Refund
 
 
 def show_recruitment_center():
@@ -437,12 +429,11 @@ def show_recruitment_center():
 
     # Estados de bloqueo
     investigation_active = has_pending_investigation(player_id)
-    # NOTA: Ya no necesitamos has_pending_search() porque la busqueda es inmediata.
 
     # Obtener info de investigacion en curso (para mostrar nombre del objetivo)
     investigating_target = get_investigating_target_info(player_id)
 
-    # Obtener candidatos de DB
+    # Obtener candidatos de DB (Ahora tabla characters filtrada)
     candidates = get_recruitment_candidates(player_id)
     player_credits = get_player_credits(player_id)
 

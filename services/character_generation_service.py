@@ -20,12 +20,11 @@ from data.log_repository import log_event
 from data.character_repository import create_character
 from data.planet_repository import get_planet_by_id
 # --- IMPORTS PARA PERSISTENCIA ---
-from data.recruitment_repository import add_candidate
 from data.world_repository import get_world_state
 
 from core.constants import RACES, CLASSES
 from core.rules import calculate_skills
-from core.models import BiologicalSex, CharacterRole, KnowledgeLevel
+from core.models import BiologicalSex, CharacterRole, KnowledgeLevel, CharacterStatus
 from core.character_engine import (
     get_xp_for_level,
     AVAILABLE_FEATS,
@@ -508,8 +507,8 @@ def generate_character_pool(
     max_level: int = 1
 ) -> List[Dict[str, Any]]:
     """
-    Genera un grupo de candidatos, calcula sus costos y los persiste en DB.
-    PATRÓN: "Generate & Persist Immediate Loop" (Estilo Cuadrilla).
+    Genera un grupo de candidatos y los persiste en DB como PERSONAJES con estado 'Candidato'.
+    PATRÓN: "Unified Character Persistence".
     """
     context = RecruitmentContext(
         player_id=player_id,
@@ -529,33 +528,46 @@ def generate_character_pool(
     candidates = []
     existing_names: List[str] = []
     
-    log_event(f"SISTEMA: Iniciando generación de {pool_size} candidatos para reclutamiento.", player_id)
+    log_event(f"SISTEMA: Generando {pool_size} candidatos en tabla maestra.", player_id)
 
-    # --- BUCLE DE GENERACIÓN Y PERSISTENCIA INMEDIATA ---
+    # --- BUCLE DE GENERACIÓN Y PERSISTENCIA UNIFICADA ---
     for i in range(pool_size):
         try:
-            # 1. Generar Data en Memoria (Heavy Lifting con IA)
+            # 1. Generar Data en Memoria
             char_data = generate_random_character_with_ai(context, existing_names)
             
-            # 2. Calcular Costo y adjuntar al dict
+            # 2. Calcular Costo
             cost = _calculate_recruitment_cost(char_data["stats_json"])
-            char_data["costo"] = cost
             
-            # 3. PERSISTENCIA INMEDIATA: Guardar en DB (recruitment_candidates)
-            # Esto replica la lógica de 'Cuadrilla': Se guarda ni bien nace.
-            saved_candidate = add_candidate(player_id, char_data, current_tick)
+            # 3. Preparar Metadata de Reclutamiento (dentro del JSON)
+            # Esto elimina la necesidad de la tabla recruitment_candidates
+            char_data["stats_json"]["recruitment_data"] = {
+                "costo": cost,
+                "tick_created": current_tick,
+                "is_tracked": False,
+                "is_being_investigated": False,
+                "investigation_outcome": None,
+                "discount_applied": False
+            }
+            
+            # 4. Establecer estado CANDIDATO
+            char_data["estado"] = CharacterStatus.CANDIDATE.value
+            # Forzar conocimiento UNKNOWN explícitamente para evitar confusión
+            char_data["initial_knowledge_level"] = KnowledgeLevel.UNKNOWN
+            
+            # 5. PERSISTENCIA EN TABLA MAESTRA (characters)
+            saved_candidate = create_character(player_id, char_data)
             
             if saved_candidate:
+                # Inyectamos el costo en el nivel superior para compatibilidad UI inmediata
+                saved_candidate["costo"] = cost 
                 candidates.append(saved_candidate)
                 existing_names.append(saved_candidate["nombre"])
-                # Log opcional detallado por candidato
-                # log_event(f"Candidato generado: {saved_candidate['nombre']}", player_id)
             else:
-                log_event(f"Error: Falló la persistencia del candidato {i+1}", player_id, is_error=True)
+                log_event(f"Error: Falló persistencia de candidato {i+1} en tabla maestra.", player_id, is_error=True)
                 
         except Exception as e:
             log_event(f"Error crítico generando candidato {i+1}: {e}", player_id, is_error=True)
-            # Continuamos con el siguiente loop para no romper todo el proceso
             continue
             
     return candidates
