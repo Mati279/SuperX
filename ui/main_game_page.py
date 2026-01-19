@@ -4,6 +4,8 @@ import time
 from .state import logout_user, get_player, get_commander
 from data.log_repository import get_recent_logs, log_event
 from services.gemini_service import resolve_player_action
+# Importación del servicio de generación para herramientas de Debug
+from services.character_generation_service import generate_character_pool
 
 # --- Imports para STRT (Sistema de Tiempo) ---
 from core.time_engine import get_world_status_display, check_and_trigger_tick, debug_force_tick
@@ -339,6 +341,20 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
                 st.rerun()
             else:
                 st.error("Error al añadir créditos.")
+
+        if st.button("🧪 Generar Candidato Elite (Lvl 10)", use_container_width=True, help="Genera un candidato de nivel 10 para pruebas de reclutamiento."):
+            try:
+                generate_character_pool(
+                    player_id=player.id,
+                    pool_size=1,
+                    min_level=10,
+                    max_level=10
+                )
+                st.toast("✅ Candidato de Nivel 10 generado en el Centro de Reclutamiento.")
+                time.sleep(1) # Breve pausa para que se vea el toast antes del rerun
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error generando candidato de elite: {e}")
 
         if st.button("🗑️ ELIMINAR CUENTA", type="secondary", use_container_width=True, help="Elimina permanentemente el jugador y todos sus datos."):
             if delete_player_account(player.id):
