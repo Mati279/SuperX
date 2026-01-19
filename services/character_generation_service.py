@@ -2,7 +2,7 @@
 """
 Servicio de Generación de Personajes con IA.
 Actualizado para generar Biografías Escalonadas (Tiered Biography System).
-Ahora maneja la persistencia automática de candidatos en el pool de reclutamiento.
+Ahora persiste automáticamente los candidatos en el sistema de reclutamiento.
 """
 
 import random
