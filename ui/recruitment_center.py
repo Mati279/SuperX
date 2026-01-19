@@ -2,12 +2,11 @@
 """
 Centro de Reclutamiento Galactico - Contratacion de nuevos operativos.
 
-Sistema de Reclutamiento v2:
-- Roster vacio por defecto (requiere busqueda activa)
-- Busqueda de candidatos tarda 1 Tick (diferida)
-- Candidatos expiran en 4 Ticks
-- Sistema de seguimiento (1 candidato por jugador)
-- Investigacion con MRG competitivo
+Sistema de Reclutamiento v2 (Actualizado):
+- Generacion SINCRONA e inmediata de candidatos.
+- Persistencia automatica en DB.
+- Candidatos expiran en 4 Ticks.
+- Sistema de seguimiento e investigacion.
 """
 
 import streamlit as st
@@ -27,13 +26,15 @@ from data.recruitment_repository import (
 from data.world_repository import (
     queue_player_action,
     has_pending_investigation,
-    has_pending_search,
     get_world_state,
     get_investigating_target_info
 )
 from data.log_repository import log_event
 from config.app_constants import DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS, DEFAULT_RECRUIT_LOCATION
 from core.character_engine import BIO_ACCESS_UNKNOWN, BIO_ACCESS_KNOWN
+
+# --- NUEVO IMPORT PARA GENERACION INMEDIATA ---
+from services.character_generation_service import generate_character_pool
 
 
 # --- CONSTANTES ---
@@ -150,7 +151,6 @@ def _render_candidate_card(
             badges_html += '<span style="background: rgba(255,107,107,0.15); color: #ff6b6b; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; margin-left: 8px; border: 1px solid #ff6b6b;">DESCONOCIDO</span>'
 
         # Render Header
-        # Se ha eliminado el indicador de Nivel (Nv. X) para limpiar la cabecera.
         st.markdown(f"""
             <div style="
                 background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
@@ -186,7 +186,6 @@ def _render_candidate_card(
             for i, (attr, value) in enumerate(atributos.items()):
                 with cols[i % 3]:
                     color = _get_skill_color(value)
-                    # Usar abreviatura si existe, si no usar las primeras 3 letras
                     short_name = ATTR_ABBREVIATIONS.get(attr.lower(), attr[:3].upper())
                     st.markdown(f"<span style='color:{color};'>{short_name}: **{value}**</span>", unsafe_allow_html=True)
         else:
@@ -376,31 +375,45 @@ def _process_recruitment(player_id: int, candidate: Dict[str, Any], player_credi
         st.error(f"Error inesperado: {e}")
 
 
-def _handle_search_new(player_id: int, player_credits: int):
-    """Maneja la solicitud de buscar nuevos candidatos."""
+def _handle_search_new_sync(player_id: int, player_credits: int):
+    """
+    Maneja la solicitud de buscar nuevos candidatos de forma SINCRONA e INMEDIATA.
+    Genera candidatos con IA y los persiste en DB al instante.
+    """
 
     if player_credits < SEARCH_COST:
         st.error("Creditos insuficientes para iniciar busqueda.")
         return
 
+    # 1. Cobrar
     if not update_player_credits(player_id, player_credits - SEARCH_COST):
         st.error("Error en transaccion financiera.")
         return
 
-    # Eliminar candidatos no seguidos
+    # 2. Limpiar candidatos anteriores
     cleared = clear_untracked_candidates(player_id)
 
-    # Encolar busqueda
-    cmd = "[INTERNAL_SEARCH_CANDIDATES]"
-
-    if queue_player_action(player_id, cmd):
-        log_event(f"RECLUTAMIENTO: Busqueda de candidatos iniciada. Resultados en el proximo ciclo.", player_id)
-        st.toast(f"Busqueda iniciada. -{SEARCH_COST} C.", icon="🔍")
-        if cleared > 0:
-            st.toast(f"{cleared} candidato(s) anterior(es) descartado(s).", icon="🗑️")
-        st.rerun()
-    else:
-        st.error("Error al encolar busqueda.")
+    # 3. Generar nuevos candidatos (SINCRONO)
+    try:
+        with st.spinner("Contactando red de reclutamiento... (Generando perfiles con IA)"):
+            new_candidates = generate_character_pool(
+                player_id=player_id,
+                pool_size=3,
+                location_planet_id=None # Por defecto
+            )
+        
+        count = len(new_candidates)
+        if count > 0:
+            log_event(f"RECLUTAMIENTO: Busqueda completada. {count} nuevos candidatos encontrados.", player_id)
+            st.toast(f"Busqueda completada. -{SEARCH_COST} C.", icon="✅")
+            st.rerun()
+        else:
+            st.error("La red de reclutamiento no ha encontrado candidatos viables.")
+            # Opcional: Reembolsar si falla totalmente, pero el costo suele ser por el intento.
+            
+    except Exception as e:
+        st.error(f"Error en el sistema de reclutamiento: {e}")
+        # Rollback creditos si hubo excepcion critica antes de generar nada
         update_player_credits(player_id, player_credits)
 
 
@@ -424,7 +437,7 @@ def show_recruitment_center():
 
     # Estados de bloqueo
     investigation_active = has_pending_investigation(player_id)
-    search_pending = has_pending_search(player_id)
+    # NOTA: Ya no necesitamos has_pending_search() porque la busqueda es inmediata.
 
     # Obtener info de investigacion en curso (para mostrar nombre del objetivo)
     investigating_target = get_investigating_target_info(player_id)
@@ -451,24 +464,19 @@ def show_recruitment_center():
 
     with col_refresh:
         st.write("")
-        can_search = player_credits >= SEARCH_COST and not search_pending
+        can_search = player_credits >= SEARCH_COST
 
         button_label = f"Buscar Nuevos\n({SEARCH_COST} C)"
-        if search_pending:
-            button_label = "Buscando..."
-
+        
         if st.button(
             button_label,
             disabled=not can_search,
-            type="primary" if not search_pending else "secondary",
+            type="primary",
             use_container_width=True
         ):
-            _handle_search_new(player_id, player_credits)
+            _handle_search_new_sync(player_id, player_credits)
 
     # Mensajes de estado
-    if search_pending:
-        st.info("🔍 **Busqueda en curso.** Los agentes de reclutamiento estan contactando candidatos. Resultados disponibles en el proximo ciclo.")
-
     if investigation_active:
         target_name = investigating_target.get("target_name", "un objetivo") if investigating_target else "un objetivo"
         st.info(f"🕵️ **Investigacion en curso** sobre **{target_name}**. Los canales de inteligencia estan ocupados hasta el proximo Tick.")
@@ -476,7 +484,7 @@ def show_recruitment_center():
     st.markdown("---")
 
     # Contenido principal
-    if not candidates and not search_pending:
+    if not candidates:
         # Roster vacio
         st.markdown("""
             <div style="
@@ -489,26 +497,9 @@ def show_recruitment_center():
                 <div style="font-size: 4em; margin-bottom: 20px;">📭</div>
                 <h3 style="color: #888; margin-bottom: 10px;">No hay candidatos disponibles</h3>
                 <p style="color: #666;">Utiliza el boton <b>Buscar Nuevos</b> para contactar potenciales reclutas.</p>
-                <p style="color: #555; font-size: 0.85em;">La busqueda cuesta {search_cost} creditos y tarda 1 ciclo en completarse.</p>
+                <p style="color: #555; font-size: 0.85em;">La busqueda cuesta {search_cost} creditos y es <b>inmediata</b>.</p>
             </div>
         """.format(search_cost=SEARCH_COST), unsafe_allow_html=True)
-
-    elif not candidates and search_pending:
-        # Busqueda en progreso
-        st.markdown("""
-            <div style="
-                text-align: center;
-                padding: 60px 20px;
-                background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-                border-radius: 15px;
-                border: 2px solid #45b7d1;
-            ">
-                <div style="font-size: 4em; margin-bottom: 20px;">🛰️</div>
-                <h3 style="color: #45b7d1; margin-bottom: 10px;">Contactando candidatos...</h3>
-                <p style="color: #888;">Los agentes de reclutamiento estan explorando la estacion.</p>
-                <p style="color: #666; font-size: 0.85em;">Los candidatos estaran disponibles en el proximo ciclo.</p>
-            </div>
-        """, unsafe_allow_html=True)
 
     else:
         # Mostrar candidatos
