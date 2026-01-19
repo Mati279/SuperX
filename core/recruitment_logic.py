@@ -1,11 +1,15 @@
 # core/recruitment_logic.py
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 from config.app_constants import (
     DEFAULT_RECRUIT_RANK,
     DEFAULT_RECRUIT_STATUS,
     DEFAULT_RECRUIT_LOCATION
 )
 from core.models import KnowledgeLevel, CharacterStatus
+
+# Importamos el repositorio de personajes para el análisis del roster
+# (Usamos import interno en la función para evitar ciclos si la arquitectura crece)
+from data.character_repository import get_all_characters_by_player_id
 
 def can_recruit(player_credits: int, candidate_cost: int) -> Tuple[bool, str]:
     """
@@ -73,3 +77,86 @@ def process_recruitment(
     }
 
     return new_credits, update_data
+
+def analyze_candidates_value(player_id: int, candidates: List[Dict[str, Any]]) -> Dict[int, str]:
+    """
+    Analiza a los candidatos disponibles y los compara con el roster actual
+    para generar recomendaciones estratégicas (Smart Recruitment Advisor).
+    
+    Returns:
+        Dict[candidate_id, recommendation_string]
+    """
+    recommendations = {}
+    if not candidates:
+        return recommendations
+
+    # 1. Obtener Roster Actual y sus máximos
+    roster = get_all_characters_by_player_id(player_id)
+    
+    max_attrs = {}
+    max_skills = {}
+    
+    for char in roster:
+        # Ignorar personajes retirados o muertos si los hubiera en el fetch general
+        # (Aunque el repo suele traer todo, filtremos por seguridad si es necesario)
+        stats = char.get("stats_json", {})
+        caps = stats.get("capacidades", {})
+        
+        # Atributos
+        for attr, val in caps.get("atributos", {}).items():
+            max_attrs[attr] = max(max_attrs.get(attr, 0), val)
+            
+        # Habilidades
+        for skill, val in caps.get("habilidades", {}).items():
+            max_skills[skill] = max(max_skills.get(skill, 0), val)
+
+    # 2. Analizar Candidatos
+    for cand in candidates:
+        cand_id = cand["id"]
+        stats = cand.get("stats_json", {})
+        caps = stats.get("capacidades", {})
+        
+        cand_attrs = caps.get("atributos", {})
+        cand_skills = caps.get("habilidades", {})
+        
+        # --- FOG OF WAR LOGIC ---
+        # Si NO está investigado (conocido), solo "vemos" el Top 5 de habilidades para la comparación.
+        is_known = cand.get("investigation_outcome") in ["SUCCESS", "CRIT_SUCCESS"]
+        
+        visible_skills = cand_skills
+        if not is_known:
+            # Simular la visión limitada de la UI: Ordenar y tomar top 5
+            sorted_skills = sorted(cand_skills.items(), key=lambda x: -x[1])[:5]
+            visible_skills = dict(sorted_skills)
+            
+        # --- CRITERIOS DE RECOMENDACIÓN ---
+        rec_msg = None
+        
+        # A. Talento Superior (Upgrade) - Atributos (Siempre visibles)
+        for attr, val in cand_attrs.items():
+            curr_max = max_attrs.get(attr, 0)
+            if val >= curr_max + 3:
+                rec_msg = f"💡 Consejo Táctico: Potencial físico superior. {attr}: {val} (vs Máx Actual: {curr_max})."
+                break # Priorizamos una recomendación por candidato
+        
+        if not rec_msg:
+            # B. Talento Superior (Upgrade) - Habilidades
+            for skill, val in visible_skills.items():
+                curr_max = max_skills.get(skill, 0)
+                if val >= curr_max + 3:
+                    rec_msg = f"💡 Consejo Táctico: Mejora significativa en {skill} (Nivel {val} vs tu mejor especialista: {curr_max})."
+                    break
+        
+        if not rec_msg:
+            # C. Llenado de Huecos (Gap Filler)
+            # El roster tiene < 5 en esta skill y el candidato tiene > 10.
+            for skill, val in visible_skills.items():
+                curr_max = max_skills.get(skill, 0)
+                if curr_max < 5 and val > 10:
+                    rec_msg = f"💡 Consejo Táctico: Cubre una debilidad crítica en {skill} ({val})."
+                    break
+
+        if rec_msg:
+            recommendations[cand_id] = rec_msg
+            
+    return recommendations

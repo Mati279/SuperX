@@ -9,7 +9,7 @@ Sistema de Reclutamiento v3 (Asíncrono):
 """
 
 import streamlit as st
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from ui.state import get_player
 from data.player_repository import get_player_credits, update_player_credits
@@ -31,7 +31,8 @@ from data.world_repository import (
 from data.log_repository import log_event
 from config.app_constants import DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS, DEFAULT_RECRUIT_LOCATION
 from core.character_engine import BIO_ACCESS_UNKNOWN, BIO_ACCESS_KNOWN
-from core.recruitment_logic import process_recruitment
+# Importamos la nueva función de análisis
+from core.recruitment_logic import process_recruitment, analyze_candidates_value
 
 
 # --- CONSTANTES ---
@@ -94,7 +95,8 @@ def _render_candidate_card(
     player_credits: int,
     player_id: int,
     investigation_active: bool,
-    current_tick: int
+    current_tick: int,
+    recommendation: Optional[str] = None
 ):
     """Renderiza la tarjeta de un candidato."""
 
@@ -165,6 +167,10 @@ def _render_candidate_card(
                 </div>
             </div>
         """, unsafe_allow_html=True)
+
+        # --- SMART ADVISOR VISUALIZATION ---
+        if recommendation:
+            st.info(recommendation, icon="💡")
 
         # Bio
         if already_investigated:
@@ -503,6 +509,10 @@ def show_recruitment_center():
             """, unsafe_allow_html=True)
 
     else:
+        # --- ANALISIS SMART DE RECLUTAMIENTO ---
+        # Analizamos todos los candidatos de una sola vez
+        recommendations = analyze_candidates_value(player_id, candidates)
+        
         # Mostrar candidatos
         tracked = get_tracked_candidate(player_id)
         tracked_msg = f" (Siguiendo: **{tracked['nombre']}**)" if tracked else ""
@@ -516,6 +526,9 @@ def show_recruitment_center():
             col_idx = i % 4
             if i > 0 and col_idx == 0:
                 cols = st.columns(4)
+            
+            # Recuperar recomendación para este candidato si existe
+            cand_recommendation = recommendations.get(candidate['id'])
                 
             with cols[col_idx]:
                 _render_candidate_card(
@@ -523,7 +536,8 @@ def show_recruitment_center():
                     player_credits,
                     player_id,
                     investigation_active,
-                    current_tick
+                    current_tick,
+                    recommendation=cand_recommendation
                 )
 
     st.markdown("---")
