@@ -5,13 +5,14 @@ from google.genai import types
 from data.database import get_supabase
 from data.world_repository import get_world_state, get_system_by_id, get_planets_by_system_id
 from data.player_repository import get_player_by_id, get_player_finances
+from data.character_repository import get_all_player_characters, get_character_knowledge_level
+from data.recruitment_repository import get_recruitment_candidates
 from core.galaxy_generator import get_galaxy
 from core.models import KnowledgeLevel
 from core.world_models import Planet, System
 from data.log_repository import log_event
 from core.mrg_engine import resolve_action, DIFFICULTY_NORMAL
-
-# ... (Mantener imports y definiciones previas: TOOL_DECLARATIONS, etc.)
+from core.character_engine import get_visible_biography, get_visible_skills, get_visible_feats
 
 # --- NUEVAS HERRAMIENTAS DE CONOCIMIENTO ---
 
@@ -54,12 +55,93 @@ def investigate_character(character_name: str, player_id: int) -> str:
     
     return narrative
 
-# ... (Asegúrate de registrar investigate_character en TOOL_FUNCTIONS y TOOL_DECLARATIONS abajo) ...
+def get_filtered_roster(player_id: int, source: str = "all", name_filter: Optional[str] = None) -> str:
+    """
+    Obtiene una lista de personajes (facción o reclutas) filtrada por el Nivel de Conocimiento (Fog of War).
+    Sanitiza biografías, habilidades y atributos antes de enviarlos a la IA.
+    
+    Args:
+        player_id: ID del jugador.
+        source: 'faction', 'recruitment' o 'all'.
+        name_filter: Filtro opcional por nombre parcial.
+    """
+    raw_characters = []
+
+    # 1. Obtener datos crudos según la fuente
+    if source in ["faction", "all"]:
+        faction_chars = get_all_player_characters(player_id)
+        for c in faction_chars:
+            c["_source_type"] = "Miembro de Facción"
+        raw_characters.extend(faction_chars)
+
+    if source in ["recruitment", "all"]:
+        # Se asume que get_recruitment_candidates devuelve una lista similar de dicts
+        recruit_chars = get_recruitment_candidates(player_id)
+        for c in recruit_chars:
+            c["_source_type"] = "Candidato a Reclutamiento"
+        raw_characters.extend(recruit_chars)
+
+    # 2. Filtrar por nombre si aplica
+    if name_filter:
+        name_filter = name_filter.lower()
+        raw_characters = [c for c in raw_characters if name_filter in c.get("nombre", "").lower()]
+
+    sanitized_roster = []
+
+    # 3. Procesar y Sanitizar cada personaje
+    for char in raw_characters:
+        char_id = char.get("id")
+        stats = char.get("stats_json", {})
+        
+        if not stats:
+            stats = {} # Prevenir crash si es None
+
+        # Obtener Nivel de Conocimiento
+        # Incluso para reclutas, consultamos si ya existe un registro de conocimiento (ej. investigado previamente)
+        # Si no existe registro en la DB, get_character_knowledge_level debería retornar UNKNOWN por defecto.
+        knowledge_level = get_character_knowledge_level(char_id, player_id)
+
+        # Sanitización usando core.character_engine
+        visible_bio = get_visible_biography(stats, knowledge_level)
+        
+        # Extraer habilidades y feats del stats_json
+        raw_skills = stats.get("habilidades", {})
+        raw_feats = stats.get("feats", [])
+        
+        visible_skills = get_visible_skills(raw_skills, knowledge_level)
+        visible_feats = get_visible_feats(raw_feats, knowledge_level)
+
+        # Lógica de Atributos (Core stats)
+        # Si es UNKNOWN, ocultamos los números exactos
+        visible_attributes = " [DATOS CLASIFICADOS] Requiere nivel CONOCIDO."
+        if knowledge_level in (KnowledgeLevel.KNOWN, KnowledgeLevel.FRIEND):
+            visible_attributes = stats.get("capacidades", {}).get("atributos", stats.get("atributos", {}))
+
+        # Construir objeto seguro para la IA
+        safe_char = {
+            "id": char_id,
+            "nombre": char.get("nombre", "Desconocido"),
+            "rol_clase": char.get("clase_social", "Desconocido"), # O campo 'rol' si existe
+            "estado": char.get("_source_type"),
+            "nivel_conocimiento": knowledge_level.value,
+            "biografia_visible": visible_bio,
+            "habilidades_visibles": visible_skills,
+            "rasgos_visibles": visible_feats,
+            "atributos": visible_attributes
+        }
+        
+        sanitized_roster.append(safe_char)
+
+    if not sanitized_roster:
+        return json.dumps({"info": "No se encontraron personajes con los criterios dados."})
+
+    return json.dumps(sanitized_roster, ensure_ascii=False, indent=2)
 
 # Mapa de funciones disponibles
 TOOL_FUNCTIONS = {
     # ... (existentes) ...
-    "investigate_character": investigate_character 
+    "investigate_character": investigate_character,
+    "get_filtered_roster": get_filtered_roster
 }
 
 def execute_tool(tool_name: str, tool_args: Dict[str, Any]) -> str:
@@ -73,7 +155,7 @@ def execute_tool(tool_name: str, tool_args: Dict[str, Any]) -> str:
 
 # Declaraciones para Gemini (Function Calling)
 TOOL_DECLARATIONS = [
-    # ... (existentes) ...
+    # ... (existentes: scan_galaxy, get_system_info, etc. asumiendo que estaban antes) ...
     types.FunctionDeclaration(
         name="investigate_character",
         description="Investiga los antecedentes de un personaje para revelar sus stats ocultos. Solo funciona en personajes Desconocidos.",
@@ -84,6 +166,19 @@ TOOL_DECLARATIONS = [
                 "player_id": types.Schema(type=types.Type.INTEGER, description="ID del jugador que realiza la acción")
             },
             required=["character_name", "player_id"]
+        )
+    ),
+    types.FunctionDeclaration(
+        name="get_filtered_roster",
+        description="Consulta la base de datos de personal y reclutas. Úsala para responder preguntas sobre quién es quién, sus habilidades y biografías. Respeta automáticamente el nivel de conocimiento (Fog of War) ocultando datos sensibles si es necesario.",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "player_id": types.Schema(type=types.Type.INTEGER, description="ID del jugador."),
+                "source": types.Schema(type=types.Type.STRING, description="Fuente de datos: 'faction' (actuales), 'recruitment' (candidatos) o 'all'."),
+                "name_filter": types.Schema(type=types.Type.STRING, description="Opcional: Nombre parcial para filtrar la búsqueda.")
+            },
+            required=["player_id"]
         )
     )
 ]
