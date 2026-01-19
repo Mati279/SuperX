@@ -151,10 +151,43 @@ def get_filtered_roster(player_id: int, source: str = "all") -> str:
 
     return json.dumps(output_roster, ensure_ascii=False, indent=2)
 
+def execute_sql_query_tool(query: str, player_id: int) -> str:
+    """
+    Ejecuta una consulta SQL de solo lectura (SELECT).
+    Wrapper para la función RPC 'execute_sql_query'.
+    """
+    try:
+        # Validación simple de seguridad/intención
+        if not query.strip().upper().startswith("SELECT") and not query.strip().upper().startswith("WITH"):
+            return "Error: Esta herramienta es solo para consultas de análisis (SELECT). No intente modificar datos."
+
+        log_event(f"🤖 AI SQL Query: {query}", player_id)
+        
+        # Llamada RPC
+        response = get_supabase().rpc('execute_sql_query', {'query': query}).execute()
+        
+        # Retornar datos como string JSON formateado
+        return json.dumps(response.data, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return f"Error SQL: {str(e)} (Verifique la sintaxis y los nombres de tablas/columnas)"
+
+def get_table_schema(table_name: str) -> str:
+    """
+    Obtiene la estructura de columnas de una tabla.
+    Wrapper para la función RPC 'get_table_schema_info'.
+    """
+    try:
+        response = get_supabase().rpc('get_table_schema_info', {'table_name_param': table_name}).execute()
+        return json.dumps(response.data, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return f"Error Schema: {str(e)}"
+
 # Mapa de funciones disponibles
 TOOL_FUNCTIONS = {
     "investigate_character": investigate_character,
-    "get_filtered_roster": get_filtered_roster
+    "get_filtered_roster": get_filtered_roster,
+    "execute_sql_query": execute_sql_query_tool,
+    "get_table_schema": get_table_schema
 }
 
 def execute_tool(tool_name: str, tool_args: Dict[str, Any]) -> str:
@@ -182,10 +215,10 @@ TOOL_DECLARATIONS = [
     ),
     types.FunctionDeclaration(
         name="get_filtered_roster",
-        description="""OBTIENE EXPEDIENTES DE PERSONAL.
-CRÍTICO: Devuelve JSON con 'habilidades_visibles' (Skills) y 'atributos' (Stats Base).
-USO OBLIGATORIO para evaluar competencia profesional (ej: "¿Quién es mejor médico?").
-IMPORTANTE: 'habilidades_visibles' define la competencia experta. 'atributos' es secundario.""",
+        description="""OBTIENE EXPEDIENTES COMPLETOS (PROCESADOS).
+Usa esto SOLO para análisis cualitativo detallado de pocos individuos (< 5).
+Devuelve 'habilidades_visibles' (Skills) y 'atributos' (Stats Base).
+ADVERTENCIA: No usar para búsquedas masivas o comparaciones numéricas de toda la base de datos (Usar execute_sql_query).""",
         parameters=types.Schema(
             type=types.Type.OBJECT,
             properties={
@@ -193,6 +226,32 @@ IMPORTANTE: 'habilidades_visibles' define la competencia experta. 'atributos' es
                 "source": types.Schema(type=types.Type.STRING, description="Fuente: 'faction', 'recruitment' o 'all'")
             },
             required=["player_id"]
+        )
+    ),
+    types.FunctionDeclaration(
+        name="execute_sql_query",
+        description="""EJECUTA CONSULTAS SQL (Solo Lectura/SELECT).
+CRÍTICO para comparaciones numéricas, búsquedas complejas o filtrado en grupos grandes.
+Estructura JSONB: stats_json->'capacidades'->'habilidades' (diccionario key:value) o 'atributos'.
+Ejemplo: SELECT nombre FROM characters WHERE (stats_json->'capacidades'->'atributos'->>'intelecto')::int > 10""",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING, description="Consulta SQL SELECT válida (PostgreSQL)"),
+                "player_id": types.Schema(type=types.Type.INTEGER, description="ID del jugador para logging")
+            },
+            required=["query", "player_id"]
+        )
+    ),
+    types.FunctionDeclaration(
+        name="get_table_schema",
+        description="Obtiene el nombre y tipo de columnas de una tabla específica de la base de datos.",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "table_name": types.Schema(type=types.Type.STRING, description="Nombre de la tabla (ej: 'characters')")
+            },
+            required=["table_name"]
         )
     )
 ]
