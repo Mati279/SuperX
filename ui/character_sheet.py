@@ -4,10 +4,10 @@ import pandas as pd
 from core.models import KnowledgeLevel, CharacterRole
 
 # --- ESTILOS VISUALES (REPLICADOS DE RECRUITMENT_CENTER) ---
-COLOR_SKILL_GRAY = "#888888"
-COLOR_SKILL_GREEN = "#26de81"
-COLOR_SKILL_BLUE = "#45b7d1"
-COLOR_SKILL_GOLD = "#ffd700"
+COLOR_SKILL_GRAY = "#888888"   # Bajo / Común
+COLOR_SKILL_GREEN = "#26de81"  # Bueno / Entrenado
+COLOR_SKILL_BLUE = "#45b7d1"   # Alto / Experto
+COLOR_SKILL_GOLD = "#ffd700"   # Élite / Legendario
 
 ATTR_ABBREVIATIONS = {
     "fuerza": "FUE",
@@ -18,8 +18,10 @@ ATTR_ABBREVIATIONS = {
     "presencia": "PRE"
 }
 
-def _get_skill_color(value: int) -> str:
-    """Retorna el color apropiado segun el valor de la habilidad/atributo."""
+def _get_attribute_color(value: int) -> str:
+    """
+    Retorna el color para ATRIBUTOS (Escala típica 1-20).
+    """
     if value < 8:
         return COLOR_SKILL_GRAY
     elif value <= 12:
@@ -28,6 +30,20 @@ def _get_skill_color(value: int) -> str:
         return COLOR_SKILL_BLUE
     else:
         return COLOR_SKILL_GOLD
+
+def _get_skill_color(value: int) -> str:
+    """
+    Retorna el color para HABILIDADES (Escala porcentual 1-100).
+    Ajustado para que no todo se vea amarillo.
+    """
+    if value < 40:
+        return COLOR_SKILL_GRAY  # Principiante / Bajo
+    elif value <= 65:
+        return COLOR_SKILL_GREEN # Competente
+    elif value <= 85:
+        return COLOR_SKILL_BLUE  # Experto
+    else:
+        return COLOR_SKILL_GOLD  # Maestro (86-100)
 
 def _safe_get_data(stats, keys_v2, keys_v1_fallback, default_val=None):
     """
@@ -122,6 +138,7 @@ def render_character_sheet(character_data, player_id):
     
     with tab_attrs:
         # ATRIBUTOS: Estilo "Pills" (Visible para TODOS)
+        # Usamos _get_attribute_color (Escala 1-20)
         attrs = _safe_get_data(stats, ['capacidades', 'atributos'], ['atributos'])
         if not attrs:
             st.warning("⚠️ Sin datos de atributos.")
@@ -134,7 +151,7 @@ def render_character_sheet(character_data, player_id):
         attr_items = list(attrs.items())
         
         for i, (key, val) in enumerate(attr_items):
-            color = _get_skill_color(val)
+            color = _get_attribute_color(val) # <--- USO ESCALA ATRIBUTOS
             # HTML Pill para atributo compactado
             attr_html = (
                 f'<div style="background: rgba(255,255,255,0.05); border: 1px solid {color}40; '
@@ -166,7 +183,8 @@ def render_character_sheet(character_data, player_id):
                 st.caption("Sin talentos registrados.")
 
     with tab_skills:
-        # HABILIDADES (Estilo Badges/Pills corregido para evitar problemas de Markdown)
+        # HABILIDADES (Estilo Badges/Pills)
+        # Usamos _get_skill_color (Escala 1-100)
         skills = _safe_get_data(stats, ['capacidades', 'habilidades'], ['habilidades'])
         
         if skills:
@@ -181,11 +199,10 @@ def render_character_sheet(character_data, player_id):
                 display_skills = sorted_skills
 
             # Renderizado HTML en Bloque (Flow layout)
-            # NOTA: Se construye el HTML sin indentación interna para evitar que Streamlit lo interprete como Code Block
             skills_html_parts = ['<div style="line-height: 2.2;">']
             
             for sk, val in display_skills:
-                color = _get_skill_color(val)
+                color = _get_skill_color(val) # <--- USO ESCALA HABILIDADES (1-100)
                 pill = (
                     f'<span style="display: inline-block; padding: 4px 12px; margin: 3px; '
                     f'border-radius: 12px; background: rgba(255,255,255,0.05); '
