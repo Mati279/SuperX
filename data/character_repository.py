@@ -430,3 +430,64 @@ def get_known_characters_by_player(player_id: int) -> List[Dict[str, Any]]:
     except Exception as e:
         log_event(f"Error fetching known characters: {e}", player_id, is_error=True)
         return []
+
+def dismiss_character(character_id: int, current_player_id: int) -> bool:
+    """
+    Procesa el despido de un personaje.
+    - Si es FRIEND: Se retira permanentemente (retired=True, player_id=NULL).
+    - Si NO es FRIEND: Vuelve al pool de reclutamiento (player_id=NULL, rol=Sin Asignar).
+    """
+    try:
+        # 1. Validar propiedad
+        char = get_character_by_id(character_id)
+        if not char:
+            return False
+        
+        if char.get("player_id") != current_player_id:
+            log_event(f"Intento de despido no autorizado para char {character_id}", current_player_id, is_error=True)
+            return False
+
+        # 2. Verificar Nivel de Conocimiento (Amistad)
+        knowledge_level = get_character_knowledge_level(character_id, current_player_id)
+        
+        # 3. Preparar actualización de stats
+        stats = char.get("stats_json", {})
+        if "estado" not in stats:
+            stats["estado"] = {}
+
+        update_payload = {}
+
+        if knowledge_level == KnowledgeLevel.FRIEND:
+            # Retiro Permanente
+            stats["estado"]["rol_asignado"] = "Retirado"
+            stats["estado"]["estados_activos"] = ["Retirado"]
+            stats["estado"]["retired"] = True # Flag lógico
+            update_payload = {
+                "player_id": None, # Desvincular
+                "stats_json": stats
+            }
+            action_msg = "jubilado/retirado"
+        else:
+            # Devolver al Pool
+            stats["estado"]["rol_asignado"] = "Sin Asignar"
+            # Limpiar estados activos para que esté disponible
+            stats["estado"]["estados_activos"] = ["Disponible"]
+            
+            update_payload = {
+                "player_id": None, # Desvincular (vuelve a ser reclutable si el sistema busca player_id IS NULL)
+                "stats_json": stats
+            }
+            action_msg = "devuelto al pool"
+
+        # 4. Ejecutar Update
+        response = _get_db().table("characters").update(update_payload).eq("id", character_id).execute()
+        
+        if response.data:
+            log_event(f"Personaje {char.get('nombre')} ha sido {action_msg}.", current_player_id)
+            return True
+            
+        return False
+
+    except Exception as e:
+        log_event(f"Error al despedir personaje {character_id}: {e}", current_player_id, is_error=True)
+        return False
