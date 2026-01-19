@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .mrg_constants import *
+# Regla 1: Import absoluto para módulos de diferentes paquetes
 from data.log_repository import log_event
 
 
@@ -129,19 +130,13 @@ def resolve_action(
     Args:
         merit_points: Valor total de atributo + habilidad del personaje.
         difficulty: Valor objetivo a superar (Estándar: 50).
-        action_description: Descripción breve de la acción para logs.
+        action_description: Descripción de la tarea para el log.
         player_id: ID del jugador para auditoría en base de datos.
     """
     # 1. Tirada física
     roll = roll_2d50()
 
     # 2. Cálculo de bonos (Asintótico)
-    # NOTA: Si merit_points ya viene escalado (ej. 1-100), se usa directo como base.
-    # Si merit_points es raw attributes, aquí aplicamos la curva.
-    # Asumimos que merit_points es la SUMA de Atributos/Habilidades.
-    
-    # En la regla actual: Resultado = Tirada + Bonos.
-    # Asumimos que 'merit_points' actúan como el bono base del personaje.
     bonus = calculate_asymptotic_bonus(merit_points)
 
     # 3. Cálculo de Margen
@@ -150,21 +145,23 @@ def resolve_action(
     # 4. Determinación de Resultado
     result_type = determine_result_type(roll, margin)
 
-    # 5. Auditoría (Logging)
+    # 5. Auditoría (Logging) con detalle matemático completo
     try:
-        log_message = (
+        # Formato: 🎲 MRG [Acción]: 2d50(Total) + Bono(X) - Dif(Y) = Margen(Z) >> TIPO
+        log_msg = (
             f"🎲 MRG [{action_description}]: "
             f"2d50({roll.total}) + Bono({bonus}) - Dif({difficulty}) "
             f"= Margen({margin}) >> {result_type.name}"
         )
+        
         log_event(
-            message=log_message,
+            message=log_msg,
             player_id=player_id,
             event_type="MRG_AUDIT"
         )
     except Exception as e:
-        # Fallo silencioso del log para no interrumpir el juego, pero imprimimos en consola por si acaso
-        print(f"⚠️ Warning: Falló el log de auditoría MRG: {e}")
+        # Debug complementario: Fallo en log no debe romper el flujo del juego
+        print(f"⚠️ Error en auditoría MRG: {e}")
 
     return MRGResult(
         roll=roll,
