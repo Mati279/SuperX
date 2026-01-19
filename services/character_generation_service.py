@@ -537,11 +537,21 @@ def generate_character_pool(
             # 1. Generar Data en Memoria
             char_data = generate_random_character_with_ai(context, existing_names)
             
-            # --- MODIFICACIÓN DEBUG: MAXIMIZAR HABILIDADES ---
+            # --- MODIFICACIÓN DEBUG: MAXIMIZAR HABILIDADES Y ATRIBUTOS ---
             if force_max_skills:
+                log_event(f"DEBUG: Aplicando stats MAXIMOS (99) al candidato {i+1}", player_id)
+                
+                # A) Maximizar Habilidades (Combate, Tecnología, etc.)
                 skills_dict = char_data.get("stats_json", {}).get("capacidades", {}).get("habilidades", {})
-                for skill_name in skills_dict:
-                    skills_dict[skill_name] = 99
+                if skills_dict:
+                    for skill_name in skills_dict:
+                        skills_dict[skill_name] = 99
+                
+                # B) Maximizar Atributos (Fuerza, Intelecto, etc.)
+                attrs_dict = char_data.get("stats_json", {}).get("capacidades", {}).get("atributos", {})
+                if attrs_dict:
+                    for attr_name in attrs_dict:
+                        attrs_dict[attr_name] = 99
             # ------------------------------------------------
             
             # 2. Calcular Costo
