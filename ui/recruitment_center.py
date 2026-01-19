@@ -160,7 +160,7 @@ def _render_candidate_card(
                     <span style="font-size: 1.1em; font-weight: bold; color: #fff;">{candidate['nombre']}{badges_html}</span>
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 0.85em; margin-top: 4px;">
-                    <div><span style="color: #a55eea;">{raza}</span> | <span style="color: #f9ca24;">{clase}</span> | <span style="color: #ccc;">{edad} años</span></div>
+                    <div><span style="color: #a55eea;">{raza}</span> | <span style="color: #f9ca24;">Nivel {nivel}</span> | <span style="color: #ccc;">{edad} años</span></div>
                     <div style="color: {'#ff6b6b' if ticks_left <= 1 else '#888'};">Expira en: {max(0, ticks_left)} Tick{'s' if ticks_left != 1 else ''}</div>
                 </div>
             </div>
