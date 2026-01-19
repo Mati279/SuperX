@@ -1,8 +1,8 @@
 # services/character_generation_service.py
 """
 Servicio de Generación de Personajes con IA.
-Actualizado para generar Biografías Escalonadas (Tiered Biography System).
-Implementa patrón de persistencia inmediata para candidatos de reclutamiento (Estilo Cuadrilla).
+Actualizado para Especialización de Personajes de Alto Nivel y Biografías Coherentes.
+Implementa distribución ponderada de atributos y habilidades según la clase.
 """
 
 import random
@@ -22,7 +22,7 @@ from data.planet_repository import get_planet_by_id
 # --- IMPORTS PARA PERSISTENCIA ---
 from data.world_repository import get_world_state
 
-from core.constants import RACES, CLASSES
+from core.constants import RACES, CLASSES, SKILL_MAPPING
 from core.rules import calculate_skills
 from core.models import BiologicalSex, CharacterRole, KnowledgeLevel, CharacterStatus
 from core.character_engine import (
@@ -50,10 +50,10 @@ AGE_MAX = 70
 PREDOMINANT_RACE_CHANCE = 0.5
 DEFAULT_RANK = "Iniciado"
 
-# Prompt actualizado para 3 niveles de biografía estrictos
+# Prompt actualizado para incluir habilidades top y coherencia con stats
 IDENTITY_GENERATION_PROMPT = """
 Actúa como un Oficial de Inteligencia de una facción galáctica.
-Genera el dossier para un nuevo operativo.
+Genera el dossier para un nuevo operativo altamente especializado.
 
 DATOS TÉCNICOS:
 - Raza: {race}
@@ -62,13 +62,14 @@ DATOS TÉCNICOS:
 - Sexo: {sex}
 - Edad: {age} años
 - Personalidad: {traits}
-- Atributos top: {top_attributes}
+- Atributos clave: {top_attributes}
+- Especialidades técnicas (Habilidades): {top_skills}
 
 INSTRUCCIONES DE GENERACIÓN (3 NIVELES):
 1. NOMBRE y APELLIDO: Coherentes con la raza.
-2. BIO SUPERFICIAL (Público - 1 oración): Solo una descripción visual o impresión rápida. Ej: "Humano robusto con cicatrices de combate, mirada cansada." o "Androide de serie brillante, movimientos precisos."
-3. BIO CONOCIDA (Estándar - 40 palabras aprox): Resumen profesional para el expediente. Formación, especialidad táctica y evaluación de desempeño.
-4. BIO PROFUNDA (Privado - 60-80 palabras): Secretos, ganchos narrativos, traumas pasados o motivaciones ocultas que podrían derivar en misiones personales.
+2. BIO SUPERFICIAL (Público - 1 oración): Solo una descripción visual o impresión rápida.
+3. BIO CONOCIDA (Estándar - 40 palabras aprox): Resumen profesional. DEBE reflejar su clase y sus habilidades más altas. Ej: Si es Piloto con mucho Sigilo, mencionar su capacidad de infiltración orbital.
+4. BIO PROFUNDA (Privado - 60-80 palabras): Secretos, traumas o motivaciones ocultas coherentes con su especialidad y rasgos.
 
 ⚠️ REGLAS TÉCNICAS ⚠️
 - Responde SOLO con JSON válido.
@@ -109,6 +110,12 @@ def _get_top_attributes(attributes: Dict[str, int], count: int = 2) -> str:
     top = sorted_attrs[:count]
     return ", ".join([f"{attr.capitalize()}: {val}" for attr, val in top])
 
+def _get_top_skills(skills: Dict[str, int], count: int = 3) -> str:
+    """Retorna las habilidades más altas para el prompt de la IA."""
+    sorted_skills = sorted(skills.items(), key=lambda x: x[1], reverse=True)
+    top = sorted_skills[:count]
+    return ", ".join([f"{name} ({val})" for name, val in top])
+
 
 def _generate_base_attributes() -> Dict[str, int]:
     return {
@@ -121,21 +128,46 @@ def _generate_base_attributes() -> Dict[str, int]:
     }
 
 
-def _distribute_random_points(attributes: Dict[str, int], points: int) -> None:
+def _distribute_random_points(attributes: Dict[str, int], points: int, primary_attr: Optional[str] = None) -> None:
+    """
+    Distribuye puntos extra con sesgo hacia el atributo primario de la clase.
+    DEBUG: 70% de probabilidad de favorecer el atributo principal.
+    """
     attr_keys = list(attributes.keys())
     for _ in range(points):
-        attr = random.choice(attr_keys)
-        if attributes[attr] < MAX_ATTRIBUTE_VALUE:
-            attributes[attr] += 1
+        # Lógica de especialización: 70% atributo primario, 30% resto
+        if primary_attr and primary_attr in attributes and random.random() < 0.7:
+            target_attr = primary_attr
+        else:
+            target_attr = random.choice(attr_keys)
+            
+        if attributes[target_attr] < MAX_ATTRIBUTE_VALUE:
+            attributes[target_attr] += 1
 
 
-def _boost_skills(skills: Dict[str, int], points: int) -> Dict[str, int]:
+def _boost_skills(skills: Dict[str, int], points: int, primary_attr: Optional[str] = None) -> Dict[str, int]:
+    """
+    Mejora habilidades con sesgo hacia aquellas que dependen del atributo primario.
+    DEBUG: 60% de probabilidad de favorecer habilidades de clase.
+    """
     skill_keys = list(skills.keys())
     boosted = skills.copy()
+    
+    # Identificar habilidades vinculadas al atributo primario según SKILL_MAPPING
+    linked_skills = []
+    if primary_attr:
+        for skill_name, (attr1, attr2) in SKILL_MAPPING.items():
+            if skill_name in boosted and (attr1 == primary_attr or attr2 == primary_attr):
+                linked_skills.append(skill_name)
+    
     for _ in range(points):
-        if skill_keys:
+        # Lógica de especialización: 60% habilidades vinculadas, 40% resto
+        if linked_skills and random.random() < 0.6:
+            skill = random.choice(linked_skills)
+        else:
             skill = random.choice(skill_keys)
-            boosted[skill] += 1
+            
+        boosted[skill] += 1
     return boosted
 
 
@@ -231,10 +263,12 @@ def generate_identity_with_ai_sync(
     sex: BiologicalSex,
     age: int,
     traits: List[str],
-    attributes: Dict[str, int]
+    attributes: Dict[str, int],
+    skills: Dict[str, int]
 ) -> GeneratedIdentity:
     """
     Versión síncrona de generación de identidad con IA usando Schema Estricto para 3 BIOS.
+    Actualizado para considerar habilidades especializadas.
     """
     container = get_service_container()
 
@@ -250,7 +284,8 @@ def generate_identity_with_ai_sync(
         sex=sex.value,
         age=age,
         traits=", ".join(traits),
-        top_attributes=_get_top_attributes(attributes)
+        top_attributes=_get_top_attributes(attributes),
+        top_skills=_get_top_skills(skills)
     )
 
     # 1. Schema Estricto para las 3 biografías
@@ -260,7 +295,7 @@ def generate_identity_with_ai_sync(
             "nombre": types.Schema(type=types.Type.STRING),
             "apellido": types.Schema(type=types.Type.STRING),
             "bio_superficial": types.Schema(type=types.Type.STRING, description="Máx 1 oración. Visual/Hint."),
-            "bio_conocida": types.Schema(type=types.Type.STRING, description="Perfil profesional. 40 palabras."),
+            "bio_conocida": types.Schema(type=types.Type.STRING, description="Perfil profesional. Coherente con habilidades."),
             "bio_profunda": types.Schema(type=types.Type.STRING, description="Secretos y ganchos de misión."),
         },
         required=["nombre", "apellido", "bio_superficial", "bio_conocida", "bio_profunda"]
@@ -336,31 +371,39 @@ def generate_random_character_with_ai(
     xp = get_xp_for_level(level)
     race_name, race_data = _select_race(context)
     class_name, class_data = _select_class(level, context.force_class)
+    
+    # Identificar Atributo Primario para Especialización
+    primary_attr = class_data.get("bonus_attr")
+    
     age = random.randint(AGE_MIN, AGE_MAX)
     sex = random.choice([BiologicalSex.MALE, BiologicalSex.FEMALE])
     
     attributes = _generate_base_attributes()
+    
+    # Bonus de Raza
     for attr, bonus in race_data.get("bonus", {}).items():
         if attr in attributes:
             attributes[attr] = min(attributes[attr] + bonus, MAX_ATTRIBUTE_VALUE)
-            
-    if class_name != "Novato" and class_data.get("bonus_attr"):
-        bonus_attr = class_data["bonus_attr"]
-        if bonus_attr in attributes:
-            attributes[bonus_attr] = min(attributes[bonus_attr] + 1, MAX_ATTRIBUTE_VALUE)
-            
-    extra_attr_points = sum(1 for lvl in ATTRIBUTE_POINT_LEVELS if lvl <= level)
-    _distribute_random_points(attributes, extra_attr_points)
     
+    # Bonus Inicial de Clase (Nivel 3+)
+    if class_name != "Novato" and primary_attr:
+        if primary_attr in attributes:
+            attributes[primary_attr] = min(attributes[primary_attr] + 1, MAX_ATTRIBUTE_VALUE)
+            
+    # Distribución PONDERADA de puntos extra por nivel
+    extra_attr_points = sum(1 for lvl in ATTRIBUTE_POINT_LEVELS if lvl <= level)
+    _distribute_random_points(attributes, extra_attr_points, primary_attr)
+    
+    # Cálculo y Especialización de Habilidades
     skills = calculate_skills(attributes)
     skill_points = level * SKILL_POINTS_PER_LEVEL
-    skills = _boost_skills(skills, skill_points)
+    skills = _boost_skills(skills, skill_points, primary_attr)
     
     num_feats = sum(1 for lvl in FEAT_LEVELS if lvl <= level)
     feats = random.sample(AVAILABLE_FEATS, min(num_feats, len(AVAILABLE_FEATS)))
     traits = random.sample(PERSONALITY_TRAITS, k=2)
 
-    # Generación de identidad (3 Capas)
+    # Generación de identidad (3 Capas) - Ahora pasando habilidades para coherencia
     identity = generate_identity_with_ai_sync(
         race=race_name,
         char_class=class_name,
@@ -368,7 +411,8 @@ def generate_random_character_with_ai(
         sex=sex,
         age=age,
         traits=traits,
-        attributes=attributes
+        attributes=attributes,
+        skills=skills
     )
 
     full_name = f"{identity.nombre} {identity.apellido}"
@@ -377,7 +421,6 @@ def generate_random_character_with_ai(
 
     while full_name in existing_names and attempts < max_attempts:
         fallback_id = _generate_fallback_identity(race_name, sex)
-        # Add numeric suffix after first few attempts
         suffix = f"-{random.randint(100, 999)}" if attempts > 3 else ""
         identity = GeneratedIdentity(
             fallback_id.nombre, fallback_id.apellido + suffix,
@@ -386,7 +429,6 @@ def generate_random_character_with_ai(
         full_name = f"{identity.nombre} {identity.apellido}"
         attempts += 1
 
-    # Final fallback: add UUID suffix to guarantee uniqueness
     if full_name in existing_names:
         uuid_suffix = str(uuid.uuid4())[:4].upper()
         identity = GeneratedIdentity(
@@ -407,22 +449,19 @@ def generate_random_character_with_ai(
         except Exception:
             pass
 
-    # Estructura JSON actualizada con las 3 capas
     stats_json = {
         "bio": {
             "nombre": identity.nombre,
             "apellido": identity.apellido,
             "edad": age,
             "sexo": sex.value,
-            # Campo legacy: Ahora apunta a SUPERFICIAL (la corta)
             "biografia_corta": identity.bio_superficial,
-            # Nuevos campos
             "bio_superficial": identity.bio_superficial,
             "bio_conocida": identity.bio_conocida,
             "bio_profunda": identity.bio_profunda,
-            "nivel_acceso": BIO_ACCESS_UNKNOWN,  # Empieza como desconocido
+            "nivel_acceso": BIO_ACCESS_UNKNOWN,
             "ticks_reclutado": 0,
-            "ticks_como_conocido": 0,  # Contador para nivel amigo
+            "ticks_como_conocido": 0,
         },
         "taxonomia": {
             "raza": race_name,
@@ -476,7 +515,6 @@ def recruit_character_with_ai(
     max_level: int = 1,
     existing_names: Optional[List[str]] = None
 ) -> Optional[Dict[str, Any]]:
-    # Wrapper simple
     context = RecruitmentContext(
         player_id=player_id,
         location_planet_id=location_planet_id,
@@ -507,20 +545,13 @@ def generate_character_pool(
     max_level: int = 1,
     force_max_skills: bool = False
 ) -> List[Dict[str, Any]]:
-    """
-    Genera un grupo de candidatos y los persiste en DB como PERSONAJES con estado 'Candidato'.
-    PATRÓN: "Unified Character Persistence".
-    Permite player_id=None para pools sin dueño.
-    """
-    # --- VALIDACIÓN DEFENSIVA PARA DETECCIÓN DE BUGS ---
+    """Genera un grupo de candidatos especializados y los persiste."""
     if player_id is None:
         log_event(
-            "ADVERTENCIA CRÍTICA: Se ha solicitado generate_character_pool con player_id=None. "
-            "Los candidatos generados serán 'huérfanos' y no aparecerán en el Centro de Reclutamiento.",
+            "ADVERTENCIA CRÍTICA: Se ha solicitado generate_character_pool con player_id=None.",
             player_id=None,
             is_error=True
         )
-    # ---------------------------------------------------
 
     context = RecruitmentContext(
         player_id=player_id,
@@ -530,7 +561,6 @@ def generate_character_pool(
         max_level=max_level
     )
     
-    # Obtener tick actual para la persistencia
     try:
         state = get_world_state()
         current_tick = state.get('current_tick', 1)
@@ -540,41 +570,28 @@ def generate_character_pool(
     candidates = []
     existing_names: List[str] = []
     
-    log_event(f"SISTEMA: Generando {pool_size} candidatos en tabla maestra.", player_id)
+    log_event(f"SISTEMA: Generando {pool_size} candidatos especializados.", player_id)
 
-    # --- BUCLE DE GENERACIÓN Y PERSISTENCIA UNIFICADA ---
     for i in range(pool_size):
         try:
-            # 1. Generar Data en Memoria
             char_data = generate_random_character_with_ai(context, existing_names)
-            
-            # --- MODIFICACIÓN: Ubicación forzada para Elite/Pool ---
             char_data["ubicacion"] = "Centro de Reclutamiento"
             if "stats_json" in char_data and "estado" in char_data["stats_json"]:
                 char_data["stats_json"]["estado"]["ubicacion_local"] = "Centro de Reclutamiento"
 
-            # --- MODIFICACIÓN DEBUG: MAXIMIZAR HABILIDADES Y ATRIBUTOS ---
             if force_max_skills:
                 log_event(f"DEBUG: Aplicando stats MAXIMOS (99) al candidato {i+1}", player_id)
-                
-                # A) Maximizar Habilidades (Combate, Tecnología, etc.)
                 skills_dict = char_data.get("stats_json", {}).get("capacidades", {}).get("habilidades", {})
                 if skills_dict:
                     for skill_name in skills_dict:
                         skills_dict[skill_name] = 99
-                
-                # B) Maximizar Atributos (Fuerza, Intelecto, etc.)
                 attrs_dict = char_data.get("stats_json", {}).get("capacidades", {}).get("atributos", {})
                 if attrs_dict:
                     for attr_name in attrs_dict:
                         attrs_dict[attr_name] = 99
-            # ------------------------------------------------
             
-            # 2. Calcular Costo
             cost = _calculate_recruitment_cost(char_data["stats_json"])
             
-            # 3. Preparar Metadata de Reclutamiento (dentro del JSON)
-            # Esto elimina la necesidad de la tabla recruitment_candidates
             char_data["stats_json"]["recruitment_data"] = {
                 "costo": cost,
                 "tick_created": current_tick,
@@ -584,21 +601,17 @@ def generate_character_pool(
                 "discount_applied": False
             }
             
-            # 4. Establecer estado CANDIDATO
             char_data["estado"] = CharacterStatus.CANDIDATE.value
-            # Forzar conocimiento UNKNOWN explícitamente para evitar confusión
             char_data["initial_knowledge_level"] = KnowledgeLevel.UNKNOWN
             
-            # 5. PERSISTENCIA EN TABLA MAESTRA (characters)
             saved_candidate = create_character(player_id, char_data)
             
             if saved_candidate:
-                # Inyectamos el costo en el nivel superior para compatibilidad UI inmediata
                 saved_candidate["costo"] = cost 
                 candidates.append(saved_candidate)
                 existing_names.append(saved_candidate["nombre"])
             else:
-                log_event(f"Error: Falló persistencia de candidato {i+1} en tabla maestra.", player_id, is_error=True)
+                log_event(f"Error: Falló persistencia de candidato {i+1}.", player_id, is_error=True)
                 
         except Exception as e:
             log_event(f"Error crítico generando candidato {i+1}: {e}", player_id, is_error=True)
