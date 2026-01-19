@@ -504,7 +504,8 @@ def generate_character_pool(
     location_planet_id: Optional[int] = None,
     predominant_race: Optional[str] = None,
     min_level: int = 1,
-    max_level: int = 1
+    max_level: int = 1,
+    force_max_skills: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Genera un grupo de candidatos y los persiste en DB como PERSONAJES con estado 'Candidato'.
@@ -535,6 +536,13 @@ def generate_character_pool(
         try:
             # 1. Generar Data en Memoria
             char_data = generate_random_character_with_ai(context, existing_names)
+            
+            # --- MODIFICACIÓN DEBUG: MAXIMIZAR HABILIDADES ---
+            if force_max_skills:
+                skills_dict = char_data.get("stats_json", {}).get("capacidades", {}).get("habilidades", {})
+                for skill_name in skills_dict:
+                    skills_dict[skill_name] = 99
+            # ------------------------------------------------
             
             # 2. Calcular Costo
             cost = _calculate_recruitment_cost(char_data["stats_json"])

@@ -342,19 +342,22 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             else:
                 st.error("Error al añadir créditos.")
 
-        if st.button("🧪 Generar Candidato Elite (Lvl 10)", use_container_width=True, help="Genera un candidato de nivel 10 para pruebas de reclutamiento."):
+        # --- BOTÓN DE DEBUG ELITE ACTUALIZADO ---
+        if st.button("🧪 Generar Candidato Elite (Lvl 10, Skills 99)", use_container_width=True, help="Genera un candidato de nivel 10 con todas las habilidades al 99."):
             try:
                 generate_character_pool(
                     player_id=player.id,
                     pool_size=1,
                     min_level=10,
-                    max_level=10
+                    max_level=10,
+                    force_max_skills=True
                 )
-                st.toast("✅ Candidato de Nivel 10 generado en el Centro de Reclutamiento.")
+                st.toast("✅ Candidato Elite (Lvl 10, Skills 99) generado en el Centro de Reclutamiento.")
                 time.sleep(1) # Breve pausa para que se vea el toast antes del rerun
                 st.rerun()
             except Exception as e:
                 st.error(f"Error generando candidato de elite: {e}")
+        # ----------------------------------------
 
         if st.button("🗑️ ELIMINAR CUENTA", type="secondary", use_container_width=True, help="Elimina permanentemente el jugador y todos sus datos."):
             if delete_player_account(player.id):
