@@ -2,7 +2,7 @@
 """
 Servicio de Generación de Personajes con IA.
 Actualizado para generar Biografías Escalonadas (Tiered Biography System).
-Ahora persiste automáticamente los candidatos en el sistema de reclutamiento.
+Ahora maneja la persistencia automática de candidatos en el pool de reclutamiento.
 """
 
 import random
@@ -19,7 +19,7 @@ from data.database import get_service_container
 from data.log_repository import log_event
 from data.character_repository import create_character
 from data.planet_repository import get_planet_by_id
-# Nuevos imports para persistencia
+# --- IMPORTS PARA PERSISTENCIA ---
 from data.recruitment_repository import add_candidate
 from data.world_repository import get_world_state
 
