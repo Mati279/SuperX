@@ -82,7 +82,7 @@ INSTRUCCIONES DE GENERACIÓN (3 NIVELES):
 
 @dataclass
 class RecruitmentContext:
-    player_id: int
+    player_id: Optional[int] # Puede ser None para pools globales/locales
     location_planet_id: Optional[int] = None
     predominant_race: Optional[str] = None
     min_level: int = 1
@@ -499,7 +499,7 @@ def recruit_character_with_ai(
         return None
 
 def generate_character_pool(
-    player_id: int,
+    player_id: Optional[int],
     pool_size: int = 3,
     location_planet_id: Optional[int] = None,
     predominant_race: Optional[str] = None,
@@ -510,6 +510,7 @@ def generate_character_pool(
     """
     Genera un grupo de candidatos y los persiste en DB como PERSONAJES con estado 'Candidato'.
     PATRÓN: "Unified Character Persistence".
+    Permite player_id=None para pools sin dueño.
     """
     context = RecruitmentContext(
         player_id=player_id,
@@ -537,6 +538,11 @@ def generate_character_pool(
             # 1. Generar Data en Memoria
             char_data = generate_random_character_with_ai(context, existing_names)
             
+            # --- MODIFICACIÓN: Ubicación forzada para Elite/Pool ---
+            char_data["ubicacion"] = "Centro de Reclutamiento"
+            if "stats_json" in char_data and "estado" in char_data["stats_json"]:
+                char_data["stats_json"]["estado"]["ubicacion_local"] = "Centro de Reclutamiento"
+
             # --- MODIFICACIÓN DEBUG: MAXIMIZAR HABILIDADES Y ATRIBUTOS ---
             if force_max_skills:
                 log_event(f"DEBUG: Aplicando stats MAXIMOS (99) al candidato {i+1}", player_id)

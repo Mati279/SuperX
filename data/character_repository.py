@@ -196,9 +196,10 @@ def update_commander_profile(
         log_event(f"Error update comandante: {e}", player_id, is_error=True)
         raise Exception("Error actualizando perfil.")
 
-def create_character(player_id: int, character_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Persiste un personaje generado por character_engine (que ya viene en formato V2/DB ready).
+    Permite player_id=None para generar candidatos libres (Pool Global/Local sin dueño).
     """
     from data.game_config_repository import get_current_tick # Import local
 
@@ -219,15 +220,16 @@ def create_character(player_id: int, character_data: Dict[str, Any]) -> Optional
             new_char_id = new_char["id"]
             nombre = character_data.get('nombre', 'Unit')
             
-            # Persistir conocimiento inicial
-            if initial_knowledge:
-                set_character_knowledge_level(new_char_id, player_id, initial_knowledge)
-            else:
-                # REGLA DE ORO: Si no se especifica, por defecto es UNKNOWN.
-                # Esto asegura que los generados por "Cuadrilla" empiecen en 0.
-                set_character_knowledge_level(new_char_id, player_id, KnowledgeLevel.UNKNOWN)
+            # Persistir conocimiento inicial SOLO si hay un jugador asignado
+            if player_id is not None:
+                if initial_knowledge:
+                    set_character_knowledge_level(new_char_id, player_id, initial_knowledge)
+                else:
+                    # REGLA DE ORO: Si no se especifica, por defecto es UNKNOWN.
+                    # Esto asegura que los generados por "Cuadrilla" empiecen en 0.
+                    set_character_knowledge_level(new_char_id, player_id, KnowledgeLevel.UNKNOWN)
 
-            log_event(f"Reclutado: {nombre}", player_id)
+            log_event(f"Generado/Reclutado: {nombre}", player_id)
             return new_char
         return None
 
