@@ -2,7 +2,7 @@
 """
 Servicio de Generación de Personajes con IA.
 Actualizado para generar Biografías Escalonadas (Tiered Biography System).
-Implementa patrón de persistencia inmediata para candidatos de reclutamiento (Estilo Cuadrilla).
+Ahora persiste automáticamente los candidatos en el sistema de reclutamiento.
 """
 
 import random
@@ -25,7 +25,7 @@ from data.world_repository import get_world_state
 
 from core.constants import RACES, CLASSES
 from core.rules import calculate_skills
-from core.models import BiologicalSex, CharacterRole, KnowledgeLevel
+from core.models import BiologicalSex, CharacterRole
 from core.character_engine import (
     get_xp_for_level,
     AVAILABLE_FEATS,
@@ -36,7 +36,7 @@ from core.character_engine import (
     SKILL_POINTS_PER_LEVEL,
     ATTRIBUTE_POINT_LEVELS,
     FEAT_LEVELS,
-    BIO_ACCESS_UNKNOWN,
+    BIO_ACCESS_UNKNOWN,  # Nivel inicial: desconocido
 )
 
 from config.app_constants import TEXT_MODEL_NAME
@@ -509,7 +509,6 @@ def generate_character_pool(
 ) -> List[Dict[str, Any]]:
     """
     Genera un grupo de candidatos, calcula sus costos y los persiste en DB.
-    PATRÓN: "Generate & Persist Immediate Loop" (Estilo Cuadrilla).
     """
     context = RecruitmentContext(
         player_id=player_id,
@@ -529,33 +528,27 @@ def generate_character_pool(
     candidates = []
     existing_names: List[str] = []
     
-    log_event(f"SISTEMA: Iniciando generación de {pool_size} candidatos para reclutamiento.", player_id)
-
-    # --- BUCLE DE GENERACIÓN Y PERSISTENCIA INMEDIATA ---
-    for i in range(pool_size):
+    for _ in range(pool_size):
         try:
-            # 1. Generar Data en Memoria (Heavy Lifting con IA)
+            # 1. Generar Data
             char_data = generate_random_character_with_ai(context, existing_names)
             
-            # 2. Calcular Costo y adjuntar al dict
+            # 2. Calcular Costo y agregarlo al diccionario
+            # add_candidate busca 'costo' en el nivel superior del dict
             cost = _calculate_recruitment_cost(char_data["stats_json"])
             char_data["costo"] = cost
             
-            # 3. PERSISTENCIA INMEDIATA: Guardar en DB (recruitment_candidates)
-            # Esto replica la lógica de 'Cuadrilla': Se guarda ni bien nace.
+            # 3. Persistir inmediatamente en DB
             saved_candidate = add_candidate(player_id, char_data, current_tick)
             
             if saved_candidate:
                 candidates.append(saved_candidate)
                 existing_names.append(saved_candidate["nombre"])
-                # Log opcional detallado por candidato
-                # log_event(f"Candidato generado: {saved_candidate['nombre']}", player_id)
+                log_event(f"GENERACIÓN: Candidato {saved_candidate['nombre']} añadido al pool (Costo: {cost}).", player_id)
             else:
-                log_event(f"Error: Falló la persistencia del candidato {i+1}", player_id, is_error=True)
+                log_event("Error persistiendo candidato generado.", player_id, is_error=True)
                 
         except Exception as e:
-            log_event(f"Error crítico generando candidato {i+1}: {e}", player_id, is_error=True)
-            # Continuamos con el siguiente loop para no romper todo el proceso
-            continue
+            log_event(f"Error generando candidato en loop: {e}", player_id, is_error=True)
             
     return candidates
