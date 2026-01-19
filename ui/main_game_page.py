@@ -8,7 +8,7 @@ from services.gemini_service import resolve_player_action
 # --- Imports para STRT (Sistema de Tiempo) ---
 from core.time_engine import get_world_status_display, check_and_trigger_tick, debug_force_tick
 from data.world_repository import get_commander_location_display
-from data.player_repository import get_player_finances, delete_player_account, add_player_credits
+from data.player_repository import get_player_finances, delete_player_account, add_player_credits, reset_player_progress
 
 # --- Importar las vistas del juego ---
 from .faction_roster import render_faction_roster
@@ -347,6 +347,13 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
                 st.rerun()
             else:
                 st.error("Error al eliminar cuenta.")
+
+        if st.button("🔄 REINICIAR CUENTA (Debug)", type="secondary", use_container_width=True, help="Reinicia el progreso del jugador manteniendo la cuenta (Soft Reset)."):
+            if reset_player_progress(player.id):
+                st.success("✅ Cuenta reiniciada exitosamente.")
+                st.rerun()
+            else:
+                st.error("❌ Falló el reinicio de cuenta.")
 
 
 def _render_war_room_page():

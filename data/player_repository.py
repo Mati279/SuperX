@@ -335,3 +335,112 @@ def delete_player_account(player_id: int) -> bool:
     except Exception as e:
         print(f"❌ Error borrando cuenta {player_id}: {e}")
         return False
+
+
+def reset_player_progress(player_id: int) -> bool:
+    """
+    Realiza un 'Soft Reset' de la cuenta del jugador.
+    Elimina progreso, activos, personajes y exploración, pero MANTIENE la cuenta (ID, nombre, pass).
+    Luego re-ejecuta el Protocolo Génesis.
+
+    Args:
+        player_id: ID del jugador a reiniciar.
+    
+    Returns:
+        bool: True si el reinicio fue exitoso.
+    """
+    # Imports locales para evitar ciclos (Genesis Engine depende de otros repos que usan player_repo)
+    from core.genesis_engine import (
+        find_safe_starting_node,
+        generate_genesis_commander_stats,
+        apply_genesis_inventory,
+        initialize_fog_of_war
+    )
+    from data.planet_repository import create_planet_asset
+
+    db = _get_db()
+    print(f"🔄 [RESET] Iniciando reinicio de cuenta para jugador {player_id}")
+
+    try:
+        # 0. Obtener datos clave antes de limpiar (necesitamos nombre y facción)
+        player = get_player_by_id(player_id)
+        if not player:
+            print("❌ Jugador no encontrado para reset.")
+            return False
+            
+        # --- FASE 1: WIPE (Limpieza Profunda) ---
+        
+        # A. Limpiar Exploración
+        db.table("player_exploration").delete().eq("player_id", player_id).execute()
+        
+        # B. Limpiar Activos Planetarios (Bases)
+        db.table("planet_assets").delete().eq("player_id", player_id).execute()
+        
+        # C. Limpiar Personajes (Incluido el Comandante anterior)
+        db.table("characters").delete().eq("player_id", player_id).execute()
+        
+        # D. Limpiar Logs (Opcional, intentar borrar logs antiguos para chat limpio)
+        try:
+            db.table("logs").delete().eq("player_id", player_id).execute()
+        except Exception:
+            # Si la tabla se llama distinto o falla, no detener el proceso
+            pass
+
+        # E. Resetear Recursos y Estado en tabla players
+        db.table("players").update({
+            "creditos": 0,
+            "materiales": 0,
+            "componentes": 0,
+            "celulas_energia": 0,
+            "influencia": 0,
+            "recursos_lujo": {}
+        }).eq("id", player_id).execute()
+
+        print(f"✅ [RESET] Fase de limpieza completada para {player_id}")
+
+        # --- FASE 2: RE-GÉNESIS (Reconstrucción) ---
+
+        # 1. Localización y Base
+        start_system_id = find_safe_starting_node()
+        planet_res = db.table("planets").select("id").eq("system_id", start_system_id).limit(1).execute()
+        planet_id_val = planet_res.data[0]['id'] if planet_res.data else 1
+
+        create_planet_asset(
+            planet_id_val, 
+            start_system_id, 
+            player_id, 
+            f"Base {player.get('faccion_nombre', 'Facción')}", 
+            1000
+        )
+
+        # 2. Re-crear Comandante
+        stats = generate_genesis_commander_stats(player.get('nombre', 'Comandante'))
+        char_data = {
+            "player_id": player_id,
+            "nombre": player.get('nombre', 'Comandante'),
+            "rango": "Comandante",
+            "es_comandante": True,
+            "clase": "Operaciones",
+            "nivel": stats['nivel'],
+            "xp": stats['xp'],
+            "ubicacion": "Puesto de Mando",
+            "estado": "Disponible",
+            "stats_json": stats
+        }
+        db.table("characters").insert(char_data).execute()
+
+        # 3. Inventario Inicial
+        apply_genesis_inventory(player_id)
+
+        # 4. Niebla de Guerra
+        initialize_fog_of_war(player_id, start_system_id)
+
+        # Finalización
+        log_event("🔄 CUENTA REINICIADA: Protocolo Génesis re-ejecutado.", player_id)
+        print(f"✅ [RESET] Protocolo completado exitosamente para {player_id}")
+        return True
+
+    except Exception as e:
+        log_event(f"CRITICAL ERROR RESET ACCOUNT: {e}", player_id, is_error=True)
+        print(f"❌ Error crítico en Reset Account: {e}")
+        return False
