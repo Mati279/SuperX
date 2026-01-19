@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .mrg_constants import *
+from data.log_repository import log_event
 
 
 class ResultType(Enum):
@@ -119,7 +120,8 @@ def determine_result_type(roll: MRGRoll, margin: int) -> ResultType:
 def resolve_action(
     merit_points: int,
     difficulty: int,
-    action_description: str = ""
+    action_description: str = "",
+    player_id: Optional[int] = None
 ) -> MRGResult:
     """
     Ejecuta una acción completa del MRG.
@@ -127,6 +129,8 @@ def resolve_action(
     Args:
         merit_points: Valor total de atributo + habilidad del personaje.
         difficulty: Valor objetivo a superar (Estándar: 50).
+        action_description: Descripción breve de la acción para logs.
+        player_id: ID del jugador para auditoría en base de datos.
     """
     # 1. Tirada física
     roll = roll_2d50()
@@ -145,6 +149,22 @@ def resolve_action(
 
     # 4. Determinación de Resultado
     result_type = determine_result_type(roll, margin)
+
+    # 5. Auditoría (Logging)
+    try:
+        log_message = (
+            f"🎲 MRG [{action_description}]: "
+            f"2d50({roll.total}) + Bono({bonus}) - Dif({difficulty}) "
+            f"= Margen({margin}) >> {result_type.name}"
+        )
+        log_event(
+            message=log_message,
+            player_id=player_id,
+            event_type="MRG_AUDIT"
+        )
+    except Exception as e:
+        # Fallo silencioso del log para no interrumpir el juego, pero imprimimos en consola por si acaso
+        print(f"⚠️ Warning: Falló el log de auditoría MRG: {e}")
 
     return MRGResult(
         roll=roll,
