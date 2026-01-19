@@ -166,7 +166,10 @@ TOOL_DECLARATIONS = [
     ),
     types.FunctionDeclaration(
         name="get_filtered_roster",
-        description="Obtiene el expediente completo y visible de los personajes. Incluye atributos y habilidades (o las Top 5 si es desconocido). Úsala para comparar competencias (ej: mejor piloto, médico) analizando las 'habilidades_visibles' y 'atributos' en conjunto.",
+        description="""OBTIENE EXPEDIENTES DE PERSONAL.
+CRÍTICO: Devuelve JSON con 'habilidades_visibles' (Skills) y 'atributos' (Stats Base).
+USO OBLIGATORIO para evaluar competencia profesional (ej: "¿Quién es mejor médico?").
+IMPORTANTE: 'habilidades_visibles' define la competencia experta. 'atributos' es secundario.""",
         parameters=types.Schema(
             type=types.Type.OBJECT,
             properties={
