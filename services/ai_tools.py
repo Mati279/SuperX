@@ -98,23 +98,39 @@ def get_filtered_roster(player_id: int, source: str = "all") -> str:
         # Determinar Nivel de Conocimiento
         knowledge_level = get_character_knowledge_level(char_id, player_id)
 
+        # Preparar acceso a estructura V2 (Capacidades)
+        # Esto simplifica la lógica de fallback
+        capacidades = stats.get("capacidades", {})
+
         # Regla 1: Atributos SIEMPRE visibles (UI Parity)
-        # Manejo de estructura v2 vs legacy
-        if "capacidades" in stats and "atributos" in stats["capacidades"]:
-            attributes = stats["capacidades"]["atributos"]
+        if capacidades and "atributos" in capacidades:
+            attributes = capacidades["atributos"]
         else:
             attributes = stats.get("atributos", {})
 
         # Regla 2: Habilidades
         # get_visible_skills manejará top_n=5 para UNKNOWN
-        raw_skills = stats.get("habilidades", {})
+        # FIX V2: Buscar primero en capacidades['habilidades']
+        if capacidades and "habilidades" in capacidades:
+            raw_skills = capacidades["habilidades"]
+        else:
+            # Fallback legacy V1
+            raw_skills = stats.get("habilidades", {})
+            
         visible_skills = get_visible_skills(raw_skills, knowledge_level, top_n=5)
 
         # Regla 3: Biografía
         visible_bio = get_visible_biography(stats, knowledge_level)
 
         # Regla 4: Feats
-        visible_feats = get_visible_feats(stats.get("feats", []), knowledge_level)
+        # FIX V2: Buscar primero en capacidades['feats']
+        if capacidades and "feats" in capacidades:
+            raw_feats = capacidades["feats"]
+        else:
+            # Fallback legacy V1
+            raw_feats = stats.get("feats", [])
+
+        visible_feats = get_visible_feats(raw_feats, knowledge_level)
 
         # Construir objeto JSON
         entry = {
