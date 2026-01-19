@@ -512,6 +512,16 @@ def generate_character_pool(
     PATRÓN: "Unified Character Persistence".
     Permite player_id=None para pools sin dueño.
     """
+    # --- VALIDACIÓN DEFENSIVA PARA DETECCIÓN DE BUGS ---
+    if player_id is None:
+        log_event(
+            "ADVERTENCIA CRÍTICA: Se ha solicitado generate_character_pool con player_id=None. "
+            "Los candidatos generados serán 'huérfanos' y no aparecerán en el Centro de Reclutamiento.",
+            player_id=None,
+            is_error=True
+        )
+    # ---------------------------------------------------
+
     context = RecruitmentContext(
         player_id=player_id,
         location_planet_id=location_planet_id,
