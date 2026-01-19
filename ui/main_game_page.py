@@ -12,6 +12,9 @@ from core.time_engine import get_world_status_display, check_and_trigger_tick, d
 from data.world_repository import get_commander_location_display
 from data.player_repository import get_player_finances, delete_player_account, add_player_credits, reset_player_progress
 
+# --- Imports para Economía ---
+from core.economy_engine import get_player_projected_economy
+
 # --- Importar las vistas del juego ---
 from .faction_roster import render_faction_roster
 from .recruitment_center import show_recruitment_center
@@ -68,21 +71,43 @@ def render_main_game_page(cookie_manager):
 def _render_sticky_top_hud(player, commander):
     """
     Renderiza la barra superior STICKY (siempre visible).
-    Layout: Recursos CENTRADOS.
+    Layout: Recursos CENTRADOS con DELTAS de proyección.
     """
     finances = get_player_finances(player.id)
+    projection = get_player_projected_economy(player.id)
 
     # Helper para evitar crash por NoneType
     def safe_val(key):
         val = finances.get(key) if finances else None
         return val if val is not None else 0
+    
+    # Helper para formatear delta (proyección)
+    def fmt_delta(key):
+        val = projection.get(key, 0)
+        if val == 0:
+            return ""
+        
+        # Verde para positivo, Rojo para negativo
+        color = "#4caf50" if val > 0 else "#ff5252"
+        sign = "+" if val > 0 else "" # El negativo ya viene en el número
+        
+        return f'<span style="color: {color}; font-size: 0.7em; margin-left: 5px;">{sign}{val:,}</span>'
 
     # Preparar valores para el HTML (evita problemas de interpolación)
     creditos = f"{safe_val('creditos'):,}"
+    delta_creditos = fmt_delta('creditos')
+
     materiales = f"{safe_val('materiales'):,}"
+    delta_materiales = fmt_delta('materiales')
+
     componentes = f"{safe_val('componentes'):,}"
+    delta_componentes = fmt_delta('componentes')
+
     celulas = f"{safe_val('celulas_energia'):,}"
+    delta_celulas = fmt_delta('celulas_energia')
+
     influencia = f"{safe_val('influencia'):,}"
+    delta_influencia = fmt_delta('influencia')
 
     # CSS separado para mayor claridad
     hud_css = """
@@ -135,6 +160,8 @@ def _render_sticky_top_hud(player, commander):
         color: #e0e0e0 !important;
         font-size: 0.95em;
         white-space: nowrap;
+        display: flex;
+        align-items: center; 
     }
 
     @media (max-width: 800px) {
@@ -152,23 +179,23 @@ def _render_sticky_top_hud(player, commander):
         <div class="hud-resource-group">
             <div class="hud-metric" title="Créditos Estándar">
                 <span class="hud-icon">💳</span>
-                <span class="hud-value">{creditos}</span>
+                <span class="hud-value">{creditos}{delta_creditos}</span>
             </div>
             <div class="hud-metric" title="Materiales de Construcción">
                 <span class="hud-icon">📦</span>
-                <span class="hud-value">{materiales}</span>
+                <span class="hud-value">{materiales}{delta_materiales}</span>
             </div>
             <div class="hud-metric" title="Componentes Tecnológicos">
                 <span class="hud-icon">🧩</span>
-                <span class="hud-value">{componentes}</span>
+                <span class="hud-value">{componentes}{delta_componentes}</span>
             </div>
             <div class="hud-metric" title="Células de Energía">
                 <span class="hud-icon">⚡</span>
-                <span class="hud-value">{celulas}</span>
+                <span class="hud-value">{celulas}{delta_celulas}</span>
             </div>
             <div class="hud-metric" title="Influencia Política">
                 <span class="hud-icon">👑</span>
-                <span class="hud-value">{influencia}</span>
+                <span class="hud-value">{influencia}{delta_influencia}</span>
             </div>
         </div>
     </div>

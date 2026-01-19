@@ -549,3 +549,58 @@ def get_planet_economy_summary(planet: Dict[str, Any]) -> Dict[str, Any]:
         "population": population,
         "happiness": happiness
     }
+
+
+def get_player_projected_economy(player_id: int) -> Dict[str, int]:
+    """
+    Calcula la proyección de ingresos y gastos del próximo turno (Delta).
+    Esta función es Read-Only y se usa para el HUD.
+
+    Args:
+        player_id: ID del jugador
+
+    Returns:
+        Diccionario con deltas: {creditos, materiales, componentes, celulas_energia, influencia}
+    """
+    projection = {
+        "creditos": 0,
+        "materiales": 0,
+        "componentes": 0,
+        "celulas_energia": 0,
+        "influencia": 0
+    }
+
+    try:
+        planets = get_all_player_planets_with_buildings(player_id)
+        
+        for planet in planets:
+            # 1. Seguridad
+            infrastructure = planet.get("infraestructura_defensiva", 0)
+            security = calculate_security_multiplier(infrastructure)
+            
+            # 2. Ingresos (Créditos)
+            pop = planet.get("poblacion", 0)
+            happiness = planet.get("felicidad", 1.0)
+            income = calculate_income(pop, security, happiness)
+            projection["creditos"] += income
+
+            # 3. Producción y Mantenimiento
+            buildings = planet.get("buildings", [])
+            # Usamos los edificios tal como están en DB (is_active)
+            prod_summary = calculate_planet_production(buildings)
+            maintenance = calculate_building_maintenance(buildings)
+
+            projection["materiales"] += prod_summary.materiales
+            projection["componentes"] += prod_summary.componentes
+            projection["influencia"] += prod_summary.influencia
+            
+            # Energía = Producción - Consumo
+            energy_produced = prod_summary.celulas_energia
+            energy_consumed = maintenance.get("celulas_energia", 0)
+            projection["celulas_energia"] += (energy_produced - energy_consumed)
+
+    except Exception as e:
+        # En caso de error, logueamos pero retornamos 0s para no romper el HUD
+        log_event(f"Error en proyección económica HUD: {e}", player_id, is_error=True)
+
+    return projection
