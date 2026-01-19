@@ -2,6 +2,7 @@
 """
 Servicio de Generación de Personajes con IA.
 Actualizado para generar Biografías Escalonadas (Tiered Biography System).
+Ahora persiste automáticamente los candidatos en el sistema de reclutamiento.
 """
 
 import random
@@ -18,6 +19,9 @@ from data.database import get_service_container
 from data.log_repository import log_event
 from data.character_repository import create_character
 from data.planet_repository import get_planet_by_id
+# Nuevos imports para persistencia
+from data.recruitment_repository import add_candidate
+from data.world_repository import get_world_state
 
 from core.constants import RACES, CLASSES
 from core.rules import calculate_skills
@@ -153,6 +157,27 @@ def _select_class(level: int, force_class: Optional[str] = None) -> tuple[str, D
         return "Novato", {"desc": "Recién reclutado, aún sin especialización.", "bonus_attr": None}
     class_name, class_data = random.choice(list(CLASSES.items()))
     return class_name, class_data
+
+
+def _calculate_recruitment_cost(stats_json: Dict[str, Any]) -> int:
+    """Calcula el costo de contratación basado en nivel y atributos."""
+    try:
+        level = stats_json.get("progresion", {}).get("nivel", 1)
+        attributes = stats_json.get("capacidades", {}).get("atributos", {})
+        
+        # Costo base
+        base_cost = 50
+        
+        # Factor nivel (ej: Nivel 1 = 50, Nivel 5 = 250)
+        level_cost = level * 50
+        
+        # Factor atributos (suma total * 3)
+        total_attributes = sum(attributes.values())
+        attr_cost = total_attributes * 3
+        
+        return base_cost + level_cost + attr_cost
+    except Exception:
+        return 100 # Fallback seguro
 
 
 def _generate_fallback_identity(race: str, sex: BiologicalSex) -> GeneratedIdentity:
@@ -482,7 +507,9 @@ def generate_character_pool(
     min_level: int = 1,
     max_level: int = 1
 ) -> List[Dict[str, Any]]:
-    # Wrapper simple
+    """
+    Genera un grupo de candidatos, calcula sus costos y los persiste en DB.
+    """
     context = RecruitmentContext(
         player_id=player_id,
         location_planet_id=location_planet_id,
@@ -490,13 +517,38 @@ def generate_character_pool(
         min_level=min_level,
         max_level=max_level
     )
+    
+    # Obtener tick actual para la persistencia
+    try:
+        state = get_world_state()
+        current_tick = state.get('current_tick', 1)
+    except Exception:
+        current_tick = 1
+
     candidates = []
     existing_names: List[str] = []
+    
     for _ in range(pool_size):
         try:
-            character = generate_random_character_with_ai(context, existing_names)
-            candidates.append(character)
-            existing_names.append(character["nombre"])
+            # 1. Generar Data
+            char_data = generate_random_character_with_ai(context, existing_names)
+            
+            # 2. Calcular Costo y agregarlo al diccionario
+            # add_candidate busca 'costo' en el nivel superior del dict
+            cost = _calculate_recruitment_cost(char_data["stats_json"])
+            char_data["costo"] = cost
+            
+            # 3. Persistir inmediatamente en DB
+            saved_candidate = add_candidate(player_id, char_data, current_tick)
+            
+            if saved_candidate:
+                candidates.append(saved_candidate)
+                existing_names.append(saved_candidate["nombre"])
+                log_event(f"GENERACIÓN: Candidato {saved_candidate['nombre']} añadido al pool (Costo: {cost}).", player_id)
+            else:
+                log_event("Error persistiendo candidato generado.", player_id, is_error=True)
+                
         except Exception as e:
-            log_event(f"Error generando candidato: {e}", player_id, is_error=True)
+            log_event(f"Error generando candidato en loop: {e}", player_id, is_error=True)
+            
     return candidates
