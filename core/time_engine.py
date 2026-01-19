@@ -232,69 +232,34 @@ def _phase_concurrency_resolution():
 
 def _process_candidate_search(player_id: int, current_tick: int):
     """
-    Procesa la búsqueda de nuevos candidatos de reclutamiento.
-    Genera candidatos y los persiste en la base de datos.
+    Procesa la búsqueda de nuevos candidatos de reclutamiento (ASÍNCRONO).
+    Utiliza el servicio de generación moderno y unificado.
     """
-    from data.recruitment_repository import (
-        add_candidate,
-        get_tracked_candidate,
-        get_recruitment_candidates
-    )
-    from services.character_generation_service import generate_random_character_with_ai, RecruitmentContext
-    from data.character_repository import get_all_characters_by_player_id
+    # Importaciones locales para evitar dependencias circulares y usar el servicio correcto
+    from data.recruitment_repository import clear_untracked_candidates
+    from services.character_generation_service import generate_character_pool
 
     try:
-        # Verificar si hay candidato seguido (genera uno menos)
-        tracked = get_tracked_candidate(player_id)
-        pool_size = 3 if not tracked else 2
+        # 1. Limpiar candidatos anteriores no seguidos
+        # (Esto asegura que el roster se renueve completamente salvo los trackeados)
+        clear_untracked_candidates(player_id)
 
-        # Obtener nombres existentes para evitar duplicados
-        existing_chars = get_all_characters_by_player_id(player_id)
-        existing_candidates = get_recruitment_candidates(player_id)
+        # 2. Generar nuevos candidatos usando el servicio moderno
+        # generate_character_pool ya maneja la creación, persistencia y lógica de "trackeado" vs tamaño de pool
+        new_candidates = generate_character_pool(
+            player_id=player_id,
+            pool_size=3, # Tamaño estándar del pool
+            location_planet_id=None # Por defecto en la base principal o barracones
+        )
 
-        existing_names = []
-        for c in existing_chars:
-            existing_names.append(c.get('nombre', ''))
-        for c in existing_candidates:
-            existing_names.append(c.get('nombre', ''))
-
-        # Contexto de reclutamiento
-        context = RecruitmentContext(player_id=player_id, min_level=1, max_level=3)
-
-        # Generar candidatos
-        generated_count = 0
-        for _ in range(pool_size):
-            try:
-                char_data = generate_random_character_with_ai(context=context, existing_names=existing_names)
-
-                if char_data:
-                    stats = char_data.get("stats_json", {})
-                    nivel = stats.get("progresion", {}).get("nivel", 1)
-
-                    # Calcular costo
-                    atributos = stats.get("capacidades", {}).get("atributos", {})
-                    total_attrs = sum(atributos.values()) if atributos else 0
-                    costo = (nivel * 250) + (total_attrs * 5)
-                    if costo < 100:
-                        costo = 100
-
-                    candidate_data = {
-                        "nombre": char_data.get("nombre", "Desconocido"),
-                        "stats_json": stats,
-                        "costo": int(costo)
-                    }
-
-                    if add_candidate(player_id, candidate_data, current_tick):
-                        existing_names.append(char_data.get("nombre", ""))
-                        generated_count += 1
-
-            except Exception as e:
-                log_event(f"Error generando candidato: {e}", player_id, is_error=True)
-
-        log_event(f"RECLUTAMIENTO: {generated_count} nuevos candidatos disponibles en el Centro de Reclutamiento.", player_id)
+        count = len(new_candidates)
+        if count > 0:
+            log_event(f"RECLUTAMIENTO: Búsqueda completada. {count} nuevos candidatos disponibles en el Centro de Reclutamiento.", player_id)
+        else:
+            log_event("RECLUTAMIENTO: La red no encontró candidatos viables en este ciclo.", player_id)
 
     except Exception as e:
-        log_event(f"Error en búsqueda de candidatos: {e}", player_id, is_error=True)
+        log_event(f"Error crítico procesando búsqueda de candidatos: {e}", player_id, is_error=True)
 
 
 def _process_investigation(player_id: int, action_text: str):
