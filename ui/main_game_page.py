@@ -345,9 +345,9 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         # --- BOTÓN DE DEBUG ELITE ACTUALIZADO ---
         if st.button("🧪 Generar Candidato Elite (Lvl 10, Skills 99)", use_container_width=True, help="Genera un candidato de nivel 10 con todas las habilidades al 99."):
             try:
-                # Al pasar player_id=None, se crea como "Candidato" en el pool general (o local sin dueño)
+                # CORRECCIÓN: Pasar player.id en lugar de None para que aparezca en el Centro de Reclutamiento del usuario
                 generate_character_pool(
-                    player_id=None, 
+                    player_id=player.id, 
                     pool_size=1,
                     min_level=10,
                     max_level=10,
