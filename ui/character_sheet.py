@@ -58,11 +58,6 @@ def render_character_sheet(character_data, player_id):
     """
     Renderiza la ficha de personaje adaptándose estrictamente a las reglas de visibilidad por Nivel.
     Refactorizado para coincidir con la UI/UX de Recruitment Center (Badges, colores HTML, Headers).
-    
-    Reglas:
-    - UNKNOWN: Datos básicos, Atributos, Top 5 Skills. Bio = Bio Corta. (Feats 'visibles').
-    - KNOWN: Todo lo anterior + All Skills, All Feats, Personalidad. Bio = Bio Corta + Bio Conocida.
-    - FRIEND: Todo lo anterior. Bio = Bio Corta + Bio Conocida + Bio Profunda.
     """
     from data.character_repository import get_character_knowledge_level
     
@@ -94,7 +89,7 @@ def render_character_sheet(character_data, player_id):
         st.image(f"https://ui-avatars.com/api/?name={nombre.replace(' ', '+')}&background=random", caption=rango)
 
     with col_basic:
-        # Renderizado HTML para título y subtítulos con los colores oficiales
+        # Renderizado HTML para título y subtítulos
         header_html = f"""
         <div style="
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
@@ -140,22 +135,14 @@ def render_character_sheet(character_data, player_id):
         
         for i, (key, val) in enumerate(attr_items):
             color = _get_skill_color(val)
-            short_name = ATTR_ABBREVIATIONS.get(key.lower(), key[:3].upper())
-            
-            # HTML Pill para atributo
-            attr_html = f"""
-            <div style="
-                background: rgba(255,255,255,0.05); 
-                border: 1px solid {color}40; 
-                padding: 10px; 
-                border-radius: 6px; 
-                text-align: center;
-                margin-bottom: 8px;
-            ">
-                <div style="color: #aaa; font-size: 0.8em; text-transform: uppercase;">{key}</div>
-                <div style="color: {color}; font-size: 1.5em; font-weight: bold;">{val}</div>
-            </div>
-            """
+            # HTML Pill para atributo compactado
+            attr_html = (
+                f'<div style="background: rgba(255,255,255,0.05); border: 1px solid {color}40; '
+                f'padding: 10px; border-radius: 6px; text-align: center; margin-bottom: 8px;">'
+                f'<div style="color: #aaa; font-size: 0.8em; text-transform: uppercase;">{key}</div>'
+                f'<div style="color: {color}; font-size: 1.5em; font-weight: bold;">{val}</div>'
+                f'</div>'
+            )
             with acols[i % 3]:
                 st.markdown(attr_html, unsafe_allow_html=True)
 
@@ -166,11 +153,9 @@ def render_character_sheet(character_data, player_id):
         feats = _safe_get_data(stats, ['capacidades', 'feats'], ['feats'])
         
         if knowledge_level == KnowledgeLevel.UNKNOWN:
-            # UNKNOWN: "Se conocen sólo los Feats visibles".
             st.caption("👁️ *Sólo rasgos visibles a simple vista:*")
             st.write("No se observan rasgos físicos distintivos evidentes.")
         else:
-            # KNOWN / FRIEND: Todos los feats
             if feats:
                 feat_html_list = ""
                 for feat in feats:
@@ -181,7 +166,7 @@ def render_character_sheet(character_data, player_id):
                 st.caption("Sin talentos registrados.")
 
     with tab_skills:
-        # HABILIDADES (Estilo Badges/Pills)
+        # HABILIDADES (Estilo Badges/Pills corregido para evitar problemas de Markdown)
         skills = _safe_get_data(stats, ['capacidades', 'habilidades'], ['habilidades'])
         
         if skills:
@@ -196,25 +181,23 @@ def render_character_sheet(character_data, player_id):
                 display_skills = sorted_skills
 
             # Renderizado HTML en Bloque (Flow layout)
-            skills_html = '<div style="line-height: 2.2;">'
+            # NOTA: Se construye el HTML sin indentación interna para evitar que Streamlit lo interprete como Code Block
+            skills_html_parts = ['<div style="line-height: 2.2;">']
+            
             for sk, val in display_skills:
                 color = _get_skill_color(val)
-                skills_html += f"""
-                <span style="
-                    display: inline-block; 
-                    padding: 4px 12px; 
-                    margin: 3px; 
-                    border-radius: 12px; 
-                    background: rgba(255,255,255,0.05); 
-                    border: 1px solid {color}40; 
-                    color: {color}; 
-                    font-size: 0.9em;
-                ">
-                    {sk}: <b>{val}</b>
-                </span>
-                """
-            skills_html += '</div>'
-            st.markdown(skills_html, unsafe_allow_html=True)
+                pill = (
+                    f'<span style="display: inline-block; padding: 4px 12px; margin: 3px; '
+                    f'border-radius: 12px; background: rgba(255,255,255,0.05); '
+                    f'border: 1px solid {color}40; color: {color}; font-size: 0.9em;">'
+                    f'{sk}: <b>{val}</b></span>'
+                )
+                skills_html_parts.append(pill)
+            
+            skills_html_parts.append('</div>')
+            
+            full_skills_html = "".join(skills_html_parts)
+            st.markdown(full_skills_html, unsafe_allow_html=True)
             
             if knowledge_level == KnowledgeLevel.UNKNOWN and len(skills) > 5:
                 st.caption(f"... y {len(skills) - 5} habilidades más no evaluadas.")
@@ -223,7 +206,6 @@ def render_character_sheet(character_data, player_id):
 
     with tab_bio:
         # Lógica de Biografía Acumulativa
-        
         bio_corta = bio_data.get('biografia_corta') or bio_data.get('bio_superficial') or "Sin datos."
         bio_conocida = bio_data.get('bio_conocida', '')
         bio_profunda = bio_data.get('bio_profunda', '')
@@ -248,7 +230,6 @@ def render_character_sheet(character_data, player_id):
             st.markdown("**Perfil Psicológico:**")
             traits = _safe_get_data(stats, ['comportamiento', 'rasgos_personalidad'], ['rasgos', 'personalidad'])
             if traits:
-                # Estilo Pill para rasgos
                 traits_html = " ".join([f'<span style="background:#2d3436; color:#a55eea; padding:3px 8px; border-radius:4px; margin-right:5px; border:1px solid #a55eea40;">{t}</span>' for t in traits])
                 st.markdown(traits_html, unsafe_allow_html=True)
             else:
