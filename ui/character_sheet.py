@@ -3,6 +3,32 @@ import streamlit as st
 import pandas as pd
 from core.models import KnowledgeLevel, CharacterRole
 
+# --- ESTILOS VISUALES (REPLICADOS DE RECRUITMENT_CENTER) ---
+COLOR_SKILL_GRAY = "#888888"
+COLOR_SKILL_GREEN = "#26de81"
+COLOR_SKILL_BLUE = "#45b7d1"
+COLOR_SKILL_GOLD = "#ffd700"
+
+ATTR_ABBREVIATIONS = {
+    "fuerza": "FUE",
+    "agilidad": "AGI",
+    "tecnica": "TEC",
+    "intelecto": "INT",
+    "voluntad": "VOL",
+    "presencia": "PRE"
+}
+
+def _get_skill_color(value: int) -> str:
+    """Retorna el color apropiado segun el valor de la habilidad/atributo."""
+    if value < 8:
+        return COLOR_SKILL_GRAY
+    elif value <= 12:
+        return COLOR_SKILL_GREEN
+    elif value <= 16:
+        return COLOR_SKILL_BLUE
+    else:
+        return COLOR_SKILL_GOLD
+
 def _safe_get_data(stats, keys_v2, keys_v1_fallback, default_val=None):
     """
     Intenta recuperar datos buscando primero en la estructura V2 y luego en fallbacks V1.
@@ -31,6 +57,7 @@ def _safe_get_data(stats, keys_v2, keys_v1_fallback, default_val=None):
 def render_character_sheet(character_data, player_id):
     """
     Renderiza la ficha de personaje adaptándose estrictamente a las reglas de visibilidad por Nivel.
+    Refactorizado para coincidir con la UI/UX de Recruitment Center (Badges, colores HTML, Headers).
     
     Reglas:
     - UNKNOWN: Datos básicos, Atributos, Top 5 Skills. Bio = Bio Corta. (Feats 'visibles').
@@ -45,36 +72,53 @@ def render_character_sheet(character_data, player_id):
     # Determinar nivel de conocimiento REAL
     knowledge_level = get_character_knowledge_level(char_id, player_id)
 
-    # --- ENCABEZADO (Siempre visible para todos los niveles) ---
+    # --- DATOS BÁSICOS ---
+    bio_data = stats.get('bio', {})
+    tax = stats.get('taxonomia', {})
+    if not tax: tax = {'raza': stats.get('raza', 'Desconocido')}
+    
+    prog = stats.get('progresion', {})
+    if not prog: prog = {'clase': stats.get('clase', 'Novato'), 'nivel': stats.get('nivel', 1)}
+
+    nombre = character_data['nombre']
+    raza = tax.get('raza', 'Humano')
+    clase = prog.get('clase', 'Novato')
+    nivel = prog.get('nivel', 1)
+    edad = bio_data.get('edad', '??')
+    rango = character_data.get('rango', 'Agente')
+
+    # --- HEADER UNIFICADO (Estilo Recruitment) ---
     col_avatar, col_basic = st.columns([1, 3])
     
     with col_avatar:
-        rango = character_data.get('rango', 'Agente')
-        st.image(f"https://ui-avatars.com/api/?name={character_data['nombre'].replace(' ', '+')}&background=random", caption=rango)
+        st.image(f"https://ui-avatars.com/api/?name={nombre.replace(' ', '+')}&background=random", caption=rango)
 
     with col_basic:
-        st.subheader(f"{character_data['nombre']}")
+        # Renderizado HTML para título y subtítulos con los colores oficiales
+        header_html = f"""
+        <div style="
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #45b7d1;
+            margin-bottom: 10px;
+        ">
+            <div style="font-size: 1.8em; font-weight: bold; color: #fff; margin-bottom: 5px;">
+                {nombre}
+            </div>
+            <div style="font-size: 1em; color: #ccc;">
+                <span style="color: #a55eea; font-weight: bold;">{raza}</span> | 
+                <span style="color: #ffd700; font-weight: bold;">Nivel {nivel}</span> | 
+                <span style="color: #ccc;">{clase}</span> |
+                <span style="color: #888;">{edad} años</span>
+            </div>
+        </div>
+        """
+        st.markdown(header_html, unsafe_allow_html=True)
         
-        # Extracción segura de datos
-        bio_data = stats.get('bio', {})
-        tax = stats.get('taxonomia', {})
-        if not tax: tax = {'raza': stats.get('raza', 'Desconocido')}
-        
-        prog = stats.get('progresion', {})
-        if not prog: prog = {'clase': stats.get('clase', 'Novato'), 'nivel': stats.get('nivel', 1)}
-        
-        # Datos visibles en TODOS los niveles (incluso UNKNOWN)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.write(f"**Raza:** {tax.get('raza', 'Humano')}")
-            st.write(f"**Sexo:** {bio_data.get('sexo', 'Desconocido')}")
-            st.write(f"**Edad:** {bio_data.get('edad', '??')} años")
-        with c2:
-            st.write(f"**Clase:** {prog.get('clase', 'Novato')}")
-            st.write(f"**Nivel:** {prog.get('nivel', 1)}")
-            # XP solo visible si es KNOWN o superior
-            if knowledge_level != KnowledgeLevel.UNKNOWN:
-                st.write(f"**XP:** {prog.get('xp', 0)} / {prog.get('xp_next', 500)}")
+        # XP info (Solo KNOWN+)
+        if knowledge_level != KnowledgeLevel.UNKNOWN:
+            st.caption(f"**XP:** {prog.get('xp', 0)} / {prog.get('xp_next', 500)}")
 
     st.divider()
 
@@ -82,21 +126,40 @@ def render_character_sheet(character_data, player_id):
     tab_attrs, tab_skills, tab_bio, tab_debug = st.tabs(["📊 Capacidades", "🛠️ Habilidades", "📝 Biografía", "🕷️ Debug"])
     
     with tab_attrs:
-        # ATRIBUTOS: Visible para TODOS (UNKNOWN incluido)
+        # ATRIBUTOS: Estilo "Pills" (Visible para TODOS)
         attrs = _safe_get_data(stats, ['capacidades', 'atributos'], ['atributos'])
         if not attrs:
             st.warning("⚠️ Sin datos de atributos.")
             attrs = {k: 5 for k in ["fuerza", "agilidad", "tecnica", "intelecto", "voluntad", "presencia"]}
 
-        ac1, ac2, ac3 = st.columns(3)
-        ac1.metric("Fuerza", attrs.get("fuerza", 5))
-        ac1.metric("Intelecto", attrs.get("intelecto", 5))
+        st.markdown("##### Atributos Físicos y Mentales")
         
-        ac2.metric("Agilidad", attrs.get("agilidad", 5))
-        ac2.metric("Voluntad", attrs.get("voluntad", 5))
+        # Layout de 3 columnas para atributos
+        acols = st.columns(3)
+        attr_items = list(attrs.items())
         
-        ac3.metric("Técnica", attrs.get("tecnica", 5))
-        ac3.metric("Presencia", attrs.get("presencia", 5))
+        for i, (key, val) in enumerate(attr_items):
+            color = _get_skill_color(val)
+            short_name = ATTR_ABBREVIATIONS.get(key.lower(), key[:3].upper())
+            
+            # HTML Pill para atributo
+            attr_html = f"""
+            <div style="
+                background: rgba(255,255,255,0.05); 
+                border: 1px solid {color}40; 
+                padding: 10px; 
+                border-radius: 6px; 
+                text-align: center;
+                margin-bottom: 8px;
+            ">
+                <div style="color: #aaa; font-size: 0.8em; text-transform: uppercase;">{key}</div>
+                <div style="color: {color}; font-size: 1.5em; font-weight: bold;">{val}</div>
+            </div>
+            """
+            with acols[i % 3]:
+                st.markdown(attr_html, unsafe_allow_html=True)
+
+        st.divider()
         
         # FEATS (Talentos)
         st.markdown("##### Talentos (Feats)")
@@ -109,14 +172,16 @@ def render_character_sheet(character_data, player_id):
         else:
             # KNOWN / FRIEND: Todos los feats
             if feats:
+                feat_html_list = ""
                 for feat in feats:
                     feat_name = feat['nombre'] if isinstance(feat, dict) else feat
-                    st.caption(f"🔸 {feat_name}")
+                    feat_html_list += f'<span style="display:inline-block; padding:4px 10px; margin:4px; border-radius:15px; background:#333; color:#eee; border:1px solid #555;">🔸 {feat_name}</span>'
+                st.markdown(feat_html_list, unsafe_allow_html=True)
             else:
                 st.caption("Sin talentos registrados.")
 
     with tab_skills:
-        # HABILIDADES
+        # HABILIDADES (Estilo Badges/Pills)
         skills = _safe_get_data(stats, ['capacidades', 'habilidades'], ['habilidades'])
         
         if skills:
@@ -130,10 +195,26 @@ def render_character_sheet(character_data, player_id):
                 # KNOWN / FRIEND: Todas
                 display_skills = sorted_skills
 
-            cols = st.columns(2)
-            for idx, (sk, val) in enumerate(display_skills):
-                with cols[idx % 2]:
-                    st.progress(min(val, 100) / 100, text=f"{sk}: {val}%")
+            # Renderizado HTML en Bloque (Flow layout)
+            skills_html = '<div style="line-height: 2.2;">'
+            for sk, val in display_skills:
+                color = _get_skill_color(val)
+                skills_html += f"""
+                <span style="
+                    display: inline-block; 
+                    padding: 4px 12px; 
+                    margin: 3px; 
+                    border-radius: 12px; 
+                    background: rgba(255,255,255,0.05); 
+                    border: 1px solid {color}40; 
+                    color: {color}; 
+                    font-size: 0.9em;
+                ">
+                    {sk}: <b>{val}</b>
+                </span>
+                """
+            skills_html += '</div>'
+            st.markdown(skills_html, unsafe_allow_html=True)
             
             if knowledge_level == KnowledgeLevel.UNKNOWN and len(skills) > 5:
                 st.caption(f"... y {len(skills) - 5} habilidades más no evaluadas.")
@@ -167,7 +248,9 @@ def render_character_sheet(character_data, player_id):
             st.markdown("**Perfil Psicológico:**")
             traits = _safe_get_data(stats, ['comportamiento', 'rasgos_personalidad'], ['rasgos', 'personalidad'])
             if traits:
-                st.write(", ".join([f"`{t}`" for t in traits]))
+                # Estilo Pill para rasgos
+                traits_html = " ".join([f'<span style="background:#2d3436; color:#a55eea; padding:3px 8px; border-radius:4px; margin-right:5px; border:1px solid #a55eea40;">{t}</span>' for t in traits])
+                st.markdown(traits_html, unsafe_allow_html=True)
             else:
                 st.caption("Sin datos psicológicos.")
 

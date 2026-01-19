@@ -218,19 +218,22 @@ def render_faction_roster():
                 if st.button("📄 Ficha", key=f"sheet_{char_id}", use_container_width=True):
                     view_character_dialog(char, player_id)
 
-            # --- COL 5: Despedir / Investigar ---
+            # --- COL 5: Despedir / Investigar (UX REFACTORIZADA) ---
             with cols[4]:
                 # Si es comandante no se puede despedir
                 if is_commander:
                     st.button("⛔", disabled=True, key=f"no_fire_{char_id}", help="No puedes despedir al Comandante.")
                 else:
-                    # Lógica de Despido
-                    if st.button("Despedir", key=f"fire_{char_id}", type="primary", use_container_width=True):
-                         if dismiss_character(char_id, player_id):
-                             st.success("Personal despedido.")
-                             st.rerun()
-                         else:
-                             st.error("Error al despedir.")
+                    # Lógica de Despido Segura (Popover)
+                    with st.popover("👋", help="Gestionar Salida"):
+                        st.markdown(f"**¿Despedir a {char['nombre']}?**")
+                        st.caption("Esta acción es irreversible.")
+                        if st.button("Confirmar Despido", key=f"confirm_fire_{char_id}", type="primary", use_container_width=True):
+                             if dismiss_character(char_id, player_id):
+                                 st.success("Personal despedido.")
+                                 st.rerun()
+                             else:
+                                 st.error("Error al despedir.")
             
             # --- Investigar (Si aplica) ---
             # Mostramos un pequeño link o botón de investigar debajo si es UNKNOWN
