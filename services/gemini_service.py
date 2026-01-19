@@ -36,8 +36,8 @@ from config.app_constants import TEXT_MODEL_NAME
 # --- CONSTANTES DE CONFIGURACIÓN ---
 
 MAX_TOOL_ITERATIONS = 10
-AI_TEMPERATURE = 0.7
-AI_MAX_TOKENS = 1024
+AI_TEMPERATURE = 0.3  # Reducido para mayor precisión en SQL y Tools
+AI_MAX_TOKENS = 8192  # Aumentado para permitir razonamientos complejos sin cortes
 AI_TOP_P = 0.95
 
 # Palabras clave que indican consulta informativa (no requiere tirada MRG)
@@ -357,7 +357,11 @@ def _extract_narrative(response: Any) -> str:
 
     narrative = "".join(text_parts).strip()
 
-    return narrative if narrative else "Orden procesada, Comandante."
+    # Fallback si el modelo devuelve string vacío o solo espacios
+    if not narrative:
+        return "Orden procesada. Datos visuales actualizados en pantalla."
+
+    return narrative
 
 
 # --- FUNCIÓN PRINCIPAL ---
