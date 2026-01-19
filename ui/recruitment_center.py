@@ -2,10 +2,10 @@
 """
 Centro de Reclutamiento Galactico - Contratacion de nuevos operativos.
 
-Sistema de Reclutamiento v2 (Homologado):
-- Generacion SINCRONA e inmediata de candidatos en tabla maestra (characters).
+Sistema de Reclutamiento v3 (Asíncrono):
+- Solicitud de búsqueda encolada.
+- Generación diferida al Tick.
 - Persistencia unificada.
-- Candidatos expiran en 4 Ticks.
 """
 
 import streamlit as st
@@ -19,12 +19,12 @@ from data.recruitment_repository import (
     remove_candidate, # Usado para expiración manual/debug si necesario
     set_candidate_tracked,
     get_tracked_candidate,
-    clear_untracked_candidates,
     set_investigation_state
 )
 from data.world_repository import (
     queue_player_action,
     has_pending_investigation,
+    has_pending_search,
     get_world_state,
     get_investigating_target_info
 )
@@ -32,9 +32,6 @@ from data.log_repository import log_event
 from config.app_constants import DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS, DEFAULT_RECRUIT_LOCATION
 from core.character_engine import BIO_ACCESS_UNKNOWN, BIO_ACCESS_KNOWN
 from core.recruitment_logic import process_recruitment
-
-# --- NUEVO IMPORT PARA GENERACION INMEDIATA ---
-from services.character_generation_service import generate_character_pool
 
 
 # --- CONSTANTES ---
@@ -369,44 +366,32 @@ def _process_recruitment_ui(player_id: int, candidate: Dict[str, Any], player_cr
         st.error(f"Error inesperado: {e}")
 
 
-def _handle_search_new_sync(player_id: int, player_credits: int):
+def _handle_search_request_async(player_id: int, player_credits: int):
     """
-    Maneja la solicitud de buscar nuevos candidatos de forma SINCRONA e INMEDIATA.
-    Genera candidatos con IA y los persiste en DB (tabla characters) al instante.
+    Maneja la solicitud de buscar nuevos candidatos de forma ASÍNCRONA.
+    Encola la orden '[INTERNAL_SEARCH_CANDIDATES]' y cobra por adelantado.
     """
 
     if player_credits < SEARCH_COST:
-        st.error("Creditos insuficientes para iniciar busqueda.")
+        st.error("Créditos insuficientes para iniciar búsqueda.")
         return
 
-    # 1. Cobrar
+    # 1. Cobrar por adelantado
     if not update_player_credits(player_id, player_credits - SEARCH_COST):
-        st.error("Error en transaccion financiera.")
+        st.error("Error en transacción financiera.")
         return
 
-    # 2. Limpiar candidatos anteriores
-    cleared = clear_untracked_candidates(player_id)
-
-    # 3. Generar nuevos candidatos (SINCRONO)
-    try:
-        with st.spinner("Contactando red de reclutamiento... (Generando perfiles con IA)"):
-            new_candidates = generate_character_pool(
-                player_id=player_id,
-                pool_size=3,
-                location_planet_id=None # Por defecto
-            )
-        
-        count = len(new_candidates)
-        if count > 0:
-            log_event(f"RECLUTAMIENTO: Busqueda completada. {count} nuevos candidatos encontrados.", player_id)
-            st.toast(f"Busqueda completada. -{SEARCH_COST} C.", icon="✅")
-            st.rerun()
-        else:
-            st.error("La red de reclutamiento no ha encontrado candidatos viables.")
-            
-    except Exception as e:
-        st.error(f"Error en el sistema de reclutamiento: {e}")
-        update_player_credits(player_id, player_credits) # Refund
+    # 2. Encolar acción interna
+    cmd = "[INTERNAL_SEARCH_CANDIDATES]"
+    
+    if queue_player_action(player_id, cmd):
+        log_event(f"RECLUTAMIENTO: Solicitud de búsqueda enviada a la red. Costo: {SEARCH_COST} C.", player_id)
+        st.toast(f"Solicitud enviada. -{SEARCH_COST} C.", icon="📡")
+        st.rerun()
+    else:
+        # Rollback si falla el encolado
+        update_player_credits(player_id, player_credits)
+        st.error("Error al conectar con la red de reclutamiento. Créditos devueltos.")
 
 
 def show_recruitment_center():
@@ -429,6 +414,7 @@ def show_recruitment_center():
 
     # Estados de bloqueo
     investigation_active = has_pending_investigation(player_id)
+    search_pending = has_pending_search(player_id)
 
     # Obtener info de investigacion en curso (para mostrar nombre del objetivo)
     investigating_target = get_investigating_target_info(player_id)
@@ -455,17 +441,23 @@ def show_recruitment_center():
 
     with col_refresh:
         st.write("")
-        can_search = player_credits >= SEARCH_COST
-
-        button_label = f"Buscar Nuevos\n({SEARCH_COST} C)"
         
-        if st.button(
-            button_label,
-            disabled=not can_search,
-            type="primary",
-            use_container_width=True
-        ):
-            _handle_search_new_sync(player_id, player_credits)
+        # Lógica del botón de búsqueda (Bloqueado si hay pendiente)
+        if search_pending:
+            st.info("📡 Búsqueda en curso")
+            st.caption("Resultados: Próximo Tick")
+        
+        else:
+            can_search = player_credits >= SEARCH_COST
+            button_label = f"Buscar Nuevos\n({SEARCH_COST} C)"
+            
+            if st.button(
+                button_label,
+                disabled=not can_search,
+                type="primary",
+                use_container_width=True
+            ):
+                _handle_search_request_async(player_id, player_credits)
 
     # Mensajes de estado
     if investigation_active:
@@ -477,20 +469,38 @@ def show_recruitment_center():
     # Contenido principal
     if not candidates:
         # Roster vacio
-        st.markdown("""
-            <div style="
-                text-align: center;
-                padding: 60px 20px;
-                background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-                border-radius: 15px;
-                border: 2px dashed #333;
-            ">
-                <div style="font-size: 4em; margin-bottom: 20px;">📭</div>
-                <h3 style="color: #888; margin-bottom: 10px;">No hay candidatos disponibles</h3>
-                <p style="color: #666;">Utiliza el boton <b>Buscar Nuevos</b> para contactar potenciales reclutas.</p>
-                <p style="color: #555; font-size: 0.85em;">La busqueda cuesta {search_cost} creditos y es <b>inmediata</b>.</p>
-            </div>
-        """.format(search_cost=SEARCH_COST), unsafe_allow_html=True)
+        
+        # Mensaje diferenciado si hay búsqueda pendiente o no
+        if search_pending:
+            st.markdown(f"""
+                <div style="
+                    text-align: center;
+                    padding: 60px 20px;
+                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                    border-radius: 15px;
+                    border: 2px dashed #45b7d1;
+                ">
+                    <div style="font-size: 4em; margin-bottom: 20px; animation: pulse 2s infinite;">📡</div>
+                    <h3 style="color: #45b7d1; margin-bottom: 10px;">Enlace de Reclutamiento Activo</h3>
+                    <p style="color: #ccc;">La red está procesando tu solicitud. Los perfiles de los candidatos llegarán en el próximo ciclo.</p>
+                </div>
+            """, unsafe_allow_html=True)
+            
+        else:
+            st.markdown(f"""
+                <div style="
+                    text-align: center;
+                    padding: 60px 20px;
+                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                    border-radius: 15px;
+                    border: 2px dashed #333;
+                ">
+                    <div style="font-size: 4em; margin-bottom: 20px;">📭</div>
+                    <h3 style="color: #888; margin-bottom: 10px;">No hay candidatos disponibles</h3>
+                    <p style="color: #666;">Utiliza el boton <b>Buscar Nuevos</b> para contactar potenciales reclutas.</p>
+                    <p style="color: #555; font-size: 0.85em;">La busqueda cuesta {SEARCH_COST} creditos y tarda <b>1 Tick</b>.</p>
+                </div>
+            """, unsafe_allow_html=True)
 
     else:
         # Mostrar candidatos
