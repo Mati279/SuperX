@@ -84,11 +84,18 @@ def roll_2d50() -> MRGRoll:
 
 
 def calculate_asymptotic_bonus(merit_points: int) -> int:
-    """Calcula el bono con saturación asintótica (Regla 3.2)."""
+    """
+    Calcula el bono con saturación asintótica (Regla 3.2).
+    Asegura que el bono sea siempre >= 0 y redondeado al entero más cercano.
+    """
     if merit_points <= 0:
         return 0
+        
     # Bono_Final = Max_Bono * (Puntos / (Puntos + K))
+    # Con K=150, la curva es más suave y premia la especialización.
     raw_bonus = ASYMPTOTIC_MAX_BONUS * (merit_points / (merit_points + ASYMPTOTIC_K_FACTOR))
+    
+    # Redondeo estándar y conversión a int
     return int(round(raw_bonus))
 
 
@@ -151,7 +158,8 @@ def resolve_action(
         log_msg = (
             f"🎲 MRG [{action_description}]: "
             f"2d50({roll.total}) + Bono({bonus}) - Dif({difficulty}) "
-            f"= Margen({margin}) >> {result_type.name}"
+            f"= Margen({margin}) >> {result_type.name} "
+            f"(Puntos Mérito: {merit_points}, K: {ASYMPTOTIC_K_FACTOR})"
         )
         
         log_event(

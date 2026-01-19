@@ -53,7 +53,9 @@ MALUS_EXPOSURE_RISK = True        # Revela posición o secretos
 # --- SATURACIÓN ASINTÓTICA (Regla 3.2) ---
 # Fórmula: Bono = Max * (Puntos / (Puntos + K))
 ASYMPTOTIC_MAX_BONUS = 100
-ASYMPTOTIC_K_FACTOR = 50
+# K=150 para suavizar la curva de especialización según Regla 3.2 revisada. 
+# Permite una progresión más sostenida (50pts->+25, 150pts->+50).
+ASYMPTOTIC_K_FACTOR = 150
 
 # --- ESTADOS DE ENTIDAD (Restaurados para compatibilidad) ---
 # Se alinean con los valores usados en CharacterStatus (core/models.py)
