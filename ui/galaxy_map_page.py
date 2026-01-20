@@ -2,7 +2,7 @@
 """
 Mapa Galáctico - Usa datos directamente de la Base de Datos.
 Refactorizado MMFR V2: Indicadores de Seguridad (Ss/Sp), Mantenimiento y Tooltips.
-Corrección: Cálculo de Seguridad (Ss) ponderada para planetas neutrales/habitados.
+Corrección: Visualización de Seguridad individual en lista de Cuerpos Celestiales.
 """
 import json
 import math
@@ -133,6 +133,10 @@ def _render_system_view():
     total_pop = 0.0
     security_sum = 0.0
 
+    # Constantes para cálculo
+    base_sec = ECONOMY_RATES.get('security_base', 25.0)
+    per_pop_sec = ECONOMY_RATES.get('security_per_1b_pop', 5.0)
+
     for p in planets:
         # Población real del planeta
         pop = p.get('poblacion') or 0.0
@@ -143,11 +147,7 @@ def _render_system_view():
             security_sum += (asset_map[p['id']] or 0.0)
         else:
             # Es neutral: Imputamos seguridad base por población
-            # Fórmula: Base + (Población * Tasa)
-            base = ECONOMY_RATES.get('security_base', 25.0)
-            per_pop = ECONOMY_RATES.get('security_per_1b_pop', 5.0)
-            
-            est_sec = base + (pop * per_pop)
+            est_sec = base_sec + (pop * per_pop_sec)
             est_sec = max(0.0, min(est_sec, 100.0)) # Clamp 0-100
             
             security_sum += est_sec
@@ -184,15 +184,25 @@ def _render_system_view():
             c2.markdown(f"<span style='color: {color}; font-weight: 700'>{planet['name']}</span>", unsafe_allow_html=True)
             
             p_pop = planet.get('poblacion') or 0.0
-            info_str = f"Recursos: {', '.join(planet.get('resources', [])[:3])}"
+            
+            # --- INFO STRING BUILDER ---
+            info_parts = []
+            info_parts.append(f"Recursos: {', '.join(planet.get('resources', [])[:3])}")
+            
             if p_pop > 0:
-                info_str += f" | Pop: {p_pop:.1f}B"
+                info_parts.append(f"👥 {p_pop:.1f}B")
             
-            # Indicar estado político
+            # Visualización de Seguridad Individual
             if planet['id'] in asset_map:
-                info_str += " | 🏳️ Colonizado"
+                sec_val = asset_map[planet['id']]
+                info_parts.append(f"🛡️ {sec_val:.1f} (Real)")
+                info_parts.append("🏳️ Colonizado")
+            else:
+                est_sec = base_sec + (p_pop * per_pop_sec)
+                est_sec = max(0.0, min(est_sec, 100.0))
+                info_parts.append(f"🛡️ ~{est_sec:.1f} (Est)")
             
-            c2.caption(info_str)
+            c2.caption(" | ".join(info_parts))
             
             if c3.button("Ver Detalles", key=f"pl_det_{planet['id']}"):
                 st.session_state.selected_planet_id = planet['id']
