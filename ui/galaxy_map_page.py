@@ -2,7 +2,7 @@
 """
 Mapa Galáctico - Usa datos directamente de la Base de Datos.
 Refactorizado MMFR V2: Indicadores de Seguridad (Ss/Sp), Mantenimiento y Tooltips.
-Corrección: Visualización de Seguridad individual en lista de Cuerpos Celestiales.
+Corrección: Seguridad 0 para planetas con Población 0 (Deshabitados).
 """
 import json
 import math
@@ -13,7 +13,7 @@ from data.database import get_supabase
 from data.planet_repository import (
     get_all_player_planets, 
     build_structure, 
-    get_planet_buildings,
+    get_planet_buildings, 
     get_base_slots_info,
     upgrade_base_tier,
     upgrade_infrastructure_module,
@@ -128,7 +128,7 @@ def _render_system_view():
     # 3. Calcular Métricas Consolidadas
     # Seguridad (Ss) = Promedio de la seguridad de todos los planetas.
     # Planetas con Asset -> Usan seguridad del Asset (Sp).
-    # Planetas Neutrales -> Usan seguridad estimada basada en población.
+    # Planetas Neutrales -> Si Pop > 0, estimación. Si Pop == 0, Seguridad 0.
     
     total_pop = 0.0
     security_sum = 0.0
@@ -146,9 +146,12 @@ def _render_system_view():
             # Es un asset colonizado: Usamos su seguridad real
             security_sum += (asset_map[p['id']] or 0.0)
         else:
-            # Es neutral: Imputamos seguridad base por población
-            est_sec = base_sec + (pop * per_pop_sec)
-            est_sec = max(0.0, min(est_sec, 100.0)) # Clamp 0-100
+            # Es neutral
+            if pop <= 0:
+                est_sec = 0.0
+            else:
+                est_sec = base_sec + (pop * per_pop_sec)
+                est_sec = max(0.0, min(est_sec, 100.0)) # Clamp 0-100
             
             security_sum += est_sec
 
@@ -166,7 +169,7 @@ def _render_system_view():
     
     with col_metrics:
         m1, m2 = st.columns(2)
-        m1.metric("Seguridad (Ss)", f"{ss:.1f}/100", help="Promedio de seguridad del sistema (incluye estimación para mundos neutrales).")
+        m1.metric("Seguridad (Ss)", f"{ss:.1f}/100", help="Promedio de seguridad del sistema (0 para mundos deshabitados).")
         m2.metric("Población Total", f"{total_pop:,.1f}B")
 
     st.subheader("Cuerpos celestiales")
@@ -191,6 +194,8 @@ def _render_system_view():
             
             if p_pop > 0:
                 info_parts.append(f"👥 {p_pop:.1f}B")
+            else:
+                info_parts.append("🏜️ Deshabitado")
             
             # Visualización de Seguridad Individual
             if planet['id'] in asset_map:
@@ -198,8 +203,11 @@ def _render_system_view():
                 info_parts.append(f"🛡️ {sec_val:.1f} (Real)")
                 info_parts.append("🏳️ Colonizado")
             else:
-                est_sec = base_sec + (p_pop * per_pop_sec)
-                est_sec = max(0.0, min(est_sec, 100.0))
+                if p_pop <= 0:
+                    est_sec = 0.0
+                else:
+                    est_sec = base_sec + (p_pop * per_pop_sec)
+                    est_sec = max(0.0, min(est_sec, 100.0))
                 info_parts.append(f"🛡️ ~{est_sec:.1f} (Est)")
             
             c2.caption(" | ".join(info_parts))
@@ -242,12 +250,15 @@ def _render_planet_view():
         m3.metric("Nivel de Base", f"Tier {asset['base_tier']}")
     else:
         # Cálculo estimado para visualización
-        base = ECONOMY_RATES.get('security_base', 25.0)
-        per_pop = ECONOMY_RATES.get('security_per_1b_pop', 5.0)
-        est_sec = min(100.0, base + (real_pop * per_pop))
+        if real_pop <= 0:
+            est_sec = 0.0
+        else:
+            base = ECONOMY_RATES.get('security_base', 25.0)
+            per_pop = ECONOMY_RATES.get('security_per_1b_pop', 5.0)
+            est_sec = min(100.0, base + (real_pop * per_pop))
         
         m1.metric("Población (Nativa/Neutral)", f"{real_pop:,.1f}B")
-        m2.metric("Seguridad Estimada", f"~{est_sec:.1f}/100", help="Valor proyectado si colonizaras este mundo.")
+        m2.metric("Seguridad Estimada", f"~{est_sec:.1f}/100", help="0 si está deshabitado.")
         m3.write("No colonizado por ti")
 
     st.markdown("---")
@@ -430,11 +441,14 @@ def _render_interactive_galaxy_map():
             current_sec = asset_security_map[pid]
         else:
             # Planeta neutral: Calcular seguridad estimada
-            base = ECONOMY_RATES.get('security_base', 25.0)
-            per_pop = ECONOMY_RATES.get('security_per_1b_pop', 5.0)
-            current_sec = base + (pop * per_pop)
-            # Clamp 0-100
-            current_sec = max(0.0, min(current_sec, 100.0))
+            if pop <= 0:
+                current_sec = 0.0
+            else:
+                base = ECONOMY_RATES.get('security_base', 25.0)
+                per_pop = ECONOMY_RATES.get('security_per_1b_pop', 5.0)
+                current_sec = base + (pop * per_pop)
+                # Clamp 0-100
+                current_sec = max(0.0, min(current_sec, 100.0))
             
         system_security_sum[sid] = system_security_sum.get(sid, 0.0) + current_sec
 
