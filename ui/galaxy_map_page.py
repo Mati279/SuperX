@@ -1,13 +1,14 @@
 # ui/galaxy_map_page.py
 """
 Mapa Galáctico - Usa datos directamente de la Base de Datos.
-Refactorizado MMFR V2: Indicadores de Seguridad (Ss/Sp) y Mantenimiento.
+Refactorizado MMFR V2: Indicadores de Seguridad (Ss/Sp), Mantenimiento y Tooltips.
 """
 import json
 import math
 import streamlit as st
 import streamlit.components.v1 as components
 from core.world_constants import METAL_RESOURCES, BUILDING_TYPES, INFRASTRUCTURE_MODULES
+from data.database import get_supabase
 from data.planet_repository import (
     get_all_player_planets, 
     build_structure, 
@@ -106,33 +107,43 @@ def _render_player_domains_panel():
 
 
 def _render_system_view():
-    from data.database import get_supabase
     system_id = st.session_state.selected_system_id
     system = get_system_by_id(system_id)
     if not system: _reset_to_galaxy_view(); return
 
-    # Calcular Ss (Seguridad del Sistema) - Promedio de seguridad de colonias existentes
-    # Esta métrica ayuda a saber qué tan seguro es viajar/comerciar aquí.
+    # 1. Obtener todos los planetas del sistema para el denominador
+    planets = get_planets_by_system_id(system_id)
+    total_planets = len(planets)
+
+    # 2. Obtener todos los assets del sistema para el numerador
     try:
-        assets_res = get_supabase().table("planet_assets").select("seguridad").eq("system_id", system_id).execute()
+        assets_res = get_supabase().table("planet_assets").select("seguridad, poblacion").eq("system_id", system_id).execute()
         assets = assets_res.data if assets_res.data else []
-        if assets:
-            ss = sum(a['seguridad'] for a in assets) / len(assets)
-        else:
-            ss = 0.0 # Sistema anárquico o vacío
-    except: ss = 0.0
+    except: 
+        assets = []
+
+    # 3. Calcular Métricas
+    # Seguridad (Ss): (Sum(Seguridad_Activos) + (0 * Deshabitados)) / Total_Planetas
+    security_sum = sum(a['seguridad'] for a in assets)
+    total_pop = sum(a['poblacion'] for a in assets)
+
+    if total_planets > 0:
+        ss = security_sum / total_planets
+    else:
+        ss = 0.0
 
     st.header(f"Sistema: {system.get('name', 'Desconocido')}")
     
-    col_back, col_ss = st.columns([5, 2])
+    col_back, col_metrics = st.columns([4, 3])
     col_back.button("← Volver al mapa", on_click=_reset_to_galaxy_view, type="primary")
     
-    with col_ss:
-        # Indicador Ss
-        st.metric("Seguridad Sistema (Ss)", f"{ss:.1f}" if assets else "N/A", help="Promedio de seguridad de todas las colonias del sistema.")
+    with col_metrics:
+        # Indicadores Ss y Población
+        m1, m2 = st.columns(2)
+        m1.metric("Seguridad (Ss)", f"{ss:.1f}/100", help="Promedio de seguridad ponderado por el total de planetas del sistema.")
+        m2.metric("Población Total", f"{total_pop:,.1f}B")
 
     st.subheader("Cuerpos celestiales")
-    planets = get_planets_by_system_id(system_id)
     
     for ring in range(1, 10):
         planet = next((p for p in planets if p.get('orbital_ring') == ring), None)
@@ -154,7 +165,6 @@ def _render_system_view():
 
 
 def _render_planet_view():
-    from data.database import get_supabase
     player = get_player()
     planet_id = st.session_state.selected_planet_id
 
@@ -256,7 +266,7 @@ def _render_construction_ui(player, planet, planet_asset):
                 if build_structure(planet_asset['id'], player.id, selected): st.rerun()
 
 
-# FUNCIONES DE NAVEGACIÓN (Intermedias para evitar errores de scope en streamlit)
+# FUNCIONES DE NAVEGACIÓN
 def _reset_to_galaxy_view():
     st.session_state.map_view = "galaxy"
     st.rerun()
@@ -265,12 +275,7 @@ def _reset_to_system_view():
     st.session_state.map_view = "system"
     st.rerun()
 
-# El resto del código de galaxy_map_page se mantiene igual (renderizado de canvas, etc.)
-# ya que usamos _render_interactive_galaxy_map importado o definido anteriormente.
-# Para este archivo completo asumimos que _render_interactive_galaxy_map, _scale_positions, etc
-# están presentes o se copian del archivo original si no se modificaron.
-# Dado que el archivo original tenía esas funciones, deberíamos incluirlas para que el archivo sea 'copiar y pegar'.
-# A continuación incluyo las funciones faltantes para completar el archivo.
+# --- UTILS MAPA ---
 
 def _get_player_home_info():
     player = get_player()
@@ -287,6 +292,7 @@ def _scale_positions(systems: list, target_width: int = 1400, target_height: int
     if not systems: return {}
     xs = [s.get('x', 0) for s in systems]
     ys = [s.get('y', 0) for s in systems]
+    if not xs: return {}
     min_x, max_x = min(xs), max(xs)
     min_y, max_y = min(ys), max(ys)
     span_x = max(max_x - min_x, 1)
@@ -336,6 +342,32 @@ def _render_interactive_galaxy_map():
     starlanes = get_starlanes_from_db()
     if not systems: st.error("No se pudieron cargar los sistemas."); return
 
+    # --- PRE-CÁLCULO DE MÉTRICAS MASIVO (Optimización) ---
+    # Evitamos N+1 queries obteniendo todo de una vez
+    
+    # 1. Contar planetas por sistema (Denominador Seguridad)
+    try:
+        all_planets_data = get_supabase().table("planets").select("system_id").execute().data
+        system_planet_counts = {}
+        for p in all_planets_data:
+            sid = p['system_id']
+            system_planet_counts[sid] = system_planet_counts.get(sid, 0) + 1
+    except:
+        system_planet_counts = {}
+
+    # 2. Sumar seguridad y población de assets (Numerador)
+    try:
+        all_assets_data = get_supabase().table("planet_assets").select("system_id, seguridad, poblacion").execute().data
+        system_assets_stats = {} # {sys_id: {'sec': float, 'pop': float}}
+        for a in all_assets_data:
+            sid = a['system_id']
+            if sid not in system_assets_stats: system_assets_stats[sid] = {'sec': 0.0, 'pop': 0.0}
+            system_assets_stats[sid]['sec'] += a['seguridad']
+            system_assets_stats[sid]['pop'] += a['poblacion']
+    except:
+        system_assets_stats = {}
+
+    # --- UI DE CONTROL ---
     systems_sorted = sorted(systems, key=lambda s: s.get('id', 0))
     player_home_system_id, _ = _get_player_home_info()
 
@@ -362,7 +394,17 @@ def _render_interactive_galaxy_map():
         if st.session_state.preview_system_id is not None:
             preview_sys = next((s for s in systems if s['id'] == st.session_state.preview_system_id), None)
             if preview_sys:
+                
+                # Obtener métricas para el preview
+                pid = preview_sys['id']
+                p_count = system_planet_counts.get(pid, 0)
+                stats = system_assets_stats.get(pid, {'sec': 0.0, 'pop': 0.0})
+                sys_ss = stats['sec'] / p_count if p_count > 0 else 0.0
+                
                 st.subheader(f"🔭 {preview_sys.get('name', 'Sistema')}")
+                st.write(f"**Población:** {stats['pop']:,.1f}B")
+                st.write(f"**Seguridad (Ss):** {sys_ss:.1f}/100")
+                
                 if st.button("🚀 ENTRAR AL SISTEMA", type="primary", use_container_width=True):
                     st.session_state.selected_system_id = preview_sys['id']
                     st.session_state.map_view = "system"
@@ -377,10 +419,24 @@ def _render_interactive_galaxy_map():
         x, y = scaled_positions[sys['id']]
         star_class = sys.get('star_class', 'G')
         base_radius = STAR_SIZES.get(star_class, 7) * star_scale
+        
+        # Calcular métricas individuales para el tooltip
+        sid = sys['id']
+        p_count = system_planet_counts.get(sid, 0)
+        stats = system_assets_stats.get(sid, {'sec': 0.0, 'pop': 0.0})
+        calculated_ss = stats['sec'] / p_count if p_count > 0 else 0.0
+        
         systems_payload.append({
-            "id": sys['id'], "name": sys.get('name', f"Sys {sys['id']}"),
-            "class": star_class, "x": round(x, 2), "y": round(y, 2),
-            "color": STAR_COLORS.get(star_class, "#FFFFFF"), "radius": round(base_radius, 2)
+            "id": sys['id'], 
+            "name": sys.get('name', f"Sys {sys['id']}"),
+            "class": star_class, 
+            "x": round(x, 2), 
+            "y": round(y, 2),
+            "color": STAR_COLORS.get(star_class, "#FFFFFF"), 
+            "radius": round(base_radius, 2),
+            # Datos extra para tooltip
+            "ss": round(calculated_ss, 1),
+            "pop": round(stats['pop'], 2)
         })
 
     connections = _build_connections_from_starlanes(starlanes, scaled_positions) if show_routes and starlanes else _build_connections_fallback(systems, scaled_positions) if show_routes else []
@@ -389,18 +445,82 @@ def _render_interactive_galaxy_map():
     connections_json = json.dumps(connections)
     player_home_json = json.dumps([player_home_system_id] if player_home_system_id else [])
 
-    # HTML/JS Minificado para el mapa
+    # HTML/JS con Tooltips
     html_template = f"""
     <!DOCTYPE html><html><head><script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
-    <style>body{{margin:0;background:#000;overflow:hidden}}.map-frame{{width:100%;height:860px;border-radius:12px;background:radial-gradient(circle at 50% 35%,#0f1c2d,#070b12 75%);border:1px solid #1f2a3d}}svg{{width:100%;height:100%;cursor:grab}}.star{{cursor:pointer;transition:all 0.2s}}.star:hover{{stroke:white;stroke-width:2px}}.star.player-home{{stroke:#4dff88;stroke-width:3px;animation:pulse 2s infinite}}@keyframes pulse{{0%{{stroke-opacity:0.5}}50%{{stroke-opacity:1}}100%{{stroke-opacity:0.5}}}}.route{{stroke:#5b7bff;stroke-opacity:0.2;stroke-width:1.5;pointer-events:none}}</style>
-    </head><body><div class="map-frame"><svg id="galaxy-map" viewBox="0 0 {canvas_width} {canvas_height}"><g id="routes"></g><g id="stars"></g></svg></div>
+    <style>
+        body{{margin:0;background:#000;overflow:hidden;font-family:'Courier New', monospace;}}
+        .map-frame{{width:100%;height:860px;border-radius:12px;background:radial-gradient(circle at 50% 35%,#0f1c2d,#070b12 75%);border:1px solid #1f2a3d;position:relative;}}
+        svg{{width:100%;height:100%;cursor:grab}}
+        .star{{cursor:pointer;transition:all 0.2s}}
+        .star:hover{{stroke:white;stroke-width:2px;filter:drop-shadow(0 0 8px rgba(255,255,255,0.8));}}
+        .star.player-home{{stroke:#4dff88;stroke-width:3px;animation:pulse 2s infinite}}
+        @keyframes pulse{{0%{{stroke-opacity:0.5}}50%{{stroke-opacity:1}}100%{{stroke-opacity:0.5}}}}
+        .route{{stroke:#5b7bff;stroke-opacity:0.2;stroke-width:1.5;pointer-events:none}}
+        
+        /* Tooltip Styling */
+        #tooltip {{
+            position: absolute;
+            background: rgba(10, 15, 20, 0.95);
+            border: 1px solid #4dff88;
+            color: #e0e0e0;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            z-index: 1000;
+            box-shadow: 0 0 10px rgba(77, 255, 136, 0.2);
+            white-space: nowrap;
+        }}
+    </style>
+    </head><body>
+    <div class="map-frame">
+        <div id="tooltip"></div>
+        <svg id="galaxy-map" viewBox="0 0 {canvas_width} {canvas_height}">
+            <g id="routes"></g>
+            <g id="stars"></g>
+        </svg>
+    </div>
     <script>
     const systems={systems_json},routes={connections_json},homes=new Set({player_home_json});
     const sLayer=document.getElementById("stars"),rLayer=document.getElementById("routes");
+    const tooltip=document.getElementById("tooltip");
+
     routes.forEach(r=>{{const l=document.createElementNS("http://www.w3.org/2000/svg","line");l.setAttribute("x1",r.ax);l.setAttribute("y1",r.ay);l.setAttribute("x2",r.bx);l.setAttribute("y2",r.by);l.classList.add("route");rLayer.appendChild(l)}});
-    systems.forEach(s=>{{const c=document.createElementNS("http://www.w3.org/2000/svg","circle");c.setAttribute("cx",s.x);c.setAttribute("cy",s.y);c.setAttribute("r",s.radius);c.setAttribute("fill",s.color);c.classList.add("star");if(homes.has(s.id))c.classList.add("player-home");
-    c.onclick=()=>{{const u=new URL(window.parent.location.href);u.searchParams.set("preview_id",s.id);window.parent.location.href=u.toString()}};sLayer.appendChild(c)}});
-    svgPanZoom("#galaxy-map",{{zoomEnabled:true,controlIconsEnabled:false,fit:true,center:true,minZoom:0.5,maxZoom:10}});
+    
+    systems.forEach(s=>{{
+        const c=document.createElementNS("http://www.w3.org/2000/svg","circle");
+        c.setAttribute("cx",s.x);c.setAttribute("cy",s.y);c.setAttribute("r",s.radius);c.setAttribute("fill",s.color);
+        c.classList.add("star");
+        if(homes.has(s.id))c.classList.add("player-home");
+        
+        // Interaction Logic
+        c.onclick=()=>{{const u=new URL(window.parent.location.href);u.searchParams.set("preview_id",s.id);window.parent.location.href=u.toString()}};
+        
+        // Tooltip Events
+        c.onmouseenter = () => {{
+            tooltip.style.display = 'block';
+            tooltip.innerHTML = `<strong>${{s.name}}</strong> (Clase ${{s.class}})<br>` +
+                                `<span style="color:#aaa">Población:</span> ${{s.pop}}B<br>` +
+                                `<span style="color:#aaa">Seguridad (Ss):</span> ${{s.ss}}`;
+        }};
+        
+        c.onmousemove = (e) => {{
+            // Coordenadas relativas al viewport
+            tooltip.style.left = (e.clientX + 15) + 'px';
+            tooltip.style.top = (e.clientY + 15) + 'px';
+        }};
+        
+        c.onmouseleave = () => {{
+            tooltip.style.display = 'none';
+        }};
+
+        sLayer.appendChild(c)
+    }});
+    
+    // PanZoom Initialization
+    const panZoom = svgPanZoom("#galaxy-map",{{zoomEnabled:true,controlIconsEnabled:false,fit:true,center:true,minZoom:0.5,maxZoom:10}});
     </script></body></html>
     """
     with col_map:
