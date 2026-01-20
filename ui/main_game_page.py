@@ -420,13 +420,25 @@ def _render_war_room_page():
                 with st.chat_message("user"): st.write(mensaje.replace("[PLAYER] ", ""))
             else:
                 with st.chat_message("assistant"): 
-                    # --- Lógica de renderizado de imagen táctica ---
-                    if mensaje.startswith("IMAGE_URL:"):
-                        # Extraer URL y mostrar imagen
-                        url = mensaje.replace("IMAGE_URL:", "").strip()
-                        st.image(url, use_container_width=True)
+                    # 1. Limpieza de prefijo del sistema
+                    clean_msg = mensaje.replace("🤖 [ASISTENTE] ", "").strip()
+                    
+                    # 2. Renderizado Híbrido (Texto + Imagen)
+                    if "IMAGE_URL:" in clean_msg:
+                        parts = clean_msg.split("IMAGE_URL:")
+                        text_part = parts[0].strip()
+                        url_part = parts[1].strip()
+                        
+                        # Mostrar texto si existe
+                        if text_part:
+                            st.markdown(text_part)
+                            
+                        # Mostrar imagen si la URL no está vacía
+                        if url_part:
+                            st.image(url_part, use_container_width=True)
                     else:
-                        st.write(mensaje)
+                        # Solo texto normal
+                        st.markdown(clean_msg)
 
     action = st.chat_input("Escriba sus órdenes...")
     if action:
