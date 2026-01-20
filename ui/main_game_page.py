@@ -335,7 +335,7 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         # --- SECCIÓN: IDENTIDAD ---
         st.header(f"{player.faccion_nombre}")
         if player.banner_url:
-            # FIX: width="stretch" en lugar de use_container_width=True para imágenes
+            # FIX: width="stretch" para imágenes en versiones nuevas de Streamlit
             st.image(player.banner_url, width="stretch")
 
         st.caption(f"Comandante {commander.nombre}")
@@ -347,7 +347,7 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
                  "Cuadrilla", "Centro de Reclutamiento", "Flota"]
         
         for p in pages:
-            # Botones siguen usando use_container_width
+            # Los botones siguen usando use_container_width (correcto para widgets)
             if st.button(p, use_container_width=True, type="primary" if st.session_state.current_page == p else "secondary"):
                 st.session_state.current_page = p
                 st.rerun()
@@ -421,20 +421,39 @@ def _render_war_room_page():
                     # 1. Limpieza de prefijo del sistema
                     clean_msg = mensaje.replace("🤖 [ASISTENTE] ", "").strip()
                     
-                    # 2. Renderizado Híbrido (Texto + Imagen)
+                    # 2. Renderizado Híbrido (Texto + Imagen + Texto)
                     if "IMAGE_URL:" in clean_msg:
-                        parts = clean_msg.split("IMAGE_URL:")
-                        text_part = parts[0].strip()
-                        url_part = parts[1].strip()
-                        
-                        # Mostrar texto si existe
-                        if text_part:
-                            st.markdown(text_part)
+                        try:
+                            # Dividir en antes y después de la etiqueta
+                            parts = clean_msg.split("IMAGE_URL:", 1)
+                            pre_text = parts[0].strip()
+                            remainder = parts[1].strip()
                             
-                        # Mostrar imagen si la URL no está vacía
-                        if url_part:
-                            # FIX: width="stretch" para evitar warning
-                            st.image(url_part, width="stretch")
+                            # Separar URL del posible texto posterior (asumiendo que la URL termina en espacio)
+                            # Si hay un espacio, hay texto después. Si no, es solo URL.
+                            if " " in remainder:
+                                url_part, post_text = remainder.split(" ", 1)
+                            else:
+                                url_part = remainder
+                                post_text = ""
+                            
+                            # Limpieza final de URL
+                            url_part = url_part.strip()
+                            
+                            # Renderizar componentes en orden secuencial (st.chat_message permite stacking)
+                            if pre_text:
+                                st.markdown(pre_text)
+                                
+                            if url_part:
+                                # FIX: width="stretch" para cumplir con deprecación de use_container_width
+                                st.image(url_part, width="stretch")
+                                
+                            if post_text:
+                                st.markdown(post_text)
+                                
+                        except Exception:
+                            # Fallback seguro: Si algo falla en el parsing, mostrar texto plano
+                            st.write(clean_msg)
                     else:
                         # Solo texto normal
                         st.markdown(clean_msg)
