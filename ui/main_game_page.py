@@ -419,7 +419,14 @@ def _render_war_room_page():
             if "[PLAYER]" in mensaje:
                 with st.chat_message("user"): st.write(mensaje.replace("[PLAYER] ", ""))
             else:
-                with st.chat_message("assistant"): st.write(mensaje)
+                with st.chat_message("assistant"): 
+                    # --- Lógica de renderizado de imagen táctica ---
+                    if mensaje.startswith("IMAGE_URL:"):
+                        # Extraer URL y mostrar imagen
+                        url = mensaje.replace("IMAGE_URL:", "").strip()
+                        st.image(url, use_container_width=True)
+                    else:
+                        st.write(mensaje)
 
     action = st.chat_input("Escriba sus órdenes...")
     if action:

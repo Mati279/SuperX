@@ -20,6 +20,9 @@ from core.world_models import Planet, System
 from core.mrg_engine import resolve_action, DIFFICULTY_NORMAL
 from core.character_engine import get_visible_biography, get_visible_skills, get_visible_feats
 
+# --- NUEVO IMPORT ---
+from services.image_service import generate_and_upload_tactical_image
+
 # --- HERRAMIENTAS DE CONOCIMIENTO Y GESTIÓN ---
 
 def investigate_character(character_name: str, player_id: int) -> str:
@@ -182,12 +185,28 @@ def get_table_schema(table_name: str) -> str:
     except Exception as e:
         return f"Error Schema: {str(e)}"
 
+# --- NUEVA FUNCIÓN WRAPPER PARA IMÁGENES ---
+def generate_tactical_visual(description: str, player_id: int) -> str:
+    """
+    Wrapper para generar una imagen táctica. Devuelve la URL formateada para que la UI la detecte.
+    """
+    try:
+        log_event(f"🎨 Generando visual: {description[:50]}...", player_id)
+        url = generate_and_upload_tactical_image(description, player_id)
+        if url:
+            # Este prefijo es clave para que main_game_page.py lo detecte
+            return f"IMAGE_URL: {url}"
+        return "Error: El sistema de visualización no pudo renderizar la imagen solicitada."
+    except Exception as e:
+        return f"Error Generación Imagen: {str(e)}"
+
 # Mapa de funciones disponibles
 TOOL_FUNCTIONS = {
     "investigate_character": investigate_character,
     "get_filtered_roster": get_filtered_roster,
     "execute_sql_query": execute_sql_query_tool,
-    "get_table_schema": get_table_schema
+    "get_table_schema": get_table_schema,
+    "generate_tactical_visual": generate_tactical_visual # Registro de la nueva función
 }
 
 def execute_tool(tool_name: str, tool_args: Dict[str, Any]) -> str:
@@ -252,6 +271,21 @@ Ejemplo: SELECT nombre FROM characters WHERE (stats_json->'capacidades'->'atribu
                 "table_name": types.Schema(type=types.Type.STRING, description="Nombre de la tabla (ej: 'characters')")
             },
             required=["table_name"]
+        )
+    ),
+    # --- NUEVA DECLARACIÓN ---
+    types.FunctionDeclaration(
+        name="generate_tactical_visual",
+        description="""Genera una imagen visual táctica (planeta, nave, entidad, paisaje) basada en una descripción detallada.
+Úsala cuando el usuario pida 'mostrar', 'visualizar' o 'generar una imagen' de algo en el juego.
+NO la uses para interfaces, textos o datos abstractos.""",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "description": types.Schema(type=types.Type.STRING, description="Descripción visual rica y detallada (prompt) para la IA de imagen."),
+                "player_id": types.Schema(type=types.Type.INTEGER, description="ID del jugador")
+            },
+            required=["description", "player_id"]
         )
     )
 ]
