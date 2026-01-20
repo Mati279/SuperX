@@ -44,6 +44,14 @@ def get_server_time() -> datetime:
     """Retorna la hora actual en GMT-3."""
     return datetime.now(SAFE_TIMEZONE)
 
+def get_current_tick() -> int:
+    """
+    Retorna el número de tick actual.
+    Wrapper sobre get_world_state para uso fácil en otros módulos (ej: Mercado).
+    """
+    state = get_world_state()
+    return state.get("current_tick", 1)
+
 def is_lock_in_window() -> bool:
     """Retorna True si estamos en la ventana de bloqueo (23:50 - 00:00)."""
     now = get_server_time()
