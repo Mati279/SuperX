@@ -8,7 +8,6 @@ from PIL import Image
 
 from config.settings import GEMINI_API_KEY
 from data.database import get_supabase
-# --- NUEVO IMPORT ---
 from data.log_repository import log_event
 
 # Inicializar cliente de GenAI
@@ -31,12 +30,12 @@ def generate_and_upload_tactical_image(prompt: str, player_id: int) -> Optional[
         
         # 1. Generación de Imagen (Google GenAI)
         response = client.models.generate_images(
-            model='imagen-4.0-fast-generate-001', # Updated from 3.0 to 4.0 Fast
+            model='imagen-4.0-fast-generate-001',
             prompt=prompt,
             config=types.GenerateImagesConfig(
                 number_of_images=1,
                 aspect_ratio="16:9",
-                safety_filter_level="block_medium_and_above",
+                safety_filter_level="block_low_and_above", # Ajustado según requisito estricto del modelo
                 person_generation="allow_adult"
             )
         )
