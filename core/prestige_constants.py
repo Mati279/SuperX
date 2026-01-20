@@ -35,6 +35,16 @@ COLLAPSE_THRESHOLD = 2.0       # Estado de Colapso (<2%)
 HEGEMONY_VICTORY_TICKS = 20    # Ticks para ganar manteniendo hegemonía
 
 # ============================================================
+# RECOMPENSAS PVE (HITOS)
+# ============================================================
+
+# Tiers de recompensa por acciones PvE (Suma cero: se drena del resto)
+PVE_TIER_I = 0.2     # Hito Menor (ej: Completar misión básica)
+PVE_TIER_II = 0.5    # Hito Medio (ej: Descubrimiento importante)
+PVE_TIER_III = 0.75  # Hito Mayor (ej: Gran logro diplomático)
+PVE_TIER_IV = 1.0    # Hito Legendario (ej: Maravilla galáctica)
+
+# ============================================================
 # MECÁNICAS DE COMBATE (IDP)
 # ============================================================
 
@@ -75,6 +85,7 @@ LOG_PREFIX_HEGEMONY = "👑"      # Eventos de hegemonía
 LOG_PREFIX_VICTORY = "🏆"       # Victoria
 LOG_PREFIX_FALL = "💔"          # Caída de hegemonía
 LOG_PREFIX_TRANSFER = "⚔️"      # Transferencia PVP
+LOG_PREFIX_PVE = "🌍"           # Eventos PvE / Hitos
 
 # ============================================================
 # NOMBRES DE ESTADOS (para UI)

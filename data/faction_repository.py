@@ -7,11 +7,14 @@ Este módulo maneja todas las operaciones de base de datos relacionadas con:
 - Actualización de prestigio
 - Gestión de hegemonía
 - Historial de transferencias
+- Procesamiento de hitos PvE
 """
 
 from typing import Dict, Any, List, Optional
 from data.database import get_supabase
 from data.log_repository import log_event
+from core.prestige_engine import calculate_pve_reward
+from core.prestige_constants import LOG_PREFIX_PVE
 import logging
 
 logger = logging.getLogger(__name__)
@@ -263,7 +266,7 @@ def get_current_hegemon() -> Optional[Dict[str, Any]]:
 def record_prestige_transfer(
     tick: int,
     attacker_faction_id: int,
-    defender_faction_id: int,
+    defender_faction_id: Optional[int],
     amount: float,
     idp_multiplier: float,
     reason: str
@@ -275,8 +278,8 @@ def record_prestige_transfer(
 
     Args:
         tick: Número de tick en el que ocurrió
-        attacker_faction_id: ID de la facción atacante
-        defender_faction_id: ID de la facción defensora
+        attacker_faction_id: ID de la facción atacante (o ganadora en PvE)
+        defender_faction_id: ID de la facción defensora (o None para PvE/System)
         amount: Cantidad de prestigio transferida
         idp_multiplier: Multiplicador IDP aplicado
         reason: Descripción del evento (ej: "Victoria en combate naval")
@@ -285,14 +288,15 @@ def record_prestige_transfer(
         bool: True si el registro fue exitoso
     """
     try:
-        _get_db().table("prestige_history").insert({
+        data = {
             "tick": tick,
             "attacker_faction_id": attacker_faction_id,
             "defender_faction_id": defender_faction_id,
             "amount": round(amount, 2),
             "idp_multiplier": round(idp_multiplier, 2),
             "reason": reason
-        }).execute()
+        }
+        _get_db().table("prestige_history").insert(data).execute()
         return True
     except Exception as e:
         log_event(f"Error registrando transferencia de prestigio: {e}", is_error=True)
@@ -325,6 +329,62 @@ def get_prestige_history(
     except Exception as e:
         log_event(f"Error obteniendo historial de prestigio: {e}", is_error=True)
         return []
+
+
+# ============================================================
+# PROCESAMIENTO PVE
+# ============================================================
+
+def process_pve_prestige_hit(faction_id: int, tier_amount: float, reason: str) -> bool:
+    """
+    Procesa un hito de prestigio PvE (suma cero).
+
+    Flujo:
+    1. Obtiene el mapa actual de prestigio.
+    2. Calcula el nuevo estado usando calculate_pve_reward (core).
+    3. Aplica la actualización en batch a DB.
+    4. Registra el evento en historial y logs.
+
+    Args:
+        faction_id: ID de la facción que logró el hito.
+        tier_amount: Cantidad a ganar (PVE_TIER_I, etc.)
+        reason: Motivo del hito (ej: "Descubrimiento de Ruinas").
+
+    Returns:
+        bool: True si el proceso fue exitoso.
+    """
+    try:
+        # 1. Obtener estado actual
+        current_map = get_prestige_map()
+        if not current_map:
+            log_event(f"Error procesando PvE: No se pudo obtener mapa de prestigio", is_error=True)
+            return False
+            
+        # 2. Calcular nuevo estado (redistribución y normalización)
+        new_map = calculate_pve_reward(faction_id, tier_amount, current_map)
+        
+        # 3. Aplicar cambios
+        if batch_update_prestige(new_map):
+            # 4. Registrar evento
+            # Nota: Usamos 0 como tick placeholder si no tenemos contexto de tick global aquí.
+            # En una implementación completa, se debería inyectar el tick actual.
+            record_prestige_transfer(
+                tick=0,
+                attacker_faction_id=faction_id,
+                defender_faction_id=None,  # PvE: El "defensor" es el entorno/sistema
+                amount=tier_amount,
+                idp_multiplier=1.0,  # No aplica IDP en PvE
+                reason=f"[PvE] {reason}"
+            )
+            
+            log_event(f"{LOG_PREFIX_PVE} Hito PvE: Facción {faction_id} gana {tier_amount}% por '{reason}'")
+            return True
+            
+        return False
+        
+    except Exception as e:
+        log_event(f"Error crítico procesando hito PvE para facción {faction_id}: {e}", is_error=True)
+        return False
 
 
 # ============================================================

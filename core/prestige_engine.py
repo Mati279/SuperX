@@ -6,6 +6,7 @@ Este módulo implementa todas las mecánicas del sistema de prestigio:
 - Cálculo de IDP (Índice de Disparidad de Poder)
 - Transferencias PVP con anti-bullying
 - Fricción galáctica (redistribución automática)
+- Recompensas PvE (Suma cero)
 - Verificación de condiciones de hegemonía
 - Validación de suma cero
 """
@@ -89,6 +90,54 @@ def calculate_transfer(
     idp = calculate_idp(attacker_prestige, defender_prestige)
     transfer = base_event * idp
     return (transfer, idp)
+
+
+# ============================================================
+# CÁLCULOS PVE (SUMA CERO)
+# ============================================================
+
+def calculate_pve_reward(
+    target_faction_id: int,
+    reward_amount: float,
+    current_factions: Dict[int, float]
+) -> Dict[int, float]:
+    """
+    Calcula la redistribución de prestigio por un hito PvE.
+
+    Mecánica Suma Cero:
+    1. La facción objetivo gana `reward_amount`.
+    2. El resto de facciones (N-1) pagan equitativamente ese monto.
+    3. Se aplica la normalización para asegurar 100% total y floor en 0.
+
+    Args:
+        target_faction_id: ID de la facción que logró el hito.
+        reward_amount: Cantidad de prestigio a ganar (ej: 0.2, 0.5, 1.0).
+        current_factions: Dict {faction_id: prestigio_actual}.
+
+    Returns:
+        Dict {faction_id: nuevo_prestigio} con el estado final calculado y normalizado.
+    """
+    adjustments: Dict[int, float] = {}
+    
+    # Identificar a los "pagadores" (todos menos el objetivo)
+    others = [fid for fid in current_factions if fid != target_faction_id]
+    
+    if not others:
+        # Caso borde: Solo existe una facción, no hay cambio relativo posible
+        return current_factions.copy()
+
+    # 1. Ganancia del objetivo
+    adjustments[target_faction_id] = reward_amount
+
+    # 2. Pérdida distribuida (Suma cero inicial)
+    # Si reward es 1.0 y hay 4 otros, cada uno pierde 0.25
+    loss_per_faction = reward_amount / len(others)
+    
+    for other_id in others:
+        adjustments[other_id] = -loss_per_faction
+
+    # 3. Aplicar cambios con seguridad (Floor 0 y Normalización 100%)
+    return apply_prestige_changes(current_factions, adjustments)
 
 
 # ============================================================
