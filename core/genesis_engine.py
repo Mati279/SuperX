@@ -3,7 +3,7 @@
 Genesis Engine - Protocolo v2.0 "Asentamiento Seguro"
 Maneja la lógica de inicialización de nuevas facciones.
 Actualizado: Soporte para Población Decimal (1.0 = 1B).
-CORREGIDO: Uso seguro de get_supabase() para evitar errores de cliente nulo.
+CORREGIDO: Eliminada columna 'felicidad' que ya no existe en el esquema.
 """
 
 import random
@@ -87,8 +87,8 @@ def genesis_protocol(player_id: int) -> bool:
             "pops_activos": initial_pop,
             "pops_desempleados": 0.0,
             "seguridad": initial_security, 
-            "infraestructura_defensiva": 0,
-            "felicidad": 1.0
+            "infraestructura_defensiva": 0
+            # "felicidad": 1.0  <-- ELIMINADO: Columna no existente en esquema actual
         }
 
         db.table("planet_assets").insert(asset_data).execute()
@@ -102,7 +102,7 @@ def genesis_protocol(player_id: int) -> bool:
 
     except Exception as e:
         print("\n💥 EXCEPCIÓN EN GENESIS PROTOCOL:")
-        traceback.print_exc() # Esto imprimirá el error real en tu consola
+        traceback.print_exc() 
         log_event(f"❌ Error Crítico en Genesis Protocol: {e}", player_id, is_error=True)
         return False
 
