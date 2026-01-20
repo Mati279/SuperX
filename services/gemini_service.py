@@ -25,8 +25,8 @@ from data.world_repository import queue_player_action, get_world_state
 
 from core.time_engine import check_and_trigger_tick, is_lock_in_window
 from core.mrg_engine import resolve_action, ResultType
-# La siguiente importación ahora funcionará correctamente
-from core.mrg_constants import DIFFICULTY_NORMAL
+# FIX: Actualizada constante a v2.1 (DIFFICULTY_NORMAL -> DIFFICULTY_STANDARD)
+from core.mrg_constants import DIFFICULTY_STANDARD
 from core.mrg_effects import apply_partial_success_complication
 
 from services.ai_tools import TOOL_DECLARATIONS, execute_tool
@@ -446,7 +446,7 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
 
         mrg_result = resolve_action(
             merit_points=merit_points,
-            difficulty=DIFFICULTY_NORMAL,
+            difficulty=DIFFICULTY_STANDARD, # FIX: Uso de nueva constante
             action_description=action_text
         )
 

@@ -28,7 +28,8 @@ def _get_db():
 from data.player_repository import get_player_credits, update_player_credits
 from data.log_repository import log_event, clear_player_logs
 
-from core.mrg_engine import resolve_action, ResultType, MalusType
+# FIX: Eliminado MalusType ya que no existe en MRG v2.1
+from core.mrg_engine import resolve_action, ResultType
 
 # IMPORT NUEVO: Servicio de Eventos Narrativos
 from services.event_service import generate_tick_event
