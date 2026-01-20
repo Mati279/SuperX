@@ -31,7 +31,7 @@ def generate_and_upload_tactical_image(prompt: str, player_id: int) -> Optional[
         
         # 1. Generación de Imagen (Google GenAI)
         response = client.models.generate_images(
-            model='imagen-4.0-fast-generate-001',
+            model='imagen-4.0-fast-generate-001', # Updated from 3.0 to 4.0 Fast
             prompt=prompt,
             config=types.GenerateImagesConfig(
                 number_of_images=1,
