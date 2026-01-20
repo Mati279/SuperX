@@ -7,6 +7,7 @@ autenticación y recursos.
 
 from typing import Dict, Any, Optional, IO, List
 import uuid
+import random # Importado para generación de población aleatoria
 
 from data.database import get_supabase
 from data.log_repository import log_event
@@ -206,8 +207,11 @@ def register_player_account(
             .execute()
         planet_id_val = planet_res.data[0]['id'] if planet_res.data else 1
 
+        # Generar población inicial aleatoria (1.5 - 1.7 Billones)
+        start_pop = random.uniform(1.5, 1.7)
+
         from data.planet_repository import create_planet_asset
-        create_planet_asset(planet_id_val, start_system_id, player_id, f"Base {faction_name}", 1000)
+        create_planet_asset(planet_id_val, start_system_id, player_id, f"Base {faction_name}", start_pop)
 
         # 3. Comandante (Punto Crítico de Duplicados)
         stats = generate_genesis_commander_stats(user_name)
@@ -404,13 +408,16 @@ def reset_player_progress(player_id: int) -> bool:
         start_system_id = find_safe_starting_node()
         planet_res = db.table("planets").select("id").eq("system_id", start_system_id).limit(1).execute()
         planet_id_val = planet_res.data[0]['id'] if planet_res.data else 1
+        
+        # Generar población inicial aleatoria (1.5 - 1.7 Billones)
+        start_pop = random.uniform(1.5, 1.7)
 
         create_planet_asset(
             planet_id_val, 
             start_system_id, 
             player_id, 
             f"Base {player.get('faccion_nombre', 'Facción')}", 
-            1000
+            start_pop
         )
 
         # 2. Re-crear Comandante

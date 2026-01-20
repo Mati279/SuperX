@@ -9,7 +9,7 @@ import random
 from typing import Dict, Any, List
 from data.database import supabase
 from data.log_repository import log_event
-from core.world_constants import STAR_TYPES
+from core.world_constants import STAR_TYPES, ECONOMY_RATES # Importado ECONOMY_RATES
 from core.constants import MIN_ATTRIBUTE_VALUE
 
 # --- CONSTANTES DEL PROTOCOLO ---
@@ -52,8 +52,17 @@ def genesis_protocol(player_id: int) -> bool:
         
         base_name = f"{random.choice(BASE_NAMES_PREFIX)} {random.choice(BASE_NAMES_SUFFIX)}"
 
-        # Asignar población inicial decimal
+        # Asignar población inicial decimal (1.5 - 1.7 Billones)
         initial_pop = round(random.uniform(GENESIS_POP_MIN, GENESIS_POP_MAX), 2)
+        
+        # Calcular Seguridad Inicial Dinámica (MMFR V2)
+        # Fórmula: Base (25) + (Pop * 5)
+        sec_base = ECONOMY_RATES.get("security_base", 25.0)
+        sec_pop = ECONOMY_RATES.get("security_per_1b_pop", 5.0)
+        initial_security = sec_base + (initial_pop * sec_pop)
+        
+        # Clamp preventivo (aunque con pop 1.7 no llegará a 100)
+        initial_security = max(1.0, min(initial_security, 100.0))
 
         asset_data = {
             "player_id": player_id,
@@ -63,7 +72,7 @@ def genesis_protocol(player_id: int) -> bool:
             "poblacion": initial_pop,
             "pops_activos": initial_pop,
             "pops_desempleados": 0.0,
-            "seguridad": 1.0,
+            "seguridad": initial_security, # Valor calculado
             "infraestructura_defensiva": 0,
             "felicidad": 1.0
         }
@@ -72,7 +81,7 @@ def genesis_protocol(player_id: int) -> bool:
         apply_genesis_inventory(player_id)
         initialize_fog_of_war(player_id, system_id)
         
-        log_event(f"✅ Protocolo Génesis completado. Base: {base_name}. Pob: {initial_pop}B", player_id)
+        log_event(f"✅ Protocolo Génesis completado. Base: {base_name}. Pob: {initial_pop}B. Seg: {initial_security:.1f}", player_id)
         return True
 
     except Exception as e:

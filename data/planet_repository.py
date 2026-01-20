@@ -109,15 +109,21 @@ def create_planet_asset(
     system_id: int,
     player_id: int,
     settlement_name: str = "Colonia Principal",
-    initial_population: int = 1000
+    initial_population: float = 1.0 # Default actualizado a escala float (1.0 = 1B)
 ) -> Optional[Dict[str, Any]]:
     """Crea una colonia con seguridad inicial basada en población (MMFR V2)."""
     try:
         # Cálculo de seguridad inicial (Scale 0-100)
-        # Fórmula: Base + (Pop / 1B * 5)
+        # Fórmula V2: Base + (Población * Tasa)
+        # Nota: Population ya es un float en escala de billones.
         base_sec = ECONOMY_RATES.get("security_base", 25.0)
-        pop_bonus = (initial_population / 1_000_000_000) * ECONOMY_RATES.get("security_per_1b_pop", 5.0)
+        per_pop = ECONOMY_RATES.get("security_per_1b_pop", 5.0)
+        
+        pop_bonus = initial_population * per_pop
         initial_security = base_sec + pop_bonus
+        
+        # Clamp 1-100
+        initial_security = max(1.0, min(initial_security, 100.0))
 
         asset_data = {
             "planet_id": planet_id,
@@ -126,8 +132,8 @@ def create_planet_asset(
             "nombre_asentamiento": settlement_name,
             "poblacion": initial_population,
             "pops_activos": initial_population,
-            "pops_desempleados": 0,
-            "seguridad": initial_security, # Nuevo valor float 0-100
+            "pops_desempleados": 0.0, # Float explícito
+            "seguridad": initial_security, 
             "infraestructura_defensiva": 0,
             "base_tier": 1
         }
