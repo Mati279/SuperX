@@ -38,7 +38,7 @@ def render_main_game_page(cookie_manager):
 
     if not player or not commander:
         st.error("❌ ERROR CRÍTICO: No se pudieron cargar los datos del jugador. Reinicia sesión.")
-        if st.button("Volver al Login"):
+        if st.button("Volver al Login", use_container_width=True):
             logout_user(cookie_manager)
         return
 
@@ -54,7 +54,7 @@ def render_main_game_page(cookie_manager):
     # --- 3. Renderizar la página seleccionada ---
     PAGES = {
         "Puente de Mando": _render_war_room_page,
-        "Cuadrilla": render_faction_roster,  # Renombrado de Comando de Facción
+        "Cuadrilla": render_faction_roster,
         "Centro de Reclutamiento": show_recruitment_center,
         "Mapa de la Galaxia": show_galaxy_map_page,
         "Flota": show_ship_status_page,
@@ -335,18 +335,19 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         # --- SECCIÓN: IDENTIDAD ---
         st.header(f"{player.faccion_nombre}")
         if player.banner_url:
-            st.image(player.banner_url, use_container_width=True)
+            # FIX: width="stretch" en lugar de use_container_width=True para imágenes
+            st.image(player.banner_url, width="stretch")
 
         st.caption(f"Comandante {commander.nombre}")
 
         # --- SECCIÓN: NAVEGACIÓN ---
         st.divider()
         
-        # Actualizado con "Cuadrilla"
         pages = ["Puente de Mando", "Mapa de la Galaxia", 
                  "Cuadrilla", "Centro de Reclutamiento", "Flota"]
         
         for p in pages:
+            # Botones siguen usando use_container_width
             if st.button(p, use_container_width=True, type="primary" if st.session_state.current_page == p else "secondary"):
                 st.session_state.current_page = p
                 st.rerun()
@@ -369,10 +370,8 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             else:
                 st.error("Error al añadir créditos.")
 
-        # --- BOTÓN DE DEBUG ELITE ACTUALIZADO ---
         if st.button("🧪 Generar Candidato Elite (Lvl 10, Skills 99)", use_container_width=True, help="Genera un candidato de nivel 10 con todas las habilidades al 99."):
             try:
-                # CORRECCIÓN: Pasar player.id en lugar de None para que aparezca en el Centro de Reclutamiento del usuario
                 generate_character_pool(
                     player_id=player.id, 
                     pool_size=1,
@@ -381,11 +380,10 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
                     force_max_skills=True
                 )
                 st.toast("✅ Candidato Elite (Lvl 10, Skills 99) enviado al Centro de Reclutamiento.")
-                time.sleep(1) # Breve pausa para que se vea el toast antes del rerun
+                time.sleep(1)
                 st.rerun()
             except Exception as e:
                 st.error(f"Error generando candidato de elite: {e}")
-        # ----------------------------------------
 
         if st.button("🗑️ ELIMINAR CUENTA", type="secondary", use_container_width=True, help="Elimina permanentemente el jugador y todos sus datos."):
             if delete_player_account(player.id):
@@ -435,7 +433,8 @@ def _render_war_room_page():
                             
                         # Mostrar imagen si la URL no está vacía
                         if url_part:
-                            st.image(url_part, use_container_width=True)
+                            # FIX: width="stretch" para evitar warning
+                            st.image(url_part, width="stretch")
                     else:
                         # Solo texto normal
                         st.markdown(clean_msg)
