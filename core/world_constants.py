@@ -2,6 +2,7 @@
 """
 Constantes universales y definiciones de juego.
 Incluye recursos, tipos de estrellas y definiciones de edificios/módulos.
+Actualizado v4.1.3: Recurso Datos y Categorías de Lujo.
 """
 
 # Tipos de estrellas y sus colores para el mapa
@@ -214,8 +215,43 @@ ECONOMY_RATES = {
     "security_bonus_defense_orbital": 10.0
 }
 
+# --- ECONOMÍA V4.1.2: PRECIOS Y RECURSOS ---
+
 BROKER_PRICES = {
-    "materiales": 10,
-    "componentes": 25,
-    "celulas_energia": 5
+    "materiales": 20,
+    "componentes": 30,
+    "celulas_energia": 30,
+    "influencia": 50,
+    "datos": 20
+}
+
+# --- ECONOMÍA V4.1.3: CATEGORÍAS DE LUJO ---
+
+LUXURY_DATA = {
+    "metales": {
+        "wolframio": {"base_price": 65, "name": "Wolframio"},
+        "neodimio": {"base_price": 78, "name": "Neodimio"},
+        "paladio": {"base_price": 92, "name": "Paladio"},
+        "platino": {"base_price": 115, "name": "Platino"},
+        "iridio": {"base_price": 138, "name": "Iridio"},
+    },
+    "componentes_avanzados": {
+        "sensores_precision": {"base_price": 85, "name": "Sensores de Precisión"},
+        "nanobots": {"base_price": 110, "name": "Nanobots"},
+        "circuitos_cuanticos": {"base_price": 145, "name": "Circuitos Cuánticos"},
+    },
+    "energia_avanzada": {
+        "cristales_foco": {"base_price": 82, "name": "Cristales de Foco"},
+        "plasma_estable": {"base_price": 118, "name": "Plasma Estable"},
+        "materia_oscura": {"base_price": 165, "name": "Materia Oscura"},
+    },
+    "influencia_superior": {
+        "archivos_diplomaticos": {"base_price": 140, "name": "Archivos Diplomáticos"},
+        "reliquias_culturales": {"base_price": 185, "name": "Reliquias Culturales"},
+    },
+    "datos_criticos": {
+        "codigos_encriptacion": {"base_price": 72, "name": "Códigos de Encriptación"},
+        "matrices_ai": {"base_price": 98, "name": "Matrices de IA"},
+        "nucleos_datos": {"base_price": 132, "name": "Núcleos de Datos Crípticos"},
+    },
 }

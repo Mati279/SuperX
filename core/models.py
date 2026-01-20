@@ -4,6 +4,7 @@ Modelos de Dominio Tipados.
 Define las estructuras de datos centrales del juego usando Pydantic
 para garantizar validación y serialización consistente.
 Refactorizado para cumplir con el esquema V2 de Personajes.
+Actualizado v4.1.2: Soporte para Recurso 'Datos'.
 """
 
 from typing import Dict, Any, Optional, List
@@ -159,6 +160,7 @@ class PlayerResources(BaseModel):
     componentes: int = Field(default=0, ge=0)
     celulas_energia: int = Field(default=0, ge=0)
     influencia: int = Field(default=0, ge=0)
+    datos: int = Field(default=0, ge=0)
 
     def to_dict(self) -> Dict[str, int]:
         return {
@@ -166,7 +168,8 @@ class PlayerResources(BaseModel):
             "materiales": self.materiales,
             "componentes": self.componentes,
             "celulas_energia": self.celulas_energia,
-            "influencia": self.influencia
+            "influencia": self.influencia,
+            "datos": self.datos
         }
 
     @classmethod
@@ -176,7 +179,8 @@ class PlayerResources(BaseModel):
             materiales=data.get("materiales", 0),
             componentes=data.get("componentes", 0),
             celulas_energia=data.get("celulas_energia", 0),
-            influencia=data.get("influencia", 0)
+            influencia=data.get("influencia", 0),
+            datos=data.get("datos", 0)
         )
 
 
@@ -196,6 +200,7 @@ class PlayerData(BaseModel):
     componentes: int = 0
     celulas_energia: int = 0
     influencia: int = 0
+    datos: int = 0
     recursos_lujo: Dict[str, Any] = Field(default_factory=dict)
     created_at: Optional[str] = None
 
@@ -206,7 +211,8 @@ class PlayerData(BaseModel):
             materiales=self.materiales,
             componentes=self.componentes,
             celulas_energia=self.celulas_energia,
-            influencia=self.influencia
+            influencia=self.influencia,
+            datos=self.datos
         )
 
     @classmethod
@@ -360,6 +366,7 @@ class ProductionSummary(BaseModel):
     celulas_energia: int = 0
     influencia: int = 0
     creditos: int = 0
+    datos: int = 0
 
     def add(self, other: 'ProductionSummary') -> 'ProductionSummary':
         return ProductionSummary(
@@ -367,7 +374,8 @@ class ProductionSummary(BaseModel):
             componentes=self.componentes + other.componentes,
             celulas_energia=self.celulas_energia + other.celulas_energia,
             influencia=self.influencia + other.influencia,
-            creditos=self.creditos + other.creditos
+            creditos=self.creditos + other.creditos,
+            datos=self.datos + other.datos
         )
 
     def to_dict(self) -> Dict[str, int]:
@@ -376,7 +384,8 @@ class ProductionSummary(BaseModel):
             "componentes": self.componentes,
             "celulas_energia": self.celulas_energia,
             "influencia": self.influencia,
-            "creditos": self.creditos
+            "creditos": self.creditos,
+            "datos": self.datos
         }
 
 # --- RESULTADOS DE OPERACIONES ---

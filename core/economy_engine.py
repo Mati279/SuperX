@@ -3,6 +3,7 @@
 Motor Económico MMFR (Materials, Metals, Fuel, Resources).
 Gestiona toda la lógica de cálculo económico del juego.
 Refactorizado: Seguridad (0-100) y Mantenimiento Estricto.
+Actualizado v4.1.2: Soporte para producción y balance de Datos.
 
 IMPORTANTE: Este módulo NO importa supabase directamente.
 Todas las operaciones de DB se realizan a través de repositorios.
@@ -197,6 +198,8 @@ def calculate_planet_production(active_buildings: List[Dict[str, Any]]) -> Produ
         production.componentes += building_prod.get("componentes", 0)
         production.celulas_energia += building_prod.get("celulas_energia", 0)
         production.influencia += building_prod.get("influencia", 0)
+        # Actualizado v4.1.2: Producción de Datos
+        production.datos += building_prod.get("datos", 0)
 
     return production
 
@@ -250,7 +253,9 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             "materiales": finances.get("materiales", 0),
             "componentes": finances.get("componentes", 0),
             "celulas_energia": finances.get("celulas_energia", 0),
-            "influencia": finances.get("influencia", 0)
+            "influencia": finances.get("influencia", 0),
+            # Actualizado v4.1.2: Datos
+            "datos": finances.get("datos", 0)
         }
         
         security_updates: List[Tuple[int, float]] = []
@@ -321,7 +326,8 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             "materiales": player_resources["materiales"] + result.production.materiales,
             "componentes": player_resources["componentes"] + result.production.componentes,
             "celulas_energia": player_resources["celulas_energia"] + result.production.celulas_energia,
-            "influencia": player_resources["influencia"] + result.production.influencia
+            "influencia": player_resources["influencia"] + result.production.influencia,
+            "datos": player_resources["datos"] + result.production.datos
         }
         
         if luxury_extracted:
@@ -361,7 +367,8 @@ def run_global_economy_tick() -> List[EconomyTickResult]:
 
 def get_player_projected_economy(player_id: int) -> Dict[str, int]:
     """Calcula proyección (Delta) para UI sin modificar DB."""
-    projection = {k: 0 for k in ["creditos", "materiales", "componentes", "celulas_energia", "influencia"]}
+    # Actualizado v4.1.2: Inicializar 'datos'
+    projection = {k: 0 for k in ["creditos", "materiales", "componentes", "celulas_energia", "influencia", "datos"]}
     
     try:
         # Simular con recursos infinitos para ver coste teórico total
@@ -398,6 +405,8 @@ def get_player_projected_economy(player_id: int) -> Dict[str, int]:
             projection["componentes"] += prod.componentes
             projection["celulas_energia"] += prod.celulas_energia
             projection["influencia"] += prod.influencia
+            # Actualizado v4.1.2: Sumar datos
+            projection["datos"] += prod.datos
             projection["creditos"] += prod.creditos
 
     except Exception:
