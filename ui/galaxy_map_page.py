@@ -111,55 +111,25 @@ def _render_system_view():
     system = get_system_by_id(system_id)
     if not system: _reset_to_galaxy_view(); return
 
-    # Variables de métricas
-    ss = 0.0
-    total_system_pop = 0
-
-    # Calcular Ss (Seguridad del Sistema) y Población Total
-    # Ss: Promedio de seguridad solo de colonias con población > 0
+    # Calcular Ss (Seguridad del Sistema) - Promedio de seguridad de colonias existentes
+    # Esta métrica ayuda a saber qué tan seguro es viajar/comerciar aquí.
     try:
-        # Recuperamos seguridad y población
-        assets_res = get_supabase().table("planet_assets").select("seguridad, poblacion").eq("system_id", system_id).execute()
+        assets_res = get_supabase().table("planet_assets").select("seguridad").eq("system_id", system_id).execute()
         assets = assets_res.data if assets_res.data else []
-        
         if assets:
-            # 1. Población total del sistema
-            total_system_pop = sum(a.get('poblacion', 0) for a in assets)
-
-            # 2. Seguridad del Sistema (Ss) - Solo considera assets activos (poblacion > 0)
-            active_assets = [a for a in assets if a.get('poblacion', 0) > 0]
-            
-            if active_assets:
-                ss = sum(a.get('seguridad', 0) for a in active_assets) / len(active_assets)
-            else:
-                ss = 0.0 # Sistema con assets pero sin población activa (ej. ruinas o colonias abandonadas)
-    except Exception as e:
-        # Fallback silencioso para no romper la UI, en logs se vería el error
-        ss = 0.0
-        total_system_pop = 0
+            ss = sum(a['seguridad'] for a in assets) / len(assets)
+        else:
+            ss = 0.0 # Sistema anárquico o vacío
+    except: ss = 0.0
 
     st.header(f"Sistema: {system.get('name', 'Desconocido')}")
     
-    # Layout actualizado con 3 columnas
-    col_back, col_ss, col_pop = st.columns([4, 2, 2])
-    
+    col_back, col_ss = st.columns([5, 2])
     col_back.button("← Volver al mapa", on_click=_reset_to_galaxy_view, type="primary")
     
     with col_ss:
         # Indicador Ss
-        st.metric(
-            "Seguridad Sistema (Ss)", 
-            f"{ss:.1f}" if ss > 0 else "N/A", 
-            help="Promedio de seguridad de colonias pobladas activamente."
-        )
-
-    with col_pop:
-        # Indicador Población
-        st.metric(
-            "Población Sistema", 
-            f"{total_system_pop:,}",
-            help="Suma total de habitantes en todos los planetas de este sistema."
-        )
+        st.metric("Seguridad Sistema (Ss)", f"{ss:.1f}" if assets else "N/A", help="Promedio de seguridad de todas las colonias del sistema.")
 
     st.subheader("Cuerpos celestiales")
     planets = get_planets_by_system_id(system_id)
@@ -295,7 +265,12 @@ def _reset_to_system_view():
     st.session_state.map_view = "system"
     st.rerun()
 
-# --- Funciones Auxiliares del Mapa Interactivo ---
+# El resto del código de galaxy_map_page se mantiene igual (renderizado de canvas, etc.)
+# ya que usamos _render_interactive_galaxy_map importado o definido anteriormente.
+# Para este archivo completo asumimos que _render_interactive_galaxy_map, _scale_positions, etc
+# están presentes o se copian del archivo original si no se modificaron.
+# Dado que el archivo original tenía esas funciones, deberíamos incluirlas para que el archivo sea 'copiar y pegar'.
+# A continuación incluyo las funciones faltantes para completar el archivo.
 
 def _get_player_home_info():
     player = get_player()
