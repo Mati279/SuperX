@@ -61,7 +61,7 @@ IDP_MINIMUM = 0.0              # IDP mínimo (previene bullying)
 
 # Impuesto Imperial
 FRICTION_THRESHOLD = 20.0      # Facciones > 20% pagan fricción
-FRICTION_RATE = 0.5            # 0.5% por tick
+FRICTION_RATE = 1.5            # 1.5% por tick
 
 # Subsidio de Supervivencia
 SUBSIDY_THRESHOLD = 5.0        # Facciones < 5% reciben subsidio

@@ -1,6 +1,7 @@
 # tests/test_mrg_engine.py
 """
 Tests for the MRG (Mission Resolution Generator) engine.
+Updated for SuperX v2.1 specifications.
 """
 import pytest
 import sys
@@ -13,15 +14,20 @@ class TestMRGEngine:
     """Tests for the MRG resolution engine."""
 
     def test_resolve_action_returns_result(self):
-        """Test that resolve_action returns a valid MRGResult."""
+        """Test that resolve_action returns a valid MRGResult with mathematical data."""
         from core.mrg_engine import resolve_action, MRGResult
 
+        # Usamos dificultad estándar (50)
         result = resolve_action(merit_points=50, difficulty=50)
 
         assert isinstance(result, MRGResult)
         assert hasattr(result, 'roll')
         assert hasattr(result, 'result_type')
         assert hasattr(result, 'margin')
+        assert hasattr(result, 'bonus_applied')
+        
+        # Verificamos que sea un objeto de valor sin lógica de efectos pendientes
+        assert isinstance(result.margin, int)
 
     def test_result_types_exist(self):
         """Verify all result types are defined."""
@@ -42,7 +48,8 @@ class TestMRGEngine:
         high_merit_successes = 0
         low_merit_successes = 0
         trials = 100
-
+        
+        # Max bonus is now 50 (v2.1), so the gap is smaller but should still be statistically significant
         for _ in range(trials):
             high_result = resolve_action(merit_points=100, difficulty=50)
             low_result = resolve_action(merit_points=10, difficulty=50)
@@ -53,8 +60,7 @@ class TestMRGEngine:
                 low_merit_successes += 1
 
         # High merit should have more successes on average
-        # (This is a probabilistic test, might rarely fail)
-        assert high_merit_successes >= low_merit_successes - 20  # Allow some variance
+        assert high_merit_successes >= low_merit_successes
 
     def test_roll_is_within_bounds(self):
         """Test that dice roll is within expected bounds (2-100 for 2d50)."""
@@ -66,29 +72,29 @@ class TestMRGEngine:
 
 
 class TestMRGConstants:
-    """Tests for MRG constants."""
+    """Tests for MRG constants (Updated v2.1)."""
 
     def test_difficulty_constants_exist(self):
-        """Verify difficulty constants are defined."""
+        """Verify new v2.1 difficulty constants are defined and ordered."""
         from core.mrg_constants import (
-            DIFFICULTY_TRIVIAL,
-            DIFFICULTY_EASY,
-            DIFFICULTY_NORMAL,
-            DIFFICULTY_HARD,
-            DIFFICULTY_VERY_HARD,
+            DIFFICULTY_ROUTINE,
+            DIFFICULTY_STANDARD,
+            DIFFICULTY_CHALLENGING,
             DIFFICULTY_HEROIC
         )
 
         # Difficulties should be in ascending order
-        assert DIFFICULTY_TRIVIAL < DIFFICULTY_EASY
-        assert DIFFICULTY_EASY < DIFFICULTY_NORMAL
-        assert DIFFICULTY_NORMAL < DIFFICULTY_HARD
-        assert DIFFICULTY_HARD < DIFFICULTY_VERY_HARD
-        assert DIFFICULTY_VERY_HARD < DIFFICULTY_HEROIC
+        assert DIFFICULTY_ROUTINE < DIFFICULTY_STANDARD
+        assert DIFFICULTY_STANDARD < DIFFICULTY_CHALLENGING
+        assert DIFFICULTY_CHALLENGING < DIFFICULTY_HEROIC
+        
+        # Specific values check
+        assert DIFFICULTY_ROUTINE == 25
+        assert DIFFICULTY_STANDARD == 50
 
 
 class TestRulesEngine:
-    """Tests for the rules calculation engine."""
+    """Tests for the rules calculation engine (Legacy preserved)."""
 
     def test_calculate_skills_returns_dict(self):
         """Test that calculate_skills returns a dictionary."""

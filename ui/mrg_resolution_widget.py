@@ -1,16 +1,42 @@
+# ui/mrg_resolution_widget.py
 """Widget de UI para mostrar y resolver tiradas MRG."""
 import streamlit as st
-from typing import Optional, Callable
-from core.mrg_engine import (
-    MRGResult,
-    ResultType,
-    BenefitType,
-    MalusType,
-    get_result_description,
-    get_benefit_description,
-    get_malus_description
-)
-from core.mrg_effects import apply_benefit, apply_malus
+from core.mrg_engine import MRGResult, ResultType
+
+# Diccionario de configuración visual para los resultados (v2.1)
+# Desacoplado del motor para facilitar cambios de texto/color en la UI
+RESULT_UI_CONFIG = {
+    ResultType.CRITICAL_SUCCESS: {
+        "title": "¡ÉXITO CRÍTICO!",
+        "description": "Una ejecución perfecta e impecable. El margen es irrelevante.",
+        "color": "#FFD700"  # Dorado
+    },
+    ResultType.TOTAL_SUCCESS: {
+        "title": "ÉXITO TOTAL",
+        "description": "El objetivo se ha cumplido sin contratiempos.",
+        "color": "#28a745"  # Verde
+    },
+    ResultType.PARTIAL_SUCCESS: {
+        "title": "ÉXITO PARCIAL",
+        "description": "Objetivo cumplido, pero con posibles complicaciones menores.",
+        "color": "#17a2b8"  # Cyan
+    },
+    ResultType.PARTIAL_FAILURE: {
+        "title": "FALLO PARCIAL",
+        "description": "No se logró el objetivo principal, pero se evitaron desastres mayores.",
+        "color": "#fd7e14"  # Naranja
+    },
+    ResultType.TOTAL_FAILURE: {
+        "title": "FALLO TOTAL",
+        "description": "La acción ha fracasado completamente.",
+        "color": "#dc3545"  # Rojo
+    },
+    ResultType.CRITICAL_FAILURE: {
+        "title": "¡PIFIA!",
+        "description": "Un desastre catastrófico. El margen es irrelevante.",
+        "color": "#8b0000"  # Rojo oscuro
+    }
+}
 
 
 def render_mrg_roll_animation(result: MRGResult):
@@ -84,119 +110,35 @@ def render_mrg_calculation(result: MRGResult):
 def render_mrg_result(result: MRGResult):
     """Muestra el resultado con estilo apropiado."""
 
-    desc = get_result_description(result.result_type)
+    config = RESULT_UI_CONFIG.get(result.result_type, {
+        "title": "RESULTADO DESCONOCIDO",
+        "description": "",
+        "color": "#808080"
+    })
 
     st.markdown(f"""
         <div style="
-            background: linear-gradient(135deg, {desc['color']}22, {desc['color']}11);
-            border: 2px solid {desc['color']};
+            background: linear-gradient(135deg, {config['color']}22, {config['color']}11);
+            border: 2px solid {config['color']};
             border-radius: 12px;
             padding: 20px;
             text-align: center;
             margin: 20px 0;
         ">
-            <h2 style="color: {desc['color']}; margin: 0;">{desc['title']}</h2>
-            <p style="margin: 10px 0 0 0; color: #ccc;">{desc['description']}</p>
+            <h2 style="color: {config['color']}; margin: 0;">{config['title']}</h2>
+            <p style="margin: 10px 0 0 0; color: #ccc;">{config['description']}</p>
         </div>
     """, unsafe_allow_html=True)
 
-    # Instrucción si requiere selección
-    if result.requires_player_choice:
-        st.info(f"👆 {desc['instruction']}")
 
-
-def render_benefit_selection(
-    result: MRGResult,
-    player_id: int,
-    faction_id: Optional[int] = None,
-    energy_spent: int = 0,
-    on_selection: Optional[Callable] = None
-):
-    """Renderiza los botones de selección de beneficio."""
-
-    st.markdown("### 🎁 Elige tu Beneficio")
-
-    cols = st.columns(len(result.available_benefits))
-
-    for i, benefit in enumerate(result.available_benefits):
-        info = get_benefit_description(benefit)
-        with cols[i]:
-            with st.container(border=True):
-                st.markdown(f"**{info['name']}**")
-                st.caption(info['description'])
-
-                if st.button(
-                    f"Elegir {benefit.value.title()}",
-                    key=f"benefit_{benefit.value}",
-                    use_container_width=True,
-                    type="primary"
-                ):
-                    # Aplicar beneficio
-                    effect = apply_benefit(result, benefit, player_id, faction_id, energy_spent)
-
-                    result.selected_benefit = benefit
-                    st.success(f"✅ {info['effect']}")
-
-                    if on_selection:
-                        on_selection(benefit, effect)
-
-                    st.rerun()
-
-
-def render_malus_selection(
-    result: MRGResult,
-    player_id: int,
-    faction_id: Optional[int] = None,
-    on_selection: Optional[Callable] = None
-):
-    """Renderiza los botones de selección de malus."""
-
-    st.markdown("### ⚠️ Elige tu Consecuencia")
-    st.caption("Debes elegir una. No hay escape.")
-
-    cols = st.columns(len(result.available_malus))
-
-    for i, malus in enumerate(result.available_malus):
-        info = get_malus_description(malus)
-        with cols[i]:
-            with st.container(border=True):
-                st.markdown(f"**{info['name']}**")
-                st.caption(info['description'])
-
-                if st.button(
-                    f"Aceptar {malus.value.replace('_', ' ').title()}",
-                    key=f"malus_{malus.value}",
-                    use_container_width=True,
-                    type="secondary"
-                ):
-                    # Aplicar malus
-                    effect = apply_malus(result, malus, player_id, faction_id)
-
-                    result.selected_malus = malus
-                    st.warning(f"💔 {info['effect']}")
-
-                    if on_selection:
-                        on_selection(malus, effect)
-
-                    st.rerun()
-
-
-def render_full_mrg_resolution(
-    result: MRGResult,
-    player_id: int,
-    faction_id: Optional[int] = None,
-    energy_spent: int = 0
-):
+def render_full_mrg_resolution(result: MRGResult):
     """
     Renderiza el flujo completo de resolución MRG.
-    Incluye animación, cálculo, resultado y selección si aplica.
+    Incluye animación, cálculo y resultado.
     """
 
     with st.container(border=True):
         st.markdown(f"## 🎲 Resolución: {result.action_description or 'Acción'}")
-
-        if result.entity_name:
-            st.caption(f"Entidad: **{result.entity_name}**")
 
         st.divider()
 
@@ -210,12 +152,3 @@ def render_full_mrg_resolution(
 
         # 3. Resultado
         render_mrg_result(result)
-
-        # 4. Selección si es necesaria
-        if result.requires_player_choice:
-            st.divider()
-
-            if result.available_benefits:
-                render_benefit_selection(result, player_id, faction_id, energy_spent)
-            elif result.available_malus:
-                render_malus_selection(result, player_id, faction_id)

@@ -2,39 +2,34 @@
 """
 Motor de Resolución Galáctico (MRG).
 Implementa la lógica de 2d50 y evaluación de resultados.
+Refactorizado v2.1: Función pura sin gestión de efectos secundarios.
 """
 import random
-from typing import Optional, List, Dict
-from dataclasses import dataclass, field
+from typing import Optional
+from dataclasses import dataclass
 from enum import Enum
 
-from .mrg_constants import *
-# Regla 1: Import absoluto para módulos de diferentes paquetes
+from .mrg_constants import (
+    DICE_SIDES,
+    CRITICAL_SUCCESS_MIN,
+    CRITICAL_FAILURE_MAX,
+    MARGIN_TOTAL_SUCCESS,
+    MARGIN_PARTIAL_SUCCESS,
+    MARGIN_PARTIAL_FAILURE,
+    ASYMPTOTIC_MAX_BONUS,
+    ASYMPTOTIC_K_FACTOR
+)
 from data.log_repository import log_event
 
 
 class ResultType(Enum):
-    """Tipos de resultado posibles según Reglas v2.0."""
-    CRITICAL_SUCCESS = "critical_success"  # 96-100
+    """Tipos de resultado posibles según Reglas v2.1."""
+    CRITICAL_SUCCESS = "critical_success"  # 96-100 (Anula margen)
     TOTAL_SUCCESS = "total_success"        # Margen > 25
     PARTIAL_SUCCESS = "partial_success"    # Margen 0 a 25
     PARTIAL_FAILURE = "partial_failure"    # Margen -25 a 0
     TOTAL_FAILURE = "total_failure"        # Margen < -25
-    CRITICAL_FAILURE = "critical_failure"  # 2-5
-
-
-class BenefitType(Enum):
-    """Beneficios seleccionables en Éxito Total."""
-    EFFICIENCY = "eficiencia"
-    PRESTIGE = "prestigio"
-    IMPETUS = "impetu"
-
-
-class MalusType(Enum):
-    """Malus seleccionables en Fracaso Total."""
-    OPERATIVE_DOWN = "baja_operativa"
-    DISCREDIT = "descredito"
-    EXPOSURE = "exposicion"
+    CRITICAL_FAILURE = "critical_failure"  # 2-5 (Anula margen)
 
 
 @dataclass
@@ -50,17 +45,17 @@ class MRGRoll:
 
 @dataclass
 class MRGResult:
-    """Resultado completo de una resolución."""
+    """
+    Resultado matemático de una resolución.
+    Objeto de valor inmutable y sin estado de efectos.
+    """
     roll: MRGRoll
     merit_points: int
     bonus_applied: int
     difficulty: int
     margin: int
     result_type: ResultType
-    
-    # Narrativa y Metadatos
     action_description: str = ""
-    narrative_outcome: str = "" 
 
     @property
     def success(self) -> bool:
@@ -85,17 +80,16 @@ def roll_2d50() -> MRGRoll:
 
 def calculate_asymptotic_bonus(merit_points: int) -> int:
     """
-    Calcula el bono con saturación asintótica (Regla 3.2).
+    Calcula el bono con saturación asintótica (Regla 3.2 v2.1).
     Asegura que el bono sea siempre >= 0 y redondeado al entero más cercano.
+    Max Bono ajustado a 50 según nuevas especificaciones.
     """
     if merit_points <= 0:
         return 0
         
     # Bono_Final = Max_Bono * (Puntos / (Puntos + K))
-    # Con K=150, la curva es más suave y premia la especialización.
     raw_bonus = ASYMPTOTIC_MAX_BONUS * (merit_points / (merit_points + ASYMPTOTIC_K_FACTOR))
     
-    # Redondeo estándar y conversión a int
     return int(round(raw_bonus))
 
 
@@ -133,12 +127,7 @@ def resolve_action(
 ) -> MRGResult:
     """
     Ejecuta una acción completa del MRG.
-    
-    Args:
-        merit_points: Valor total de atributo + habilidad del personaje.
-        difficulty: Valor objetivo a superar (Estándar: 50).
-        action_description: Descripción de la tarea para el log.
-        player_id: ID del jugador para auditoría en base de datos.
+    Función pura: (Stats, Dif) -> Resultado.
     """
     # 1. Tirada física
     roll = roll_2d50()
@@ -152,14 +141,13 @@ def resolve_action(
     # 4. Determinación de Resultado
     result_type = determine_result_type(roll, margin)
 
-    # 5. Auditoría (Logging) con detalle matemático completo
+    # 5. Auditoría (Logging)
     try:
-        # Formato: 🎲 MRG [Acción]: 2d50(Total) + Bono(X) - Dif(Y) = Margen(Z) >> TIPO
         log_msg = (
             f"🎲 MRG [{action_description}]: "
             f"2d50({roll.total}) + Bono({bonus}) - Dif({difficulty}) "
             f"= Margen({margin}) >> {result_type.name} "
-            f"(Puntos Mérito: {merit_points}, K: {ASYMPTOTIC_K_FACTOR})"
+            f"(Puntos: {merit_points})"
         )
         
         log_event(
@@ -168,7 +156,7 @@ def resolve_action(
             event_type="MRG_AUDIT"
         )
     except Exception as e:
-        # Debug complementario: Fallo en log no debe romper el flujo del juego
+        # Fallo en log no debe romper el flujo del juego
         print(f"⚠️ Error en auditoría MRG: {e}")
 
     return MRGResult(

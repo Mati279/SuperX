@@ -1,8 +1,8 @@
 # core/mrg_constants.py
 """
 Constantes del Motor de Resolución Galáctico (MRG).
-Basado en Reglas SuperX v2.0 - Sección 3.
-Combina reglas nuevas con definiciones de dificultad requeridas por el sistema.
+Basado en Reglas SuperX v2.1.
+Define la matemática pura de tiradas, márgenes y dificultades.
 """
 
 # --- DADOS Y DISTRIBUCIÓN ---
@@ -21,44 +21,41 @@ MARGIN_PARTIAL_SUCCESS = 0    # Margen 0 a +25
 MARGIN_PARTIAL_FAILURE = -25  # Margen -25 a 0
 # Margen < -25 es Fracaso Total
 
-# --- DIFICULTADES ESTÁNDAR (Requeridas por gemini_service y time_engine) ---
-DIFFICULTY_TRIVIAL = 20
-DIFFICULTY_EASY = 35
-DIFFICULTY_NORMAL = 50
-DIFFICULTY_HARD = 65
-DIFFICULTY_VERY_HARD = 80
-DIFFICULTY_HEROIC = 95
-DIFFICULTY_LEGENDARY = 110
+# --- DIFICULTADES V2.1 (Niveles Estandarizados) ---
+DIFFICULTY_ROUTINE = 25
+DIFFICULTY_STANDARD = 50
+DIFFICULTY_CHALLENGING = 75
+DIFFICULTY_HEROIC = 100
 
 DIFFICULTY_PRESETS = {
-    "trivial": DIFFICULTY_TRIVIAL,
-    "fácil": DIFFICULTY_EASY,
-    "normal": DIFFICULTY_NORMAL,
-    "difícil": DIFFICULTY_HARD,
-    "muy difícil": DIFFICULTY_VERY_HARD,
+    "rutinario": DIFFICULTY_ROUTINE,
+    "estándar": DIFFICULTY_STANDARD,
+    "desafiante": DIFFICULTY_CHALLENGING,
     "heroico": DIFFICULTY_HEROIC,
-    "legendario": DIFFICULTY_LEGENDARY,
 }
 
-# --- VALORES DE BENEFICIOS (Regla 3.3 - Selección de Éxito Total) ---
-BENEFIT_EFFICIENCY_REFUND = 0.50  # Devuelve 50% del costo de energía
-BENEFIT_PRESTIGE_GAIN = 0.05      # +0.05% de Prestigio Global
-BENEFIT_IMPETUS_TICK_REDUCTION = 1 # -1 Tick a la siguiente misión
+# Mapping de legacy para evitar rupturas inmediatas si algo externo llama a las keys viejas
+# (Opcional: se puede eliminar si se confirma que nada externo usa las keys viejas)
+# Por ahora, mapeamos las antiguas a las nuevas más cercanas
+DIFFICULTY_LEGACY_MAP = {
+    "trivial": DIFFICULTY_ROUTINE,
+    "fácil": DIFFICULTY_ROUTINE,
+    "normal": DIFFICULTY_STANDARD,
+    "difícil": DIFFICULTY_CHALLENGING,
+    "muy difícil": DIFFICULTY_CHALLENGING,
+    "legendario": DIFFICULTY_HEROIC
+}
 
-# --- VALORES DE MALUS (Regla 3.3 - Selección de Fracaso Total) ---
-MALUS_OPERATIVE_DOWN_TICKS = 2    # Personaje herido/inutilizable por 2 Ticks
-MALUS_DISCREDIT_LOSS = 0.05       # -0.05% de Prestigio Global
-MALUS_EXPOSURE_RISK = True        # Revela posición o secretos
-
-# --- SATURACIÓN ASINTÓTICA (Regla 3.2) ---
+# --- SATURACIÓN ASINTÓTICA (Regla 3.2 - Revisión v2.1) ---
 # Fórmula: Bono = Max * (Puntos / (Puntos + K))
-ASYMPTOTIC_MAX_BONUS = 100
-# K=150 para suavizar la curva de especialización según Regla 3.2 revisada. 
-# Permite una progresión más sostenida (50pts->+25, 150pts->+50).
+# Se reduce el Max Bonus a 50 para evitar trivializar dificultades altas.
+ASYMPTOTIC_MAX_BONUS = 50
+# K=150 se mantiene para suavizar la curva de especialización.
 ASYMPTOTIC_K_FACTOR = 150
 
-# --- ESTADOS DE ENTIDAD (Restaurados para compatibilidad) ---
+# --- ESTADOS DE ENTIDAD ---
 # Se alinean con los valores usados en CharacterStatus (core/models.py)
+# Mantenidos por consistencia de datos, aunque el MRG ya no aplica efectos directamente.
 ENTITY_STATUS_ACTIVE = "Disponible"
-ENTITY_STATUS_INCAPACITATED = "Herido"  # Mapeado a 'Herido' para consistencia en DB
-ENTITY_STATUS_EXPOSED = "Expuesto"      # Estado temporal lógico
+ENTITY_STATUS_INCAPACITATED = "Herido"
+ENTITY_STATUS_EXPOSED = "Expuesto"
