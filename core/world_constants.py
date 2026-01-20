@@ -200,11 +200,12 @@ BUILDING_SHUTDOWN_PRIORITY = {
 }
 
 ECONOMY_RATES = {
-    "income_per_pop": 0.1, # Créditos por población base
+    # Actualizado para escala de Población 1.0 - 10.0 (1.0 = 1B Habitantes)
+    "income_per_pop": 150.0, # Créditos por 1.0 de pop (antes 0.1 por unidad)
     
     # Valores base para cálculo de Seguridad (0-100)
     "security_base": 25.0,
-    "security_per_1b_pop": 5.0, # +5 seguridad por cada 1B de habitantes
+    "security_per_1b_pop": 5.0, # +5 seguridad por cada 1.0 de pop (1B)
     
     # Bonus de infraestructura a la seguridad (puntos planos)
     "security_bonus_sensor": 2.0,

@@ -33,15 +33,16 @@ from core.models import ProductionSummary, EconomyTickResult
 # --- FUNCIONES DE CÁLCULO ECONÓMICO (PURAS) ---
 
 def calculate_planet_security(
-    population: int,
+    population: float,
     infrastructure_defense: int
 ) -> float:
     """
     Calcula el nivel de seguridad del planeta (0-100).
-    Formula: Base (25) + (Población / 1B * 5) + Infraestructura.
+    Formula: Base (25) + (Población * 5) + Infraestructura.
+    Nota: Población ahora es float (1.0 = 1B), por lo que se multiplica directo.
     
     Args:
-        population: Población total.
+        population: Población total (escala 1.0 - 10.0).
         infrastructure_defense: Valor acumulado de defensa (módulos).
         
     Returns:
@@ -51,7 +52,8 @@ def calculate_planet_security(
     per_pop = ECONOMY_RATES.get("security_per_1b_pop", 5.0)
     
     # Bonus por población (grandes poblaciones se defienden mejor/tienen mas milicia)
-    pop_bonus = (population / 1_000_000_000) * per_pop
+    # Refactor V2: Eliminada división por 1_000_000_000. Pop ya viene en escala correcta.
+    pop_bonus = population * per_pop
     
     total = base + pop_bonus + infrastructure_defense
     
@@ -60,7 +62,7 @@ def calculate_planet_security(
 
 
 def calculate_income(
-    population: int,
+    population: float,
     security: float
 ) -> int:
     """
@@ -68,13 +70,14 @@ def calculate_income(
     Formula: (Pop * Tasa) * (Seguridad / 100).
     
     Args:
-        population: Población total.
+        population: Población total (escala 1.0 - 10.0).
         security: Nivel de seguridad (0-100).
         
     Returns:
         int: Créditos generados.
     """
-    rate = ECONOMY_RATES.get("income_per_pop", 0.1)
+    # Tasa actualizada en constants (aprox 150.0)
+    rate = ECONOMY_RATES.get("income_per_pop", 150.0)
     
     # Seguridad actúa como porcentaje de eficiencia fiscal
     efficiency = security / 100.0
@@ -94,7 +97,7 @@ class MaintenanceResult:
 def process_building_maintenance(
     buildings: List[Dict[str, Any]],
     available_resources: Dict[str, int],
-    available_pops: int
+    available_pops: float
 ) -> MaintenanceResult:
     """
     Procesa el mantenimiento estricto de los edificios.
@@ -108,7 +111,7 @@ def process_building_maintenance(
     Args:
         buildings: Lista de edificios.
         available_resources: Recursos del jugador (Mutable copy se usa internamente).
-        available_pops: Población disponible (para cascade shutdown si fuese necesario).
+        available_pops: Población disponible (float).
         
     Returns:
         MaintenanceResult con listas de cambios y coste total.
@@ -256,8 +259,10 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
         # 2. Procesar cada planeta
         for planet in planets:
             # A. Seguridad
-            pop = planet.get("poblacion", 0)
+            # Ahora es un float (ej: 2.5 = 2.5B)
+            pop = float(planet.get("poblacion", 0.0))
             infra_def = planet.get("infraestructura_defensiva", 0)
+            
             security = calculate_planet_security(pop, infra_def)
             
             # Detectar cambio para update
@@ -271,7 +276,7 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             
             # C. Mantenimiento y Estado de Edificios
             buildings = planet.get("buildings", [])
-            pops_avail = planet.get("pops_activos", pop) # Simplificación
+            pops_avail = float(planet.get("pops_activos", pop)) # Float
             
             maint_res = process_building_maintenance(buildings, player_resources, pops_avail)
             
@@ -366,8 +371,10 @@ def get_player_projected_economy(player_id: int) -> Dict[str, int]:
         
         for planet in planets:
             # Ingresos
-            pop = planet.get("poblacion", 0)
+            # Float
+            pop = float(planet.get("poblacion", 0.0))
             infra = planet.get("infraestructura_defensiva", 0)
+            
             sec = calculate_planet_security(pop, infra)
             income = calculate_income(pop, sec)
             projection["creditos"] += income
