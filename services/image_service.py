@@ -30,6 +30,7 @@ def _generate_visual_dna(character: CommanderData) -> str:
         - Raza: {character.sheet.taxonomia.raza}
         - Clase: {character.sheet.progresion.clase}
         - Bio Superficial: {character.sheet.bio.bio_superficial}
+        - Atributos Clave: Fuerza {character.attributes.fuerza}, Tecnica {character.attributes.tecnica}
         
         INSTRUCCIONES DE SALIDA:
         Escribe un párrafo denso (80-100 palabras) describiendo SOLO su apariencia física inmutable.
@@ -47,7 +48,7 @@ def _generate_visual_dna(character: CommanderData) -> str:
         
         if response.text:
             return response.text.strip()
-        return f"{character.sheet.taxonomia.raza} con armadura táctica estándar, rostro oculto."
+        return "Soldado genérico con armadura estándar de facción, rostro oculto por casco táctico."
         
     except Exception as e:
         print(f"❌ Error generando ADN Visual: {e}")
@@ -72,30 +73,26 @@ def generate_and_upload_tactical_image(
             log_event(f"❌ Personaje {character_id} no encontrado para imagen.", player_id)
             return None
             
-        # Convertimos a objeto CommanderData
+        # Convertimos a objeto CommanderData para trabajar cómodamente
         character = CommanderData.from_dict(char_data_dict)
         
-        # --- FIX: Capturar la instancia del schema en una variable local ---
-        # Esto evita que 'character.sheet' cree una nueva copia cada vez que se llama.
-        char_sheet = character.sheet 
-        
         # 2. Verificar / Generar ADN Visual (Lazy Load)
-        visual_dna = char_sheet.bio.apariencia_visual
+        visual_dna = character.sheet.bio.apariencia_visual
         
-        # Si no existe o es muy corto, generamos uno nuevo
         if not visual_dna or len(visual_dna) < 10:
             log_event(f"🎨 Creando ADN Visual permanente para {character.nombre}...", player_id)
             
-            # A) Generar texto con IA
+            # A) Generar
             visual_dna = _generate_visual_dna(character)
             
-            # B) Actualizar la variable LOCAL (char_sheet)
-            char_sheet.bio.apariencia_visual = visual_dna
+            # B) Actualizar Objeto Local
+            character.sheet.bio.apariencia_visual = visual_dna
             
-            # C) PERSISTENCIA: Serializar la variable local modificada
-            updated_stats = char_sheet.model_dump() 
+            # C) PERSISTENCIA CRÍTICA: Guardar en DB para el futuro
+            # Exportamos el modelo Pydantic completo a dict
+            updated_stats = character.sheet.model_dump()
             
-            # Guardar en SQL
+            # Llamada al repositorio para guardar el cambio JSON
             update_character(character.id, {"stats_json": updated_stats}) 
             
             log_event(f"💾 ADN Visual guardado para {character.nombre}.", player_id)
@@ -107,29 +104,26 @@ def generate_and_upload_tactical_image(
         [ART STYLE]: Cinematic sci-fi character portrait, hyper-realistic, 8k resolution, volumetric lighting, atmospheric, detailed textures.
         """
         
-        print(f"🎨 Generando imagen para: {character.nombre}")
+        print(f"🎨 Generando imagen para: {character.nombre} en situación: {prompt_situation}")
 
         # 4. Generación de Imagen
-        # NOTA: Ajusta el modelo a 'imagen-3.0-generate-001' o 'imagen-4.0-fast-generate-001' según disponibilidad.
         response = client.models.generate_images(
-            model='imagen-3.0-generate-001', 
+            model='imagen-4.0-fast-generate-001', # Ajustar a 'imagen-4.0-fast-generate-001' si tienes acceso
             prompt=final_prompt,
             config=types.GenerateImagesConfig(
                 number_of_images=1,
                 aspect_ratio="16:9",
-                # IMPORTANTE: Relajamos un poco el filtro para permitir descripciones de "combate" o "cicatrices"
-                safety_filter_level="block_medium_and_above", 
                 person_generation="allow_adult"
             )
         )
 
         if not response.generated_images:
-            log_event(f"⚠️ Imagen bloqueada por filtros o error de API para {character.nombre}", player_id)
             return None
 
         image_bytes = response.generated_images[0].image.image_bytes
         
-        # 5. Nombre Semántico
+        # 5. Nombre Semántico del Archivo
+        # Limpieza de nombre: Espacios -> _, Solo alfanumérico
         safe_name = re.sub(r'[^a-zA-Z0-9]', '', character.nombre.replace(' ', '_'))
         safe_action = re.sub(r'[^a-zA-Z0-9]', '', prompt_situation[:15].replace(' ', '_'))
         timestamp = int(time.time())
