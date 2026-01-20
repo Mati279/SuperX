@@ -72,11 +72,6 @@ class CharacterBio(BaseModel):
     edad: int
     sexo: BiologicalSex = BiologicalSex.UNKNOWN
     biografia_corta: str = Field(default="Sin biografía registrada.")
-    # [NUEVO] Sistema de ADN Visual Lazy-Load
-    apariencia_visual: Optional[str] = Field(
-        default=None, 
-        description="ADN Visual denso generado bajo demanda para consistencia en imágenes."
-    )
 
 class CharacterTaxonomy(BaseModel):
     """Taxonomía Biológica y Evolutiva."""
