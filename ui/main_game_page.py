@@ -72,9 +72,13 @@ def _render_sticky_top_hud(player, commander):
     """
     Renderiza la barra superior STICKY (siempre visible).
     Layout: Recursos CENTRADOS con DELTAS de proyección.
+    Incluye lógica de tooltips para Recursos de Lujo.
     """
     finances = get_player_finances(player.id)
     projection = get_player_projected_economy(player.id)
+    
+    # Obtener recursos de lujo de forma segura
+    recursos_lujo = getattr(player, "recursos_lujo", {}) or {}
 
     # Helper para evitar crash por NoneType
     def safe_val(key):
@@ -93,21 +97,57 @@ def _render_sticky_top_hud(player, commander):
         
         return f'<span style="color: {color}; font-size: 0.7em; margin-left: 5px;">{sign}{val:,}</span>'
 
-    # Preparar valores para el HTML (evita problemas de interpolación)
+    # Helper para construir tooltips de lujo
+    def build_tooltip(base_name, luxury_category):
+        """
+        Genera un string para el atributo title del HTML.
+        Muestra el detalle de items de lujo si existen en esa categoría.
+        """
+        items = recursos_lujo.get(luxury_category, {})
+        
+        # Filtrar items con cantidad > 0 para limpieza visual
+        active_items = {k: v for k, v in items.items() if v > 0}
+        
+        if not active_items:
+            return base_name
+        
+        # Construcción del tooltip (HTML title soporta saltos de línea)
+        tooltip_str = f"{luxury_category}"
+        for name, amount in active_items.items():
+            tooltip_str += f"\n• {name}: {amount:,}"
+            
+        return tooltip_str
+
+    # --- Preparación de Valores ---
+
+    # 1. Créditos
     creditos = f"{safe_val('creditos'):,}"
     delta_creditos = fmt_delta('creditos')
 
+    # 2. Materiales
     materiales = f"{safe_val('materiales'):,}"
     delta_materiales = fmt_delta('materiales')
+    tooltip_materiales = build_tooltip("Materiales de Construcción", "Metales")
 
+    # 3. Componentes
     componentes = f"{safe_val('componentes'):,}"
     delta_componentes = fmt_delta('componentes')
+    tooltip_componentes = build_tooltip("Componentes Tecnológicos", "Componentes Avanzados")
 
+    # 4. Células
     celulas = f"{safe_val('celulas_energia'):,}"
     delta_celulas = fmt_delta('celulas_energia')
+    tooltip_celulas = build_tooltip("Células de Energía", "Energía Avanzada")
 
+    # 5. Influencia
     influencia = f"{safe_val('influencia'):,}"
     delta_influencia = fmt_delta('influencia')
+    tooltip_influencia = build_tooltip("Influencia Política", "Influencia Superior")
+
+    # 6. Datos (NUEVO)
+    datos = f"{safe_val('datos'):,}"
+    delta_datos = fmt_delta('datos')
+    tooltip_datos = build_tooltip("Datos Críticos", "Datos Críticos")
 
     # CSS separado para mayor claridad
     hud_css = """
@@ -130,7 +170,7 @@ def _render_sticky_top_hud(player, commander):
 
     .hud-resource-group {
         display: flex;
-        gap: 40px;
+        gap: 25px; /* Reducido ligeramente para acomodar más recursos */
         align-items: center;
         height: 100%;
     }
@@ -142,10 +182,11 @@ def _render_sticky_top_hud(player, commander):
         cursor: help;
         padding: 2px 8px;
         border-radius: 4px;
+        transition: background-color 0.2s;
     }
 
     .hud-metric:hover {
-        background-color: rgba(255,255,255,0.05);
+        background-color: rgba(255,255,255,0.1);
     }
 
     .hud-icon {
@@ -164,11 +205,11 @@ def _render_sticky_top_hud(player, commander):
         align-items: center; 
     }
 
-    @media (max-width: 800px) {
+    @media (max-width: 900px) {
         .hud-value { font-size: 0.8em; }
         .hud-icon { font-size: 1.0em; }
-        .top-hud-sticky { padding-left: 60px; }
-        .hud-resource-group { gap: 15px; }
+        .top-hud-sticky { padding-left: 60px; justify-content: flex-start; overflow-x: auto; }
+        .hud-resource-group { gap: 15px; padding-right: 20px; }
     }
     </style>
     """
@@ -181,21 +222,25 @@ def _render_sticky_top_hud(player, commander):
                 <span class="hud-icon">💳</span>
                 <span class="hud-value">{creditos}{delta_creditos}</span>
             </div>
-            <div class="hud-metric" title="Materiales de Construcción">
+            <div class="hud-metric" title="{tooltip_materiales}">
                 <span class="hud-icon">📦</span>
                 <span class="hud-value">{materiales}{delta_materiales}</span>
             </div>
-            <div class="hud-metric" title="Componentes Tecnológicos">
+            <div class="hud-metric" title="{tooltip_componentes}">
                 <span class="hud-icon">🧩</span>
                 <span class="hud-value">{componentes}{delta_componentes}</span>
             </div>
-            <div class="hud-metric" title="Células de Energía">
+            <div class="hud-metric" title="{tooltip_celulas}">
                 <span class="hud-icon">⚡</span>
                 <span class="hud-value">{celulas}{delta_celulas}</span>
             </div>
-            <div class="hud-metric" title="Influencia Política">
+            <div class="hud-metric" title="{tooltip_influencia}">
                 <span class="hud-icon">👑</span>
                 <span class="hud-value">{influencia}{delta_influencia}</span>
+            </div>
+            <div class="hud-metric" title="{tooltip_datos}">
+                <span class="hud-icon">💾</span>
+                <span class="hud-value">{datos}{delta_datos}</span>
             </div>
         </div>
     </div>
