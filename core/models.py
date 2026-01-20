@@ -27,7 +27,7 @@ class CharacterStatus(str, Enum):
     DECEASED = "Fallecido"
     TRAINING = "Entrenando"
     TRANSIT = "En Tránsito"
-    CANDIDATE = "Candidato"  # <--- NUEVO ESTADO PARA RECLUTAMIENTO
+    CANDIDATE = "Candidato"
 
 class BiologicalSex(str, Enum):
     MALE = "Masculino"
@@ -72,6 +72,11 @@ class CharacterBio(BaseModel):
     edad: int
     sexo: BiologicalSex = BiologicalSex.UNKNOWN
     biografia_corta: str = Field(default="Sin biografía registrada.")
+    # --- NUEVO CAMPO: ADN VISUAL ---
+    apariencia_visual: Optional[str] = Field(
+        default=None, 
+        description="Descripción visual inmutable y de alta densidad (ADN Visual) para generación de imágenes consistente."
+    )
 
 class CharacterTaxonomy(BaseModel):
     """Taxonomía Biológica y Evolutiva."""
@@ -229,7 +234,7 @@ class CommanderData(BaseModel):
     estado: str = "Disponible" # Columna DB legacy/sync
     stats_json: Dict[str, Any] = Field(default_factory=dict)
     faccion_id: Optional[int] = None
-    recruited_at_tick: int = 0 # <--- NUEVO CAMPO
+    recruited_at_tick: int = 0 
 
     @property
     def sheet(self) -> CharacterSchema:
@@ -241,7 +246,6 @@ class CommanderData(BaseModel):
             return CharacterSchema(**self.stats_json)
         except Exception:
             # Fallback para datos antiguos o corruptos, intenta reconstruir un mínimo viable
-            # Esto evita crashes si la DB tiene esquemas viejos
             return CharacterSchema(
                 bio=CharacterBio(nombre=self.nombre, apellido="", edad=30, biografia_corta="Datos migrados"),
                 taxonomia=CharacterTaxonomy(raza="Humano"),

@@ -1,81 +1,149 @@
 # services/image_service.py
 import time
-import io
+import re
 from typing import Optional
 from google import genai
 from google.genai import types
-from PIL import Image
 
 from config.settings import GEMINI_API_KEY
+from config.app_constants import TEXT_MODEL_NAME
 from data.database import get_supabase
 from data.log_repository import log_event
+from data.character_repository import get_character_by_id, update_character
+from core.models import CommanderData
 
-# Inicializar cliente de GenAI
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-def generate_and_upload_tactical_image(prompt: str, player_id: int) -> Optional[str]:
+def _generate_visual_dna(character: CommanderData) -> str:
     """
-    Genera una imagen táctica usando Google Imagen 4 Fast y la sube a Supabase Storage.
-    
-    Args:
-        prompt: Descripción detallada para la generación de la imagen.
-        player_id: ID del jugador para nombrar el archivo.
-        
-    Returns:
-        str: URL pública de la imagen generada, o None si hubo un error.
+    Genera el ADN Visual (descripción física densa) usando Gemini Text Model.
+    Se usa solo cuando el personaje no tiene uno predefinido.
     """
     try:
-        # Debug Log: Inicio del proceso
-        print(f"🎨 Iniciando generación de imagen (Imagen 4 Fast) para Player {player_id}...")
+        # Construimos un contexto rico para que la IA deduzca la apariencia
+        prompt = f"""
+        ACTÚA COMO: Director de Arte de Ciencia Ficción.
+        TAREA: Crear una "Ficha de Diseño de Personaje" (Visual DNA) ultra-detallada para generación de imágenes.
         
-        # 1. Generación de Imagen (Google GenAI)
+        DATOS DEL PERSONAJE:
+        - Nombre: {character.nombre}
+        - Raza: {character.sheet.taxonomia.raza}
+        - Clase: {character.sheet.progresion.clase}
+        - Bio Superficial: {character.sheet.bio.bio_superficial}
+        - Atributos Clave: Fuerza {character.attributes.fuerza}, Tecnica {character.attributes.tecnica}
+        
+        INSTRUCCIONES DE SALIDA:
+        Escribe un párrafo denso (80-100 palabras) describiendo SOLO su apariencia física inmutable.
+        Usa un estilo descriptivo crudo, separado por comas o puntos. Enfócate en materiales, texturas, iluminación y rasgos anatómicos.
+        NO incluyas personalidad. NO incluyas acciones. SOLO FÍSICO Y EQUIPAMIENTO BASE.
+        
+        EJEMPLO DE ESTILO REQUERIDO:
+        "Male, 30s, hyper-defined gaunt face, razor-sharp cheekbones. Eyes: Deep-set heterochromia; left eye icy cerulean, right eye recessed 32mm cybernetic aperture with rotating red rings. Hair: Silver-white slicked-back undercut, wet-look pomade. Body: Tall, lanky build, visible external titanium vertebrae. Outfit: Distressed black buffalo leather duster, matte carbon-fiber chest plate with scorch marks."
+        """
+
+        response = client.models.generate_content(
+            model=TEXT_MODEL_NAME,
+            contents=prompt
+        )
+        
+        if response.text:
+            return response.text.strip()
+        return "Soldado genérico con armadura estándar de facción, rostro oculto por casco táctico."
+        
+    except Exception as e:
+        print(f"❌ Error generando ADN Visual: {e}")
+        return f"{character.sheet.taxonomia.raza} {character.sheet.progresion.clase} con equipamiento de combate estándar."
+
+def generate_and_upload_tactical_image(
+    prompt_situation: str, 
+    player_id: int, 
+    character_id: int
+) -> Optional[str]:
+    """
+    Flujo Inteligente:
+    1. Carga Personaje.
+    2. ¿Tiene ADN Visual? NO -> Genéralo y GUÁRDALO en DB.
+    3. Genera Imagen combinando (ADN Visual + Situación).
+    4. Sube con nombre semántico.
+    """
+    try:
+        # 1. Obtener datos del personaje
+        char_data_dict = get_character_by_id(character_id)
+        if not char_data_dict:
+            log_event(f"❌ Personaje {character_id} no encontrado para imagen.", player_id)
+            return None
+            
+        # Convertimos a objeto CommanderData para trabajar cómodamente
+        character = CommanderData.from_dict(char_data_dict)
+        
+        # 2. Verificar / Generar ADN Visual (Lazy Load)
+        visual_dna = character.sheet.bio.apariencia_visual
+        
+        if not visual_dna or len(visual_dna) < 10:
+            log_event(f"🎨 Creando ADN Visual permanente para {character.nombre}...", player_id)
+            
+            # A) Generar
+            visual_dna = _generate_visual_dna(character)
+            
+            # B) Actualizar Objeto Local
+            character.sheet.bio.apariencia_visual = visual_dna
+            
+            # C) PERSISTENCIA CRÍTICA: Guardar en DB para el futuro
+            # Exportamos el modelo Pydantic completo a dict
+            updated_stats = character.sheet.model_dump()
+            
+            # Llamada al repositorio para guardar el cambio JSON
+            update_character(character.id, {"stats_json": updated_stats}) 
+            
+            log_event(f"💾 ADN Visual guardado para {character.nombre}.", player_id)
+
+        # 3. Construcción del Prompt de Imagen
+        final_prompt = f"""
+        [SUBJECT VISUAL DNA]: {visual_dna}
+        [CURRENT ACTION/CONTEXT]: {prompt_situation}
+        [ART STYLE]: Cinematic sci-fi character portrait, hyper-realistic, 8k resolution, volumetric lighting, atmospheric, detailed textures.
+        """
+        
+        print(f"🎨 Generando imagen para: {character.nombre} en situación: {prompt_situation}")
+
+        # 4. Generación de Imagen
         response = client.models.generate_images(
-            model='imagen-4.0-fast-generate-001',
-            prompt=prompt,
+            model='imagen-4.0-fast-generate-001', # Ajustar a 'imagen-4.0-fast-generate-001' si tienes acceso
+            prompt=final_prompt,
             config=types.GenerateImagesConfig(
                 number_of_images=1,
                 aspect_ratio="16:9",
-                safety_filter_level="block_low_and_above", # Ajustado según requisito estricto del modelo
                 person_generation="allow_adult"
             )
         )
 
         if not response.generated_images:
-            msg = f"❌ Error GenAI: No se generaron imágenes para el prompt: {prompt}"
-            print(msg)
-            log_event(msg, player_id) # Log visible en DB
             return None
 
-        # Obtener los bytes de la imagen
         image_bytes = response.generated_images[0].image.image_bytes
         
-        # 2. Procesamiento
+        # 5. Nombre Semántico del Archivo
+        # Limpieza de nombre: Espacios -> _, Solo alfanumérico
+        safe_name = re.sub(r'[^a-zA-Z0-9]', '', character.nombre.replace(' ', '_'))
+        safe_action = re.sub(r'[^a-zA-Z0-9]', '', prompt_situation[:15].replace(' ', '_'))
         timestamp = int(time.time())
-        file_name = f"img_{player_id}_{timestamp}.png"
+        
+        file_name = f"{safe_name}_{safe_action}_{timestamp}.png"
         bucket_name = "tactical-images"
 
-        # 3. Subida a Supabase Storage
+        # 6. Subida a Supabase
         supabase = get_supabase()
-        
-        # Subir el archivo
-        res = supabase.storage.from_(bucket_name).upload(
+        supabase.storage.from_(bucket_name).upload(
             path=file_name,
             file=image_bytes,
             file_options={"content-type": "image/png"}
         )
 
-        # 4. Obtener URL Pública
         public_url = supabase.storage.from_(bucket_name).get_public_url(file_name)
-        
-        # Debug Log: Éxito
-        print(f"✅ Imagen generada y subida exitosamente: {public_url}")
-        
         return public_url
 
     except Exception as e:
-        # Capturamos el error completo y lo enviamos al log del juego
-        error_msg = f"❌ ERROR CRÍTICO IMAGEN: {str(e)}"
+        error_msg = f"❌ Error Critical Image Service: {str(e)}"
         print(error_msg)
-        # Esto hará que el error aparezca en tus logs (o chat si tienes modo debug)
-        log_event(error_msg, player_id) 
+        log_event(error_msg, player_id)
         return None

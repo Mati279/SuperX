@@ -19,7 +19,6 @@ from data.database import get_service_container
 from data.log_repository import log_event
 from data.character_repository import create_character
 from data.planet_repository import get_planet_by_id
-# --- IMPORTS PARA PERSISTENCIA ---
 from data.world_repository import get_world_state
 
 from core.constants import RACES, CLASSES, SKILL_MAPPING
@@ -51,6 +50,7 @@ PREDOMINANT_RACE_CHANCE = 0.5
 DEFAULT_RANK = "Iniciado"
 
 # Prompt actualizado para incluir habilidades top y coherencia con stats
+# SE HA AÑADIDO LA INSTRUCCIÓN PARA 'apariencia_visual' DE ALTA DENSIDAD
 IDENTITY_GENERATION_PROMPT = """
 Actúa como un Oficial de Inteligencia de una facción galáctica.
 Genera el dossier para un nuevo operativo altamente especializado.
@@ -65,13 +65,22 @@ DATOS TÉCNICOS:
 - Atributos clave: {top_attributes}
 - Especialidades técnicas (Habilidades): {top_skills}
 
-INSTRUCCIONES DE GENERACIÓN (3 NIVELES):
+INSTRUCCIONES DE GENERACIÓN (4 NIVELES):
 1. NOMBRE y APELLIDO: Coherentes con la raza.
 2. BIO SUPERFICIAL (Público - 1 oración): Solo una descripción visual o impresión rápida.
-3. BIO CONOCIDA (Estándar - 40 palabras aprox): Resumen profesional. DEBE reflejar su clase y sus habilidades más altas. Ej: Si es Piloto con mucho Sigilo, mencionar su capacidad de infiltración orbital.
-4. BIO PROFUNDA (Privado - 60-80 palabras): Secretos, traumas o motivaciones ocultas coherentes con su especialidad y rasgos.
+3. BIO CONOCIDA (Estándar - 40 palabras aprox): Resumen profesional. DEBE reflejar su clase y sus habilidades más altas.
+4. BIO PROFUNDA (Privado - 60-80 palabras): Secretos, traumas o motivaciones ocultas.
 
-⚠️ REGLAS TÉCNICAS ⚠️
+⚠️ INSTRUCCIÓN ESPECIAL: 'apariencia_visual' (ADN VISUAL) ⚠️
+Genera una descripción técnica densa (NO narrativa) de sus rasgos físicos inmutables.
+Debe incluir:
+- ROSTRO: Estructura ósea, textura de piel, detalles exactos de ojos (color, implantes).
+- CABELLO: Estilo, textura (ej: wet-look), corte exacto.
+- CUERPO: Constitución, cibernética visible (materiales, luces), cicatrices.
+- ATUENDO: Tejidos específicos (ej: cuero de búfalo desgastado), marcas de uso, logotipos.
+DENSIDAD OBJETIVO: ~80-100 palabras. Estilo "Prompt de Stable Diffusion/Midjourney".
+
+REGLAS TÉCNICAS:
 - Responde SOLO con JSON válido.
 - NO uses comillas dobles (") dentro de los textos.
 """
@@ -99,6 +108,7 @@ class GeneratedIdentity:
     bio_superficial: str
     bio_conocida: str
     bio_profunda: str
+    apariencia_visual: str # Nuevo campo
 
 
 # =============================================================================
@@ -111,7 +121,6 @@ def _get_top_attributes(attributes: Dict[str, int], count: int = 2) -> str:
     return ", ".join([f"{attr.capitalize()}: {val}" for attr, val in top])
 
 def _get_top_skills(skills: Dict[str, int], count: int = 3) -> str:
-    """Retorna las habilidades más altas para el prompt de la IA."""
     sorted_skills = sorted(skills.items(), key=lambda x: x[1], reverse=True)
     top = sorted_skills[:count]
     return ", ".join([f"{name} ({val})" for name, val in top])
@@ -129,44 +138,29 @@ def _generate_base_attributes() -> Dict[str, int]:
 
 
 def _distribute_random_points(attributes: Dict[str, int], points: int, primary_attr: Optional[str] = None) -> None:
-    """
-    Distribuye puntos extra con sesgo hacia el atributo primario de la clase.
-    DEBUG: 70% de probabilidad de favorecer el atributo principal.
-    """
     attr_keys = list(attributes.keys())
     for _ in range(points):
-        # Lógica de especialización: 70% atributo primario, 30% resto
         if primary_attr and primary_attr in attributes and random.random() < 0.7:
             target_attr = primary_attr
         else:
             target_attr = random.choice(attr_keys)
-            
         if attributes[target_attr] < MAX_ATTRIBUTE_VALUE:
             attributes[target_attr] += 1
 
 
 def _boost_skills(skills: Dict[str, int], points: int, primary_attr: Optional[str] = None) -> Dict[str, int]:
-    """
-    Mejora habilidades con sesgo hacia aquellas que dependen del atributo primario.
-    DEBUG: 60% de probabilidad de favorecer habilidades de clase.
-    """
     skill_keys = list(skills.keys())
     boosted = skills.copy()
-    
-    # Identificar habilidades vinculadas al atributo primario según SKILL_MAPPING
     linked_skills = []
     if primary_attr:
         for skill_name, (attr1, attr2) in SKILL_MAPPING.items():
             if skill_name in boosted and (attr1 == primary_attr or attr2 == primary_attr):
                 linked_skills.append(skill_name)
-    
     for _ in range(points):
-        # Lógica de especialización: 60% habilidades vinculadas, 40% resto
         if linked_skills and random.random() < 0.6:
             skill = random.choice(linked_skills)
         else:
             skill = random.choice(skill_keys)
-            
         boosted[skill] += 1
     return boosted
 
@@ -191,24 +185,16 @@ def _select_class(level: int, force_class: Optional[str] = None) -> tuple[str, D
 
 
 def _calculate_recruitment_cost(stats_json: Dict[str, Any]) -> int:
-    """Calcula el costo de contratación basado en nivel y atributos."""
     try:
         level = stats_json.get("progresion", {}).get("nivel", 1)
         attributes = stats_json.get("capacidades", {}).get("atributos", {})
-        
-        # Costo base
         base_cost = 50
-        
-        # Factor nivel (ej: Nivel 1 = 50, Nivel 5 = 250)
         level_cost = level * 50
-        
-        # Factor atributos (suma total * 3)
         total_attributes = sum(attributes.values())
         attr_cost = total_attributes * 3
-        
         return base_cost + level_cost + attr_cost
     except Exception:
-        return 100 # Fallback seguro
+        return 100
 
 
 def _generate_fallback_identity(race: str, sex: BiologicalSex) -> GeneratedIdentity:
@@ -246,9 +232,10 @@ def _generate_fallback_identity(race: str, sex: BiologicalSex) -> GeneratedIdent
     return GeneratedIdentity(
         nombre=name,
         apellido=surname,
-        bio_superficial=f"{race} de aspecto estándar. Parece competente.",
-        bio_conocida=f"Operativo {race} reclutado recientemente. Su expediente indica habilidades básicas de combate y adaptación a entornos hostiles.",
-        bio_profunda=f"ARCHIVOS CORRUPTOS. Hay menciones a una operación fallida en el sector 7, pero los detalles han sido borrados intencionalmente."
+        bio_superficial=f"{race} de aspecto estándar.",
+        bio_conocida=f"Operativo {race} reclutado recientemente. Su expediente indica habilidades básicas.",
+        bio_profunda=f"ARCHIVOS CORRUPTOS. Hay menciones a una operación fallida.",
+        apariencia_visual=f"{race} estándar con uniforme táctico básico." # Fallback visual
     )
 
 
@@ -267,8 +254,7 @@ def generate_identity_with_ai_sync(
     skills: Dict[str, int]
 ) -> GeneratedIdentity:
     """
-    Versión síncrona de generación de identidad con IA usando Schema Estricto para 3 BIOS.
-    Actualizado para considerar habilidades especializadas.
+    Versión síncrona de generación de identidad con IA usando Schema Estricto para 3 BIOS + ADN Visual.
     """
     container = get_service_container()
 
@@ -288,17 +274,18 @@ def generate_identity_with_ai_sync(
         top_skills=_get_top_skills(skills)
     )
 
-    # 1. Schema Estricto para las 3 biografías
+    # 1. Schema Estricto para las 4 secciones
     identity_schema = types.Schema(
         type=types.Type.OBJECT,
         properties={
             "nombre": types.Schema(type=types.Type.STRING),
             "apellido": types.Schema(type=types.Type.STRING),
             "bio_superficial": types.Schema(type=types.Type.STRING, description="Máx 1 oración. Visual/Hint."),
-            "bio_conocida": types.Schema(type=types.Type.STRING, description="Perfil profesional. Coherente con habilidades."),
-            "bio_profunda": types.Schema(type=types.Type.STRING, description="Secretos y ganchos de misión."),
+            "bio_conocida": types.Schema(type=types.Type.STRING, description="Perfil profesional."),
+            "bio_profunda": types.Schema(type=types.Type.STRING, description="Secretos."),
+            "apariencia_visual": types.Schema(type=types.Type.STRING, description="ADN Visual de alta densidad."),
         },
-        required=["nombre", "apellido", "bio_superficial", "bio_conocida", "bio_profunda"]
+        required=["nombre", "apellido", "bio_superficial", "bio_conocida", "bio_profunda", "apariencia_visual"]
     )
 
     # 2. Configuración
@@ -323,7 +310,7 @@ def generate_identity_with_ai_sync(
 
     generation_config = types.GenerateContentConfig(
         temperature=0.85,
-        max_output_tokens=1200,
+        max_output_tokens=1500, # Aumentado para soportar descripción densa
         response_mime_type="application/json",
         response_schema=identity_schema,
         safety_settings=safety_config
@@ -347,14 +334,15 @@ def generate_identity_with_ai_sync(
                         apellido=data.get("apellido", ""),
                         bio_superficial=data.get("bio_superficial", f"{race} con aspecto preparado."),
                         bio_conocida=data.get("bio_conocida", f"Historial estándar de {char_class}."),
-                        bio_profunda=data.get("bio_profunda", "Sin secretos registrados.")
+                        bio_profunda=data.get("bio_profunda", "Sin secretos registrados."),
+                        apariencia_visual=data.get("apariencia_visual", "") # Nuevo campo
                     )
                 except json.JSONDecodeError:
                     continue
         except Exception:
             time.sleep(1)
 
-    log_event(f"Fallo generación IA (3 layers). Usando fallback.", is_error=True)
+    log_event(f"Fallo generación IA (4 layers). Usando fallback.", is_error=True)
     return _generate_fallback_identity(race, sex)
 
 
@@ -372,7 +360,6 @@ def generate_random_character_with_ai(
     race_name, race_data = _select_race(context)
     class_name, class_data = _select_class(level, context.force_class)
     
-    # Identificar Atributo Primario para Especialización
     primary_attr = class_data.get("bonus_attr")
     
     age = random.randint(AGE_MIN, AGE_MAX)
@@ -380,21 +367,17 @@ def generate_random_character_with_ai(
     
     attributes = _generate_base_attributes()
     
-    # Bonus de Raza
     for attr, bonus in race_data.get("bonus", {}).items():
         if attr in attributes:
             attributes[attr] = min(attributes[attr] + bonus, MAX_ATTRIBUTE_VALUE)
     
-    # Bonus Inicial de Clase (Nivel 3+)
     if class_name != "Novato" and primary_attr:
         if primary_attr in attributes:
             attributes[primary_attr] = min(attributes[primary_attr] + 1, MAX_ATTRIBUTE_VALUE)
             
-    # Distribución PONDERADA de puntos extra por nivel
     extra_attr_points = sum(1 for lvl in ATTRIBUTE_POINT_LEVELS if lvl <= level)
     _distribute_random_points(attributes, extra_attr_points, primary_attr)
     
-    # Cálculo y Especialización de Habilidades
     skills = calculate_skills(attributes)
     skill_points = level * SKILL_POINTS_PER_LEVEL
     skills = _boost_skills(skills, skill_points, primary_attr)
@@ -403,7 +386,6 @@ def generate_random_character_with_ai(
     feats = random.sample(AVAILABLE_FEATS, min(num_feats, len(AVAILABLE_FEATS)))
     traits = random.sample(PERSONALITY_TRAITS, k=2)
 
-    # Generación de identidad (3 Capas) - Ahora pasando habilidades para coherencia
     identity = generate_identity_with_ai_sync(
         race=race_name,
         char_class=class_name,
@@ -424,7 +406,7 @@ def generate_random_character_with_ai(
         suffix = f"-{random.randint(100, 999)}" if attempts > 3 else ""
         identity = GeneratedIdentity(
             fallback_id.nombre, fallback_id.apellido + suffix,
-            identity.bio_superficial, identity.bio_conocida, identity.bio_profunda
+            identity.bio_superficial, identity.bio_conocida, identity.bio_profunda, identity.apariencia_visual
         )
         full_name = f"{identity.nombre} {identity.apellido}"
         attempts += 1
@@ -433,7 +415,7 @@ def generate_random_character_with_ai(
         uuid_suffix = str(uuid.uuid4())[:4].upper()
         identity = GeneratedIdentity(
             identity.nombre, f"{identity.apellido}-{uuid_suffix}",
-            identity.bio_superficial, identity.bio_conocida, identity.bio_profunda
+            identity.bio_superficial, identity.bio_conocida, identity.bio_profunda, identity.apariencia_visual
         )
         full_name = f"{identity.nombre} {identity.apellido}"
         log_event(f"Character name collision resolved with UUID: {full_name}", context.player_id)
@@ -459,6 +441,7 @@ def generate_random_character_with_ai(
             "bio_superficial": identity.bio_superficial,
             "bio_conocida": identity.bio_conocida,
             "bio_profunda": identity.bio_profunda,
+            "apariencia_visual": identity.apariencia_visual, # Mapeado aquí
             "nivel_acceso": BIO_ACCESS_UNKNOWN,
             "ticks_reclutado": 0,
             "ticks_como_conocido": 0,
@@ -506,7 +489,7 @@ def generate_random_character_with_ai(
         "stats_json": stats_json
     }
 
-
+# ... resto de funciones (recruit_character_with_ai, generate_character_pool) se mantienen igual ...
 def recruit_character_with_ai(
     player_id: int,
     location_planet_id: Optional[int] = None,
