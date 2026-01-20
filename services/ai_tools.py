@@ -17,7 +17,8 @@ from data.log_repository import log_event
 from core.galaxy_generator import get_galaxy
 from core.models import KnowledgeLevel
 from core.world_models import Planet, System
-from core.mrg_engine import resolve_action, DIFFICULTY_NORMAL
+from core.mrg_engine import resolve_action
+from core.mrg_constants import DIFFICULTY_STANDARD
 from core.character_engine import get_visible_biography, get_visible_skills, get_visible_feats
 
 # --- NUEVO IMPORT ---
@@ -51,8 +52,8 @@ def investigate_character(character_name: str, player_id: int) -> str:
         return f"Investigación innecesaria. Ya posees el archivo completo de {target['nombre']} (Nivel: {current_level.value}). El nivel de confianza superior solo se gana con el tiempo."
 
     # 3. Resolver acción (MRG Engine)
-    # Dificultad NORMAL para obtener antecedentes básicos
-    result = resolve_action(merit_points=60, difficulty=DIFFICULTY_NORMAL)
+    # Dificultad STANDARD para obtener antecedentes básicos
+    result = resolve_action(merit_points=60, difficulty=DIFFICULTY_STANDARD)
     
     narrative = f"Investigación sobre {target['nombre']}: {result.result_type.name} (Margen: {result.margin})\n"
     
