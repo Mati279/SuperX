@@ -162,15 +162,13 @@ def register_player_account(
     banner_file: Optional[IO[bytes]]
 ) -> Optional[Dict[str, Any]]:
     """
-    Crea una nueva cuenta y ejecuta el PROTOCOLO DE GÉNESIS v1.5.
-    Versión: TITAN (Blindaje contra duplicados y FKs)
+    Crea una nueva cuenta y ejecuta el PROTOCOLO DE GÉNESIS v2.0 (Vía Engine).
+    Versión: TITAN Refactorizado (Delega a genesis_protocol)
     """
-    # Importación local para evitar ciclos
+    # Importación local para evitar ciclos y usar el protocolo centralizado
     from core.genesis_engine import (
-        find_safe_starting_node,
-        generate_genesis_commander_stats,
-        apply_genesis_inventory,
-        initialize_fog_of_war
+        genesis_protocol,
+        generate_genesis_commander_stats
     )
 
     if get_player_by_name(user_name):
@@ -198,22 +196,15 @@ def register_player_account(
 
         print(f"🚀 Iniciando Génesis para {user_name} ID: {player_id}")
 
-        # 2. Localización y Base
-        start_system_id = find_safe_starting_node()
-        planet_res = db.table("planets")\
-            .select("id")\
-            .eq("system_id", start_system_id)\
-            .limit(1)\
-            .execute()
-        planet_id_val = planet_res.data[0]['id'] if planet_res.data else 1
+        # 2. Ejecutar Protocolo Génesis (Delegado al Engine)
+        # Esto maneja: Ubicación segura, Selección Aleatoria de Planeta, 
+        # Población (MMFR), Inventario Inicial y Niebla de Guerra.
+        genesis_success = genesis_protocol(player_id)
+        
+        if not genesis_success:
+            raise GenesisProtocolError("El protocolo Genesis devolvió False.", {"player_id": player_id})
 
-        # Generar población inicial aleatoria (1.5 - 1.7 Billones)
-        start_pop = random.uniform(1.5, 1.7)
-
-        from data.planet_repository import create_planet_asset
-        create_planet_asset(planet_id_val, start_system_id, player_id, f"Base {faction_name}", start_pop)
-
-        # 3. Comandante (Punto Crítico de Duplicados)
+        # 3. Comandante (Responsabilidad del Repo, el engine solo maneja mundo/assets)
         stats = generate_genesis_commander_stats(user_name)
         char_data = {
             "player_id": player_id,
@@ -229,7 +220,7 @@ def register_player_account(
         }
 
         try:
-            char_res = db.table("characters").insert(char_data).execute()
+            db.table("characters").insert(char_data).execute()
         except Exception as e:
             err = str(e)
             # Si el error es duplicado, recuperar el existente (idempotencia)
@@ -238,13 +229,7 @@ def register_player_account(
             else:
                 raise e
 
-        # 4. Inventario
-        apply_genesis_inventory(player_id)
-
-        # 5. Niebla de Guerra
-        initialize_fog_of_war(player_id, start_system_id)
-
-        log_event("✅ Protocolo Génesis completado exitosamente.", player_id)
+        log_event("✅ Registro de cuenta y Génesis completados exitosamente.", player_id)
         return player
 
     except Exception as e:
@@ -353,14 +338,11 @@ def reset_player_progress(player_id: int) -> bool:
     Returns:
         bool: True si el reinicio fue exitoso.
     """
-    # Imports locales para evitar ciclos (Genesis Engine depende de otros repos que usan player_repo)
+    # Imports locales
     from core.genesis_engine import (
-        find_safe_starting_node,
-        generate_genesis_commander_stats,
-        apply_genesis_inventory,
-        initialize_fog_of_war
+        genesis_protocol,
+        generate_genesis_commander_stats
     )
-    from data.planet_repository import create_planet_asset
 
     db = _get_db()
     print(f"🔄 [RESET] Iniciando reinicio de cuenta para jugador {player_id}")
@@ -383,11 +365,10 @@ def reset_player_progress(player_id: int) -> bool:
         # C. Limpiar Personajes (Incluido el Comandante anterior)
         db.table("characters").delete().eq("player_id", player_id).execute()
         
-        # D. Limpiar Logs (Opcional, intentar borrar logs antiguos para chat limpio)
+        # D. Limpiar Logs (Opcional)
         try:
             db.table("logs").delete().eq("player_id", player_id).execute()
         except Exception:
-            # Si la tabla se llama distinto o falla, no detener el proceso
             pass
 
         # E. Resetear Recursos y Estado en tabla players
@@ -402,25 +383,14 @@ def reset_player_progress(player_id: int) -> bool:
 
         print(f"✅ [RESET] Fase de limpieza completada para {player_id}")
 
-        # --- FASE 2: RE-GÉNESIS (Reconstrucción) ---
+        # --- FASE 2: RE-GÉNESIS (Reconstrucción Vía Engine) ---
 
-        # 1. Localización y Base
-        start_system_id = find_safe_starting_node()
-        planet_res = db.table("planets").select("id").eq("system_id", start_system_id).limit(1).execute()
-        planet_id_val = planet_res.data[0]['id'] if planet_res.data else 1
-        
-        # Generar población inicial aleatoria (1.5 - 1.7 Billones)
-        start_pop = random.uniform(1.5, 1.7)
+        # 1. Ejecutar Protocolo Génesis Centralizado
+        genesis_success = genesis_protocol(player_id)
+        if not genesis_success:
+            raise Exception("Genesis Protocol failed during reset")
 
-        create_planet_asset(
-            planet_id_val, 
-            start_system_id, 
-            player_id, 
-            f"Base {player.get('faccion_nombre', 'Facción')}", 
-            start_pop
-        )
-
-        # 2. Re-crear Comandante
+        # 2. Re-crear Comandante (Responsabilidad del Repo)
         stats = generate_genesis_commander_stats(player.get('nombre', 'Comandante'))
         char_data = {
             "player_id": player_id,
@@ -435,12 +405,6 @@ def reset_player_progress(player_id: int) -> bool:
             "stats_json": stats
         }
         db.table("characters").insert(char_data).execute()
-
-        # 3. Inventario Inicial
-        apply_genesis_inventory(player_id)
-
-        # 4. Niebla de Guerra
-        initialize_fog_of_war(player_id, start_system_id)
 
         # Finalización
         log_event("🔄 CUENTA REINICIADA: Protocolo Génesis re-ejecutado.", player_id)
