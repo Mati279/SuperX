@@ -3,13 +3,15 @@
 Genesis Engine - Protocolo v2.0 "Asentamiento Seguro"
 Maneja la lógica de inicialización de nuevas facciones.
 Actualizado: Soporte para Población Decimal (1.0 = 1B).
+CORREGIDO: Uso seguro de get_supabase() para evitar errores de cliente nulo.
 """
 
 import random
+import traceback # Importado para debug detallado
 from typing import Dict, Any, List
-from data.database import supabase
+from data.database import get_supabase
 from data.log_repository import log_event
-from core.world_constants import STAR_TYPES, ECONOMY_RATES # Importado ECONOMY_RATES
+from core.world_constants import STAR_TYPES, ECONOMY_RATES
 from core.constants import MIN_ATTRIBUTE_VALUE
 
 # --- CONSTANTES DEL PROTOCOLO ---
@@ -34,17 +36,28 @@ MIN_DIST_FACTION = 30.0
 BASE_NAMES_PREFIX = ["Puesto", "Fuerte", "Colonia", "Base", "Estación", "Nexo", "Avanzada", "Ciudadela"]
 BASE_NAMES_SUFFIX = ["Alpha", "Prime", "Zero", "Nova", "Aegis", "Vanguard", "Origin", "Zenith"]
 
+def _get_db():
+    """Helper para obtener la instancia de BD de forma segura."""
+    return get_supabase()
+
 def genesis_protocol(player_id: int) -> bool:
     try:
         log_event("Iniciando Protocolo Génesis...", player_id)
+        db = _get_db()
+        
+        # 1. Encontrar sistema seguro
         system_id = find_safe_starting_node()
         
-        response_planets = supabase.table("planets").select("id, name, biome").eq("system_id", system_id).execute()
+        # 2. Seleccionar planeta aleatorio
+        response_planets = db.table("planets").select("id, name, biome").eq("system_id", system_id).execute()
         
         if not response_planets.data:
             log_event(f"⚠ Sistema {system_id} vacío. Buscando respaldo...", player_id, is_error=True)
-            fallback = supabase.table("planets").select("id, name, system_id").limit(1).single().execute()
-            if not fallback.data: return False
+            # Fallback: buscar cualquier planeta
+            fallback = db.table("planets").select("id, name, system_id").limit(1).single().execute()
+            if not fallback.data: 
+                print("❌ CRITICAL: No existen planetas en la base de datos.")
+                return False
             target_planet = fallback.data
             system_id = target_planet['system_id'] 
         else:
@@ -52,6 +65,7 @@ def genesis_protocol(player_id: int) -> bool:
         
         base_name = f"{random.choice(BASE_NAMES_PREFIX)} {random.choice(BASE_NAMES_SUFFIX)}"
 
+        # 3. Calcular Población y Seguridad
         # Asignar población inicial decimal (1.5 - 1.7 Billones)
         initial_pop = round(random.uniform(GENESIS_POP_MIN, GENESIS_POP_MAX), 2)
         
@@ -61,7 +75,7 @@ def genesis_protocol(player_id: int) -> bool:
         sec_pop = ECONOMY_RATES.get("security_per_1b_pop", 5.0)
         initial_security = sec_base + (initial_pop * sec_pop)
         
-        # Clamp preventivo (aunque con pop 1.7 no llegará a 100)
+        # Clamp preventivo
         initial_security = max(1.0, min(initial_security, 100.0))
 
         asset_data = {
@@ -72,12 +86,14 @@ def genesis_protocol(player_id: int) -> bool:
             "poblacion": initial_pop,
             "pops_activos": initial_pop,
             "pops_desempleados": 0.0,
-            "seguridad": initial_security, # Valor calculado
+            "seguridad": initial_security, 
             "infraestructura_defensiva": 0,
             "felicidad": 1.0
         }
 
-        supabase.table("planet_assets").insert(asset_data).execute()
+        db.table("planet_assets").insert(asset_data).execute()
+        
+        # 4. Inventario y FOW
         apply_genesis_inventory(player_id)
         initialize_fog_of_war(player_id, system_id)
         
@@ -85,16 +101,19 @@ def genesis_protocol(player_id: int) -> bool:
         return True
 
     except Exception as e:
+        print("\n💥 EXCEPCIÓN EN GENESIS PROTOCOL:")
+        traceback.print_exc() # Esto imprimirá el error real en tu consola
         log_event(f"❌ Error Crítico en Genesis Protocol: {e}", player_id, is_error=True)
         return False
 
 def find_safe_starting_node() -> int:
     try:
-        all_systems_res = supabase.table("systems").select("id, x, y").execute()
+        db = _get_db()
+        all_systems_res = db.table("systems").select("id, x, y").execute()
         all_systems = all_systems_res.data if all_systems_res.data else []
         if not all_systems: return 1 
         
-        occupied_assets_res = supabase.table("planet_assets").select("system_id").execute()
+        occupied_assets_res = db.table("planet_assets").select("system_id").execute()
         occupied_ids = {row['system_id'] for row in occupied_assets_res.data} if occupied_assets_res.data else set()
         
         if not occupied_ids:
@@ -144,9 +163,10 @@ def apply_genesis_inventory(player_id: int):
 def initialize_fog_of_war(player_id: int, start_system_id: int):
     _grant_visibility(player_id, start_system_id, level=4)
     try:
-        response_a = supabase.table("starlanes").select("system_b_id").eq("system_a_id", start_system_id).execute()
+        db = _get_db()
+        response_a = db.table("starlanes").select("system_b_id").eq("system_a_id", start_system_id).execute()
         neighbors = [row['system_b_id'] for row in response_a.data] if response_a.data else []
-        response_b = supabase.table("starlanes").select("system_a_id").eq("system_b_id", start_system_id).execute()
+        response_b = db.table("starlanes").select("system_a_id").eq("system_b_id", start_system_id).execute()
         neighbors += [row['system_a_id'] for row in response_b.data] if response_b.data else []
         
         for nid in set(neighbors):
@@ -157,7 +177,7 @@ def initialize_fog_of_war(player_id: int, start_system_id: int):
 def _grant_visibility(player_id: int, system_id: int, level: int):
     try:
         data = {"player_id": player_id, "system_id": system_id, "scan_level": level}
-        supabase.table("player_exploration").upsert(data, on_conflict="player_id, system_id").execute()
+        _get_db().table("player_exploration").upsert(data, on_conflict="player_id, system_id").execute()
     except Exception as e:
         print(f"Error granting visibility: {e}")
 
