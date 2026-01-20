@@ -301,7 +301,10 @@ class CommanderData(BaseModel):
 # --- MODELOS DE PLANETA Y EDIFICIOS ---
 
 class PlanetAsset(BaseModel):
-    """Activo planetario (colonia del jugador)."""
+    """
+    Activo planetario (colonia del jugador).
+    Actualizado: Seguridad 0-100, sin Felicidad.
+    """
     model_config = ConfigDict(extra='allow')
 
     id: int
@@ -312,9 +315,12 @@ class PlanetAsset(BaseModel):
     poblacion: int = 0
     pops_activos: int = 0
     pops_desempleados: int = 0
-    seguridad: float = 1.0
+    
+    # Seguridad ahora es 0-100 (float)
+    seguridad: float = Field(default=25.0, ge=0.0, le=100.0)
     infraestructura_defensiva: int = 0
-    felicidad: float = 1.0
+    
+    # Felicidad eliminada en refactorización MMFR
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'PlanetAsset':
@@ -334,7 +340,8 @@ class Building(BaseModel):
     building_tier: int = 1
     is_active: bool = True
     pops_required: int = 0
-    energy_consumption: int = 0
+    # energy_consumption deprecado a favor de 'maintenance' dinámico en constants
+    energy_consumption: int = 0 
     built_at_tick: int = 0
 
     @classmethod
@@ -379,6 +386,7 @@ class EconomyTickResult(BaseModel):
     player_id: int
     total_income: int = 0
     production: ProductionSummary = Field(default_factory=ProductionSummary)
+    maintenance_cost: Dict[str, int] = Field(default_factory=dict) # Costo total pagado
     buildings_disabled: List[int] = Field(default_factory=list)
     buildings_reactivated: List[int] = Field(default_factory=list)
     luxury_extracted: Dict[str, int] = Field(default_factory=dict)

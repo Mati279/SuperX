@@ -98,42 +98,43 @@ BASE_TIER_COSTS = {
 }
 
 # Módulos de Infraestructura (Sensores y Defensas)
-# Estos NO ocupan slots de construcción, tienen sus propios espacios fijos.
 INFRASTRUCTURE_MODULES = {
     "sensor_ground": {
         "name": "Sensor Planetario", 
         "cost_base": 500,
-        "desc": "Detecta incursiones terrestres y espías."
+        "desc": "Detecta incursiones terrestres y espías. +2 Seguridad."
     },
     "sensor_orbital": {
         "name": "Sensor Orbital", 
         "cost_base": 500,
-        "desc": "Detecta flotas en órbita y bloqueos."
+        "desc": "Detecta flotas en órbita y bloqueos. +2 Seguridad."
     },
     "defense_aa": {
         "name": "Defensa Anti-Aérea", 
         "cost_base": 400,
-        "desc": "Mitiga bombardeos y derriba cápsulas."
+        "desc": "Mitiga bombardeos. +5 Seguridad."
     },
     "defense_ground": {
         "name": "Defensa Terrestre", 
         "cost_base": 400,
-        "desc": "Combate ejércitos invasores en superficie."
+        "desc": "Combate ejércitos invasores. +5 Seguridad."
     },
     "defense_orbital": {
         "name": "Batería Orbital", 
         "cost_base": 1000, 
         "min_base_tier": 3,
-        "desc": "Artillería superficie-espacio (Tier 3+)."
+        "desc": "Artillería superficie-espacio. +10 Seguridad."
     }
 }
 
 # Edificios Construibles (Ocupan Slots)
+# 'maintenance' define el costo POR TURNO para operar.
+# Si no se paga, el edificio se desactiva (is_active=False).
 BUILDING_TYPES = {
     "hq": {
         "name": "Comando Central",
         "material_cost": 0,
-        "energy_cost": 0,
+        "maintenance": {"creditos": 50},
         "description": "Sede administrativa. Nivel 3 permite Multitasking.",
         "max_tier": 5,
         "pops_required": 0,
@@ -143,7 +144,7 @@ BUILDING_TYPES = {
     "barracks": {
         "name": "Barracas",
         "material_cost": 300,
-        "energy_cost": 2,
+        "maintenance": {"creditos": 20, "materiales": 5},
         "description": "Alojamiento militar. Aumenta límite de reclutas.",
         "pops_required": 50,
         "category": "defensa",
@@ -152,7 +153,7 @@ BUILDING_TYPES = {
     "mine_basic": {
         "name": "Mina de Superficie",
         "material_cost": 150,
-        "energy_cost": 5,
+        "maintenance": {"creditos": 10, "celulas_energia": 5},
         "description": "Extracción básica de minerales locales.",
         "pops_required": 100,
         "category": "extraccion",
@@ -161,7 +162,7 @@ BUILDING_TYPES = {
     "solar_plant": {
         "name": "Planta Solar",
         "material_cost": 100,
-        "energy_cost": 0,
+        "maintenance": {"creditos": 5},
         "description": "Generación de energía pasiva.",
         "pops_required": 20,
         "category": "energia",
@@ -170,7 +171,7 @@ BUILDING_TYPES = {
     "fusion_reactor": {
         "name": "Reactor de Fusión",
         "material_cost": 500,
-        "energy_cost": 0,
+        "maintenance": {"creditos": 50, "materiales": 10}, # Requiere 'combustible' (materiales)
         "description": "Generación masiva de energía (Tier 2).",
         "pops_required": 50,
         "min_tier": 2,
@@ -180,7 +181,7 @@ BUILDING_TYPES = {
     "factory": {
         "name": "Fundición Industrial",
         "material_cost": 400,
-        "energy_cost": 10,
+        "maintenance": {"creditos": 30, "celulas_energia": 10, "materiales": 10},
         "description": "Procesa minerales en aleaciones.",
         "pops_required": 200,
         "category": "industria",
@@ -188,19 +189,28 @@ BUILDING_TYPES = {
     }
 }
 
+# Prioridad de apagado (Mayor número = Se apaga primero)
 BUILDING_SHUTDOWN_PRIORITY = {
     "extraccion": 4,
-    "defensa": 3,
-    "industria": 2,
-    "tecnologia": 1
+    "industria": 3,
+    "tecnologia": 2,
+    "defensa": 1,
+    "energia": 0, # Energía es vital, se intenta mantener hasta el final
+    "administracion": 0
 }
 
 ECONOMY_RATES = {
-    "income_per_pop": 0.1,
-    "infrastructure_security_rate": 0.01,
-    "security_min": 0.5,
-    "security_max": 1.2,
-    "happiness_bonus_max": 0.5
+    "income_per_pop": 0.1, # Créditos por población base
+    
+    # Valores base para cálculo de Seguridad (0-100)
+    "security_base": 25.0,
+    "security_per_1b_pop": 5.0, # +5 seguridad por cada 1B de habitantes
+    
+    # Bonus de infraestructura a la seguridad (puntos planos)
+    "security_bonus_sensor": 2.0,
+    "security_bonus_defense_aa": 5.0,
+    "security_bonus_defense_ground": 5.0,
+    "security_bonus_defense_orbital": 10.0
 }
 
 BROKER_PRICES = {
