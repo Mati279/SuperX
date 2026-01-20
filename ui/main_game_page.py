@@ -15,6 +15,9 @@ from data.player_repository import get_player_finances, delete_player_account, a
 # --- Imports para Economía ---
 from core.economy_engine import get_player_projected_economy
 
+# --- IMPORTS NUEVOS: MERCADO ---
+from core.market_engine import calculate_market_prices, get_market_limits, place_market_order
+
 # --- Importar las vistas del juego ---
 from .faction_roster import render_faction_roster
 from .recruitment_center import show_recruitment_center
@@ -402,17 +405,30 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 
 
 def _render_war_room_page():
-    """Página del Puente de Mando con CHAT."""
+    """Página del Puente de Mando con CHAT y MERCADO."""
     player = get_player()
     if not player: return
 
-    # --- Header con Botón de Recursos Discreto ---
-    col_header, col_btn = st.columns([0.85, 0.15])
+    # --- Header con Botones de Acción ---
+    col_header, col_btn_market, col_btn_stock = st.columns([0.7, 0.15, 0.15])
     
     with col_header:
         st.markdown("### 📟 Enlace Neuronal de Mando")
+        
+    # --- 1. Botón de Mercado ---
+    with col_btn_market:
+        label_market = "📈 Mercado"
+        if hasattr(st, "popover"):
+            market_pop = st.popover(label_market, use_container_width=True, help="Mercado Galáctico de Recursos")
+            with market_pop:
+                _render_market_ui(player)
+        else:
+            # Fallback para versiones viejas
+            with st.expander(label_market):
+                _render_market_ui(player)
     
-    with col_btn:
+    # --- 2. Botón de Stock ---
+    with col_btn_stock:
         # Botón discreto que abre una "ventanita" (popover) con los recursos de lujo
         label = "💎 Stock"
         help_txt = "Ver inventario de recursos de lujo y derivados."
@@ -505,3 +521,72 @@ def _render_war_room_page():
         log_event(f"[PLAYER] {action}", player.id)
         resolve_player_action(action, player.id)
         st.rerun()
+
+
+def _render_market_ui(player):
+    """
+    Renderiza la UI interna del popover de Mercado.
+    """
+    st.markdown("### Mercado Galáctico")
+    
+    # 1. Info de Capacidad
+    used, total = get_market_limits(player.id)
+    perc = used / total if total > 0 else 1.0
+    st.progress(perc, text=f"Capacidad Logística: {used}/{total} envíos hoy")
+    
+    if used >= total:
+        st.warning("⚠️ Capacidad saturada. Espera al próximo tick.")
+    
+    # 2. Obtener Precios actuales
+    prices = calculate_market_prices(player.id)
+    
+    # 3. Tabs de Operación
+    tab_buy, tab_sell = st.tabs(["Comprar", "Vender"])
+    
+    resources = ["materiales", "componentes", "celulas_energia", "datos", "influencia"]
+    
+    with tab_buy:
+        res_buy = st.selectbox("Recurso a Comprar", resources, key="mkt_buy_res")
+        price_info = prices.get(res_buy, {})
+        unit_price = price_info.get("buy", 0)
+        
+        st.info(f"Precio Actual: **{unit_price} Cr** / unidad")
+        
+        amount_buy = st.number_input("Cantidad", min_value=1, value=100, step=10, key="mkt_buy_amount")
+        total_cost = amount_buy * unit_price
+        
+        st.caption(f"Costo Total: `{total_cost:,} Cr`")
+        
+        if st.button("Confirmar Compra", type="primary", use_container_width=True, key="btn_buy", disabled=(used >= total)):
+            success, msg = place_market_order(player.id, res_buy, amount_buy, is_buy=True)
+            if success:
+                st.success(msg)
+                time.sleep(1.5)
+                st.rerun()
+            else:
+                st.error(msg)
+                
+    with tab_sell:
+        res_sell = st.selectbox("Recurso a Vender", resources, key="mkt_sell_res")
+        price_info = prices.get(res_sell, {})
+        unit_price = price_info.get("sell", 0)
+        
+        st.info(f"Oferta de Compra: **{unit_price} Cr** / unidad")
+        
+        # Mostrar stock actual para referencia
+        current_stock = getattr(player, res_sell, 0)
+        st.caption(f"Tu Stock: {current_stock:,}")
+        
+        amount_sell = st.number_input("Cantidad", min_value=1, max_value=max(1, current_stock), value=min(100, max(1, current_stock)), step=10, key="mkt_sell_amount")
+        total_gain = amount_sell * unit_price
+        
+        st.caption(f"Ganancia Estimada: `{total_gain:,} Cr`")
+        
+        if st.button("Confirmar Venta", type="primary", use_container_width=True, key="btn_sell", disabled=(used >= total)):
+            success, msg = place_market_order(player.id, res_sell, amount_sell, is_buy=False)
+            if success:
+                st.success(msg)
+                time.sleep(1.5)
+                st.rerun()
+            else:
+                st.error(msg)

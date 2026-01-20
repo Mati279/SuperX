@@ -4,7 +4,7 @@ Modelos de Dominio Tipados.
 Define las estructuras de datos centrales del juego usando Pydantic
 para garantizar validación y serialización consistente.
 Refactorizado para cumplir con el esquema V2 de Personajes.
-Actualizado v4.1.2: Soporte para Recurso 'Datos'.
+Actualizado v4.1.4: Soporte para Mercado y Órdenes.
 """
 
 from typing import Dict, Any, Optional, List
@@ -62,6 +62,12 @@ class SecretType(str, Enum):
     PROFESSIONAL = "profesional"  # +XP fijo (mejor entrenamiento)
     PERSONAL = "personal"         # +2 Voluntad (se siente parte del equipo)
     CRITICAL = "critico"          # Misión personal (desarrollo futuro)
+
+class MarketOrderStatus(str, Enum):
+    """Estados de una orden de mercado."""
+    PENDING = "PENDING"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
 
 # --- SUB-MODELOS DE PERSONAJE (COMPOSICIÓN) ---
 
@@ -220,6 +226,30 @@ class PlayerData(BaseModel):
         if not data:
             raise ValueError("No se puede crear PlayerData desde datos vacíos")
         return cls(**{k: v for k, v in data.items() if v is not None})
+
+
+# --- MODELOS DE MERCADO ---
+
+class MarketOrder(BaseModel):
+    """Orden de compra/venta en el mercado galáctico."""
+    model_config = ConfigDict(extra='allow')
+    
+    id: int
+    player_id: int
+    resource_type: str
+    amount: int # Positivo = Compra, Negativo = Venta
+    price_per_unit: int
+    status: MarketOrderStatus = MarketOrderStatus.PENDING
+    created_at_tick: int
+    processed_at_tick: Optional[int] = None
+
+    @property
+    def total_value(self) -> int:
+        return abs(self.amount) * self.price_per_unit
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'MarketOrder':
+        return cls(**data)
 
 
 # --- MODELOS DE COMANDANTE / PERSONAJE (API) ---

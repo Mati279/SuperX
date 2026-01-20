@@ -3,7 +3,7 @@
 Motor Económico MMFR (Materials, Metals, Fuel, Resources).
 Gestiona toda la lógica de cálculo económico del juego.
 Refactorizado: Seguridad (0-100) y Mantenimiento Estricto.
-Actualizado v4.1.2: Soporte para producción y balance de Datos.
+Actualizado v4.1.4: Integración con Mercado y Logística.
 
 IMPORTANTE: Este módulo NO importa supabase directamente.
 Todas las operaciones de DB se realizan a través de repositorios.
@@ -29,6 +29,8 @@ from core.world_constants import (
     ECONOMY_RATES
 )
 from core.models import ProductionSummary, EconomyTickResult
+# --- IMPORT NUEVO: MERCADO ---
+from core.market_engine import process_pending_market_orders
 
 
 # --- FUNCIONES DE CÁLCULO ECONÓMICO (PURAS) ---
@@ -239,7 +241,15 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
     result = EconomyTickResult(player_id=player_id)
 
     try:
-        # 1. Obtener datos
+        # --- NUEVO v4.1.4: Procesar Mercado PRIMERO ---
+        # Se ejecuta antes de obtener las finanzas para que los recursos comprados/vendidos
+        # estén disponibles para el mantenimiento de este tick.
+        try:
+            process_pending_market_orders(player_id)
+        except Exception as e:
+            log_event(f"Error procesando mercado en tick: {e}", player_id, is_error=True)
+
+        # 1. Obtener datos (Ahora finances incluye lo del mercado)
         planets = get_all_player_planets_with_buildings(player_id)
         if not planets:
             return result
