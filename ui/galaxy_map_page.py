@@ -2,6 +2,7 @@
 """
 Mapa Galáctico - Usa datos directamente de la Base de Datos.
 Refactorizado MMFR V2: Indicadores de Seguridad (Ss/Sp), Mantenimiento y Tooltips.
+Corrección: st.rerun en callbacks y manejo de estadísticas nulas.
 """
 import json
 import math
@@ -124,8 +125,9 @@ def _render_system_view():
 
     # 3. Calcular Métricas
     # Seguridad (Ss): (Sum(Seguridad_Activos) + (0 * Deshabitados)) / Total_Planetas
-    security_sum = sum(a['seguridad'] for a in assets)
-    total_pop = sum(a['poblacion'] for a in assets)
+    # Usamos (x or 0.0) para proteger contra Nones si la DB devuelve nulos
+    security_sum = sum((a.get('seguridad') or 0.0) for a in assets)
+    total_pop = sum((a.get('poblacion') or 0.0) for a in assets)
 
     if total_planets > 0:
         ss = security_sum / total_planets
@@ -135,7 +137,10 @@ def _render_system_view():
     st.header(f"Sistema: {system.get('name', 'Desconocido')}")
     
     col_back, col_metrics = st.columns([4, 3])
-    col_back.button("← Volver al mapa", on_click=_reset_to_galaxy_view, type="primary")
+    
+    # CORRECCIÓN: No usar on_click para st.rerun
+    if col_back.button("← Volver al mapa", type="primary"):
+        _reset_to_galaxy_view()
     
     with col_metrics:
         # Indicadores Ss y Población
@@ -178,7 +183,10 @@ def _render_planet_view():
     if not planet: _reset_to_system_view(); return
 
     st.header(f"Planeta: {planet['name']}")
-    st.button("← Volver al Sistema", on_click=_reset_to_system_view)
+    
+    # CORRECCIÓN: No usar on_click para st.rerun
+    if st.button("← Volver al Sistema"):
+        _reset_to_system_view()
 
     # DATOS MÉTRICOS (MMFR V2)
     m1, m2, m3 = st.columns(3)
@@ -362,8 +370,9 @@ def _render_interactive_galaxy_map():
         for a in all_assets_data:
             sid = a['system_id']
             if sid not in system_assets_stats: system_assets_stats[sid] = {'sec': 0.0, 'pop': 0.0}
-            system_assets_stats[sid]['sec'] += a['seguridad']
-            system_assets_stats[sid]['pop'] += a['poblacion']
+            # Protección contra Nones
+            system_assets_stats[sid]['sec'] += (a.get('seguridad') or 0.0)
+            system_assets_stats[sid]['pop'] += (a.get('poblacion') or 0.0)
     except:
         system_assets_stats = {}
 
