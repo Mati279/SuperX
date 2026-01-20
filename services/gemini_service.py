@@ -27,7 +27,7 @@ from core.time_engine import check_and_trigger_tick, is_lock_in_window
 from core.mrg_engine import resolve_action, ResultType
 # FIX: Actualizada constante a v2.1 (DIFFICULTY_NORMAL -> DIFFICULTY_STANDARD)
 from core.mrg_constants import DIFFICULTY_STANDARD
-from core.mrg_effects import apply_partial_success_complication
+# FIX: Eliminado import de módulo deprecado (core.mrg_effects)
 
 from services.ai_tools import TOOL_DECLARATIONS, execute_tool
 from config.app_constants import TEXT_MODEL_NAME
@@ -449,10 +449,9 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
             difficulty=DIFFICULTY_STANDARD, # FIX: Uso de nueva constante
             action_description=action_text
         )
-
-        # Aplicar complicaciones si es éxito parcial
-        if mrg_result.result_type == ResultType.PARTIAL_SUCCESS:
-            apply_partial_success_complication(mrg_result, player_id)
+        
+        # FIX: Eliminada llamada a apply_partial_success_complication (módulo deprecado)
+        # La lógica de complicaciones será manejada por el narrador de IA o eventos futuros.
 
         mrg_info_block = f"""
 >>> REPORTE DE EJECUCIÓN FÍSICA (MRG):
