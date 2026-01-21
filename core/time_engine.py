@@ -1,4 +1,4 @@
-# core/time_engine.py
+# core/time_engine.py (Completo)
 from datetime import datetime, time
 import pytz
 import random
@@ -215,10 +215,21 @@ def _phase_decrement_and_persistence():
                 update_character(char['id'], {"stats_json": stats})
             else:
                 stats.pop('wound_ticks_remaining', None)
+                
+                # FIX: Actualizar ubicación en JSON, no en columna SQL
+                if "estado" not in stats: stats["estado"] = {}
+                # Manejo robusto de ubicación local
+                loc_data = stats["estado"].get("ubicacion", {})
+                if isinstance(loc_data, dict):
+                    loc_data["ubicacion_local"] = "Barracones"
+                else:
+                    loc_data = {"ubicacion_local": "Barracones"}
+                stats["estado"]["ubicacion"] = loc_data
+
                 # Refactor MMFR: Cambio a estado_id 1 (Disponible)
                 update_character(char['id'], {
                     "estado_id": STATUS_ID_MAP["Disponible"],
-                    "ubicacion": "Barracones",
+                    # "ubicacion": "Barracones",  <-- REMOVIDO: Causa error de columna inexistente
                     "stats_json": stats
                 })
                 log_event(f"{char['nombre']} has recovered from injuries.", char.get('player_id'))
@@ -269,7 +280,7 @@ def _phase_concurrency_resolution():
 def _process_candidate_search(player_id: int, current_tick: int):
     """
     Procesa la búsqueda de nuevos candidatos de reclutamiento (ASÍNCRONO).
-    Corregido para asegurar estado_id=7 y manejo explícito de errores.
+    Corregido para asegurar estado_id=7 y manejo explícito de errores sin romper esquema DB.
     """
     from data.recruitment_repository import clear_untracked_candidates
     from services.character_generation_service import generate_character_pool
@@ -297,12 +308,9 @@ def _process_candidate_search(player_id: int, current_tick: int):
         if count == 0:
             # Caso de fallo silencioso en el generador o lista vacía
             log_event("⚠️ ADVERTENCIA: La red de reclutamiento no devolvió candidatos viables. Se han reembolsado los créditos (lógica pendiente) o intente más tarde.", player_id, is_error=True)
-            # Nota: No lanzamos excepción aquí para no marcar toda la acción como ERROR de sistema,
-            # pero informamos al usuario.
             return
 
         # 3. Validación y Corrección de IDs (FIX CRÍTICO)
-        # Aseguramos que los personajes generados tengan el estado correcto para la UI
         candidates_fixed = 0
         for char in new_candidates:
             try:
@@ -310,25 +318,36 @@ def _process_candidate_search(player_id: int, current_tick: int):
                 if not char_id:
                     continue
 
-                # Forzamos estado CANDIDATO (7) y ubicación 'Centro de Reclutamiento'
+                # Preparar Stats con la ubicación correcta (dentro del JSON)
+                stats = char.get("stats_json", {})
+                if "estado" not in stats: stats["estado"] = {}
+                
+                # Actualizar o crear la estructura de ubicación
+                current_loc = stats["estado"].get("ubicacion", {})
+                if isinstance(current_loc, dict):
+                    current_loc["ubicacion_local"] = "Centro de Reclutamiento"
+                    stats["estado"]["ubicacion"] = current_loc
+                else:
+                    stats["estado"]["ubicacion"] = {"ubicacion_local": "Centro de Reclutamiento"}
+
+                # Payload de actualización: SOLO columnas existentes + JSON
                 update_payload = {
                     "estado_id": STATUS_ID_MAP["Candidato"],
-                    "ubicacion": "Centro de Reclutamiento"
+                    "stats_json": stats
+                    # "ubicacion": "Centro de Reclutamiento"  <-- REMOVIDO: Causaba error SQL
                 }
                 
-                # Actualizamos en DB para garantizar consistencia
                 update_character(char_id, update_payload)
                 candidates_fixed += 1
             except Exception as inner_e:
                 logger.error(f"Error ajustando estado de candidato {char.get('id')}: {inner_e}")
+                # No lanzamos excepción aquí para intentar salvar los otros candidatos
 
         log_event(f"✅ RECLUTAMIENTO COMPLETADO: {candidates_fixed} nuevos expedientes disponibles en el Centro.", player_id)
 
     except Exception as e:
-        # Captura explícita de errores para notificación al usuario
         logger.error(f"Error CRÍTICO en búsqueda de candidatos para player {player_id}: {e}", exc_info=True)
         log_event(f"❌ Error crítico en red de reclutamiento: {str(e)}", player_id, is_error=True)
-        # Relanzamos la excepción para que _phase_concurrency_resolution marque la acción como ERROR en DB
         raise e
 
 
@@ -482,25 +501,44 @@ def _phase_mission_resolution():
             result = resolve_action(merit_points=attr_value, difficulty=mission_data.get('difficulty', 50), action_description=f"Misión de {char['nombre']}")
             
             reward = 0
+            
+            # Determinar ubicación local según resultado
+            status_id = STATUS_ID_MAP["Disponible"]
+            loc_local = "Barracones"
+            msg = ""
+
             if result.result_type in [ResultType.CRITICAL_SUCCESS, ResultType.TOTAL_SUCCESS, ResultType.PARTIAL_SUCCESS]:
                 reward = int(mission_data.get('reward', 200) * (0.75 if result.result_type == ResultType.PARTIAL_SUCCESS else 1.1))
                 update_player_credits(player_id, get_player_credits(player_id) + reward)
                 msg = f"✅ ÉXITO: {char['nombre']} completó misión. Recompensa: {reward} C."
-                status_id, loc = STATUS_ID_MAP["Disponible"], "Barracones"
+                status_id = STATUS_ID_MAP["Disponible"]
+                loc_local = "Barracones"
             else:
-                # Refactor MMFR: Mapeo de resultados a IDs
                 if result.result_type == ResultType.CRITICAL_FAILURE:
                     status_id = STATUS_ID_MAP["Herido"]
-                    loc = "Enfermería"
+                    loc_local = "Enfermería"
                     msg = f"❌ FRACASO: {char['nombre']} falló la misión. Sufrió heridas graves."
                 else:
                     status_id = STATUS_ID_MAP["Disponible"]
-                    loc = "Barracones"
+                    loc_local = "Barracones"
                     msg = f"❌ FRACASO: {char['nombre']} falló la misión."
             
             if 'active_mission' in stats: del stats['active_mission']
-            # Refactor MMFR: Se envía estado_id en lugar de estado (texto)
-            update_character(char['id'], {"estado_id": status_id, "ubicacion": loc, "stats_json": stats})
+            
+            # FIX: Actualizar ubicación en JSON, no en columna inexistente
+            if "estado" not in stats: stats["estado"] = {}
+            loc_data = stats["estado"].get("ubicacion", {})
+            if isinstance(loc_data, dict):
+                loc_data["ubicacion_local"] = loc_local
+            else:
+                loc_data = {"ubicacion_local": loc_local}
+            stats["estado"]["ubicacion"] = loc_data
+
+            update_character(char['id'], {
+                "estado_id": status_id,
+                # "ubicacion": loc_local, <-- REMOVIDO: Error de columna
+                "stats_json": stats
+            })
             log_event(msg, player_id)
     except Exception as e:
         logger.error(f"Error en fase de misiones: {e}")
