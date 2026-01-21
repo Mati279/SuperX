@@ -1,4 +1,4 @@
-# data/player_repository.py
+# data/player_repository.py (Completo)
 """
 Repositorio de Jugadores.
 Gestiona todas las operaciones de persistencia relacionadas con jugadores,
@@ -322,13 +322,57 @@ def add_player_credits(player_id: int, amount: int) -> bool:
 
 
 def delete_player_account(player_id: int) -> bool:
-    """Elimina permanentemente la cuenta del jugador."""
+    """
+    Elimina permanentemente la cuenta del jugador y TODOS sus datos asociados (Deep Wipe).
+    Evita dejar registros huérfanos que contaminen futuras partidas.
+    """
+    db = _get_db()
+    print(f"⚠️ [DEBUG] Iniciando borrado completo en cascada para cuenta ID {player_id}")
+    
     try:
-        print(f"⚠️ [DEBUG] Iniciando borrado completo de cuenta ID {player_id}")
-        _get_db().table("players").delete().eq("id", player_id).execute()
+        # 1. Borrar Conocimiento de Tripulación (Evita que el nuevo usuario "herede" conocimiento)
+        try:
+            db.table("character_knowledge").delete().eq("player_id", player_id).execute()
+            print("  - Tabla 'character_knowledge' limpiada.")
+        except Exception as e:
+             print(f"  - Warning: Fallo al limpiar 'character_knowledge': {e}")
+
+        # 2. Borrar Exploración (Niebla de Guerra)
+        try:
+            db.table("player_exploration").delete().eq("player_id", player_id).execute()
+            print("  - Tabla 'player_exploration' limpiada.")
+        except Exception as e:
+            print(f"  - Warning: Fallo al limpiar 'player_exploration': {e}")
+            
+        # 3. Borrar Logs (Historial de eventos)
+        try:
+            db.table("logs").delete().eq("player_id", player_id).execute()
+            print("  - Tabla 'logs' limpiada.")
+        except Exception as e:
+            print(f"  - Warning: Fallo al limpiar 'logs': {e}")
+
+        # 4. Borrar Activos Planetarios (Bases)
+        try:
+            db.table("planet_assets").delete().eq("player_id", player_id).execute()
+            print("  - Tabla 'planet_assets' limpiada.")
+        except Exception as e:
+             print(f"  - Warning: Fallo al limpiar 'planet_assets': {e}")
+
+        # 5. Borrar Personajes (Tripulación)
+        # Nota: character_knowledge puede referenciar a estos ID, por eso se borra knowledge primero.
+        try:
+            db.table("characters").delete().eq("player_id", player_id).execute()
+            print("  - Tabla 'characters' limpiada.")
+        except Exception as e:
+            print(f"  - Warning: Fallo al limpiar 'characters': {e}")
+
+        # 6. Finalmente, borrar al Jugador
+        db.table("players").delete().eq("id", player_id).execute()
+        print(f"✅ Cuenta ID {player_id} eliminada exitosamente.")
         return True
+        
     except Exception as e:
-        print(f"❌ Error borrando cuenta {player_id}: {e}")
+        print(f"❌ Error CRÍTICO borrando cuenta {player_id}: {e}")
         return False
 
 

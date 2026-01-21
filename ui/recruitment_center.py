@@ -8,6 +8,7 @@ Sistema de Reclutamiento v3 (Asíncrono):
 - Persistencia unificada.
 Debug v2.3: Validación de IA en cabecera y disparador manual de emergencia para pruebas.
 Debug v2.4: Fix error en actualización de columnas SQL al reclutar.
+Debug v2.5: Herramientas de investigación determinista implementadas.
 """
 
 import streamlit as st
@@ -230,6 +231,24 @@ def _render_candidate_card(
 
         st.markdown("---")
 
+        # --- HERRAMIENTAS DE DEBUG (Solo Desarrollo) ---
+        # Permite forzar resultados de investigación para probar flujos
+        with st.expander("🛠️ DEBUG: Forzar Resultado", expanded=False):
+            d1, d2, d3, d4 = st.columns(4)
+            debug_disabled = not can_afford_investigation or investigation_active or already_investigated or is_being_investigated
+            
+            if d1.button("✅ Éxito", key=f"d_suc_{candidate['id']}", disabled=debug_disabled, use_container_width=True):
+                 _handle_investigation(player_id, candidate, player_credits, debug_outcome="SUCCESS")
+            
+            if d2.button("🌟 Crítico", key=f"d_csuc_{candidate['id']}", disabled=debug_disabled, use_container_width=True):
+                 _handle_investigation(player_id, candidate, player_credits, debug_outcome="CRIT_SUCCESS")
+            
+            if d3.button("❌ Fallo", key=f"d_fail_{candidate['id']}", disabled=debug_disabled, use_container_width=True):
+                 _handle_investigation(player_id, candidate, player_credits, debug_outcome="FAIL")
+            
+            if d4.button("💀 Pifia", key=f"d_cfail_{candidate['id']}", disabled=debug_disabled, use_container_width=True):
+                 _handle_investigation(player_id, candidate, player_credits, debug_outcome="CRIT_FAIL")
+
         # --- Footer Actions ---
         col_track, col_inv, col_recruit = st.columns([0.7, 1.5, 2])
 
@@ -309,7 +328,10 @@ def _handle_investigation(player_id: int, candidate: Dict[str, Any], current_cre
 
     if queue_player_action(player_id, cmd):
         log_event(f"INTEL: Iniciando investigacion sobre {candidate['nombre']}...", player_id)
-        st.toast(f"Investigacion iniciada. -{INVESTIGATION_COST} C.", icon="🕵️")
+        if debug_outcome:
+            st.toast(f"Investigación (DEBUG: {debug_outcome}) iniciada.", icon="🛠️")
+        else:
+            st.toast(f"Investigacion iniciada. -{INVESTIGATION_COST} C.", icon="🕵️")
         st.rerun()
     else:
         st.error("Error al encolar orden.")

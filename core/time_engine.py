@@ -4,6 +4,7 @@ import pytz
 import random
 import time as time_lib  # Para el sleep del backoff
 import logging
+import re # Aseguramos import de re para las regex
 
 # Imports del repositorio de mundo
 from data.world_repository import (
@@ -357,7 +358,7 @@ def _process_candidate_search(player_id: int, current_tick: int):
 
 def _process_investigation(player_id: int, action_text: str):
     """Procesa una investigación de personaje (candidato o miembro)."""
-    import re
+    # Imports locales para evitar circular dependencies
     from data.character_repository import get_commander_by_player_id, get_character_by_id
     from data.recruitment_repository import get_candidate_by_id
 
@@ -366,15 +367,22 @@ def _process_investigation(player_id: int, action_text: str):
         target_id = None
         debug_outcome = None
 
+        # 1. Extracción de parámetros
         type_match = re.search(r"target_type=(\w+)", action_text)
         if type_match: target_type = type_match.group(1)
 
         id_match = re.search(r"(?:candidate_id|character_id)=(\d+)", action_text)
         if id_match: target_id = int(id_match.group(1))
 
+        # 2. Extracción de DEBUG outcome
+        debug_match = re.search(r"debug_outcome=(\w+)", action_text)
+        if debug_match: 
+            debug_outcome = debug_match.group(1)
+
         if not target_id:
             return
 
+        # 3. Preparación de datos (Comandante y Objetivo)
         commander = get_commander_by_player_id(player_id)
         if not commander: return
 
@@ -400,17 +408,27 @@ def _process_investigation(player_id: int, action_text: str):
             target_skills = target_stats.get("capacidades", {}).get("habilidades", {})
             target_merit = (target_skills.get("Sigilo físico", 5) + target_skills.get("Infiltración urbana", 5)) // 2 + 40
 
-        result = resolve_action(merit_points=cmd_merit, difficulty=target_merit, action_description=f"Investigación sobre {target_name}")
-
+        # 4. Resolución (Determinista si hay debug_outcome, sino Probabilística)
         outcome = "FAIL"
-        if result.result_type == ResultType.CRITICAL_SUCCESS: outcome = "CRIT_SUCCESS"
-        elif result.result_type in [ResultType.TOTAL_SUCCESS, ResultType.PARTIAL_SUCCESS]: outcome = "SUCCESS"
-        elif result.result_type == ResultType.CRITICAL_FAILURE: outcome = "CRIT_FAIL"
 
+        if debug_outcome:
+            # Bypass de lógica de dados para debug
+            outcome = debug_outcome
+            log_event(f"🔧 DEBUG: Investigación forzada a resultado {outcome}.", player_id)
+        else:
+            # Lógica estándar de dados
+            result = resolve_action(merit_points=cmd_merit, difficulty=target_merit, action_description=f"Investigación sobre {target_name}")
+            
+            if result.result_type == ResultType.CRITICAL_SUCCESS: outcome = "CRIT_SUCCESS"
+            elif result.result_type in [ResultType.TOTAL_SUCCESS, ResultType.PARTIAL_SUCCESS]: outcome = "SUCCESS"
+            elif result.result_type == ResultType.CRITICAL_FAILURE: outcome = "CRIT_FAIL"
+
+        # 5. Aplicación de consecuencias
         if target_type == "CANDIDATE":
             _apply_candidate_investigation_result(player_id, target_id, target_name, outcome)
         else:
             _apply_member_investigation_result(player_id, target_id, target_name, outcome)
+
     except Exception as e:
         logger.error(f"Error en investigación: {e}")
 
