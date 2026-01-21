@@ -5,6 +5,7 @@ Actualizado para Especialización de Personajes de Alto Nivel y Biografías Cohe
 Implementa distribución ponderada de atributos y habilidades según la clase.
 Debug v2.4: Implementada reparación de JSON robusta y refuerzo de prompt para escape de comillas.
 Actualizado v5.1.0: Biografía consolidada de 3 niveles y limpieza de campos legacy.
+Actualizado v5.1.6: Soporte para 'initial_knowledge_level' en reclutamiento directo.
 """
 
 import random
@@ -484,8 +485,13 @@ def recruit_character_with_ai(
     predominant_race: Optional[str] = None,
     min_level: int = 1,
     max_level: int = 1,
-    existing_names: Optional[List[str]] = None
+    existing_names: Optional[List[str]] = None,
+    initial_knowledge_level: Optional[KnowledgeLevel] = None
 ) -> Optional[Dict[str, Any]]:
+    """
+    Recluta un personaje directamente (sin pasar por pool de candidatos).
+    Soporta initial_knowledge_level para tripulación inicial.
+    """
     context = RecruitmentContext(
         player_id=player_id,
         location_planet_id=location_planet_id,
@@ -495,9 +501,14 @@ def recruit_character_with_ai(
     )
     try:
         character_data = generate_random_character_with_ai(context, existing_names)
+        
+        # Inyectar nivel de conocimiento inicial si se proporciona
+        if initial_knowledge_level:
+            character_data["initial_knowledge_level"] = initial_knowledge_level
+            
         result = create_character(player_id, character_data)
         if result:
-            log_event(f"Reclutado: {character_data['nombre']} ({character_data['stats_json']['taxonomia']['raza']})", player_id)
+            log_event(f"Reclutado: {character_data['nombre']} ({character_data['stats_json']['taxonomia']['raza']}) - Nivel: {min_level}", player_id)
             return result
         return None
     except Exception as e:

@@ -3,7 +3,7 @@
 Genesis Engine - Protocolo v2.0 "Asentamiento Seguro"
 Maneja la lógica de inicialización de nuevas facciones.
 Actualizado: Soporte para Población Decimal (1.0 = 1B).
-CORREGIDO: Eliminada columna 'felicidad' que ya no existe en el esquema.
+Actualizado v2.1: Generación de Tripulación Inicial (Level 5 + 2x Level 3) con conocimiento KNOWN.
 """
 
 import random
@@ -13,6 +13,8 @@ from data.database import get_supabase
 from data.log_repository import log_event
 from core.world_constants import STAR_TYPES, ECONOMY_RATES
 from core.constants import MIN_ATTRIBUTE_VALUE
+from core.models import KnowledgeLevel
+from services.character_generation_service import recruit_character_with_ai
 
 # --- CONSTANTES DEL PROTOCOLO ---
 GENESIS_XP = 3265
@@ -100,6 +102,9 @@ def genesis_protocol(player_id: int) -> bool:
         # 4. Inventario y FOW
         apply_genesis_inventory(player_id)
         initialize_fog_of_war(player_id, system_id)
+
+        # 5. Generación de Tripulación Inicial (FIX: Estado KNOWN)
+        _deploy_starting_crew(player_id, target_planet['id'])
         
         log_event(f"✅ Protocolo Génesis completado. Base: {base_name}. Pob: {initial_pop}B. Seg: {initial_security:.1f}", player_id)
         return True
@@ -184,6 +189,36 @@ def _grant_visibility(player_id: int, system_id: int, level: int):
         _get_db().table("player_exploration").upsert(data, on_conflict="player_id, system_id").execute()
     except Exception as e:
         print(f"Error granting visibility: {e}")
+
+def _deploy_starting_crew(player_id: int, planet_id: int):
+    """
+    Genera la tripulación inicial (Oficial y Especialistas) con estado KNOWN.
+    Esto evita que aparezcan como 'Desconocidos' en la UI.
+    """
+    try:
+        log_event("🚀 Desplegando tripulación inicial de confianza...", player_id)
+        
+        # 1. Oficial Nivel 5 (Líder de escuadrón/Segundo al mando)
+        recruit_character_with_ai(
+            player_id=player_id,
+            location_planet_id=planet_id,
+            min_level=5,
+            max_level=5,
+            initial_knowledge_level=KnowledgeLevel.KNOWN
+        )
+        
+        # 2. Dos Especialistas Nivel 3
+        for _ in range(2):
+            recruit_character_with_ai(
+                player_id=player_id,
+                location_planet_id=planet_id,
+                min_level=3,
+                max_level=3,
+                initial_knowledge_level=KnowledgeLevel.KNOWN
+            )
+            
+    except Exception as e:
+        log_event(f"⚠️ Error desplegando tripulación inicial: {e}", player_id, is_error=True)
 
 def generate_genesis_commander_stats(name: str) -> Dict[str, Any]:
     v = MIN_ATTRIBUTE_VALUE

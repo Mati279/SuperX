@@ -5,6 +5,7 @@ Gestiona la persistencia de personajes usando el modelo V2 Híbrido (SQL + JSON)
 Implementa el patrón Extract & Clean para sincronizar columnas SQL con metadatos JSON.
 Actualizado v5.1.4: Estandarización de IDs de Roles (Fix Error 22P02).
 Actualizado v5.1.5: Fix Error Reclutamiento (recruit_candidate_db).
+Actualizado v5.1.6: Garantía de KnowledgeLevel en creación.
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -359,6 +360,7 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
             new_char = response.data[0]
             new_char_id = new_char["id"]
             
+            # FIX CRÍTICO: Asegurar que se crea la entrada de conocimiento si hay player_id
             if player_id is not None:
                 kl = initial_knowledge if initial_knowledge else KnowledgeLevel.UNKNOWN
                 set_character_knowledge_level(new_char_id, player_id, kl)

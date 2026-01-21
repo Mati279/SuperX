@@ -299,8 +299,11 @@ def process_passive_knowledge_updates(player_id: int, current_tick: int) -> List
             continue
 
         # Obtener ticks en servicio
-        # Preferir columna SQL si existe en el dict
+        # PREFERENCIA: Columna SQL recruited_at_tick
         recruited_tick = char.get("recruited_at_tick", current_tick)
+        if recruited_tick is None: 
+             recruited_tick = current_tick
+             
         ticks_in_service = max(0, current_tick - recruited_tick)
 
         # Obtener atributos (estructura V2 o legacy)
