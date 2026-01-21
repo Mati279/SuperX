@@ -104,7 +104,8 @@ def genesis_protocol(player_id: int) -> bool:
         initialize_fog_of_war(player_id, system_id)
 
         # 5. Generación de Tripulación Inicial (FIX: Estado KNOWN)
-        _deploy_starting_crew(player_id, target_planet['id'])
+        # MODIFICADO: Se comenta para mover la generación al UI manual ("Reunir personal")
+        # _deploy_starting_crew(player_id, target_planet['id'])
         
         log_event(f"✅ Protocolo Génesis completado. Base: {base_name}. Pob: {initial_pop}B. Seg: {initial_security:.1f}", player_id)
         return True
