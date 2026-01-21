@@ -5,6 +5,7 @@ Muestra los miembros reclutados con sistema de conocimiento e investigación.
 Refactorizado MMFR: Fuente de Verdad SQL (Nivel, Lealtad, Ubicación).
 Debug v2.1: Captura de errores extendida en reclutamiento inicial.
 Actualizado v5.1.8: Unificación de Conocimiento en Creación (Sin parches manuales).
+Actualizado v5.1.9: Fix parámetros de conocimiento inicial en 'Reunir al personal'.
 """
 
 import streamlit as st
@@ -149,7 +150,8 @@ def render_faction_roster():
                             initial_knowledge_level=KnowledgeLevel.KNOWN
                         )
 
-                    # 3. Reclutas (Nvl 1) - Se pasa UNKNOWN explícitamente (o implícito por defecto)
+                    # 3. Reclutas (Nvl 1) - Se pasa UNKNOWN explícitamente
+                    # Nota: Para reclutas base, mantenemos el misterio (UNKNOWN)
                     for _ in range(3):
                         recruit_random_character_with_ai(
                             player_id, 
@@ -258,6 +260,7 @@ def render_faction_roster():
                                  st.success("Personal despedido.")
                                  st.rerun()
             
+            # Lógica de investigación corregida: Usar KnowledgeLevel como fuente de verdad
             knowledge_level = get_character_knowledge_level(char_id, player_id)
             if knowledge_level == KnowledgeLevel.UNKNOWN and not is_being_investigated and not investigation_active:
                  can_afford = player_credits >= INVESTIGATION_COST

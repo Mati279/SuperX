@@ -8,6 +8,7 @@ Actualizado v5.1.5: Fix Error Reclutamiento (recruit_candidate_db).
 Actualizado v5.1.6: Garantía de KnowledgeLevel en creación.
 Actualizado v5.1.7: Corrección de mapeo SQL en sistema de conocimiento (observer_player_id).
 Actualizado v5.1.8: Persistencia robusta de KnowledgeLevel (Fix Source of Truth).
+Actualizado v5.1.9: Fix Critical Mismatch Column (observer_player_id -> player_id).
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -433,14 +434,15 @@ def update_character_stats(character_id: int, new_stats_json: Dict[str, Any], pl
     return update_character(character_id, payload)
 
 
-# --- SISTEMA DE CONOCIMIENTO (Fixed: observer_player_id) ---
+# --- SISTEMA DE CONOCIMIENTO (Fixed: player_id column match) ---
 
 def get_character_knowledge_level(character_id: int, player_id: int) -> KnowledgeLevel:
     try:
+        # CORRECCIÓN: Usar 'player_id' en lugar de 'observer_player_id'
         response = _get_db().table("character_knowledge")\
             .select("knowledge_level")\
             .eq("character_id", character_id)\
-            .eq("observer_player_id", player_id)\
+            .eq("player_id", player_id)\
             .single().execute()
         
         if response.data:
@@ -451,12 +453,12 @@ def get_character_knowledge_level(character_id: int, player_id: int) -> Knowledg
 
 def set_character_knowledge_level(character_id: int, player_id: int, level: KnowledgeLevel) -> bool:
     try:
-        # Se asegura que on_conflict coincida con la definición de la restricción SQL UNIQUE(character_id, observer_player_id)
+        # CORRECCIÓN: Usar 'player_id' y ajustar el on_conflict a la nueva estructura
         _get_db().table("character_knowledge").upsert({
             "character_id": character_id,
-            "observer_player_id": player_id,
+            "player_id": player_id,
             "knowledge_level": level.value
-        }, on_conflict="character_id, observer_player_id").execute()
+        }, on_conflict="character_id, player_id").execute()
         return True
     except Exception as e:
         log_event(f"Error actualizando conocimiento (CharID: {character_id}): {e}", player_id, is_error=True)

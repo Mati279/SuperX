@@ -10,6 +10,7 @@ Debug v2.3: Validación de IA en cabecera y disparador manual de emergencia para
 Debug v2.4: Fix error en actualización de columnas SQL al reclutar.
 Debug v2.5: Herramientas de investigación determinista implementadas.
 Actualizado v5.1.8: Fuente de Verdad Unificada (SQL Knowledge System).
+Actualizado v5.1.9: Visualización estrictamente basada en KnowledgeLevel.
 """
 
 import streamlit as st
@@ -132,11 +133,12 @@ def _render_candidate_card(
     is_tracked = candidate.get("is_tracked", False)
     is_being_investigated = candidate.get("is_being_investigated", False)
     
-    # FIX: Fuente de verdad SQL para el estado de conocimiento
+    # FIX: Fuente de verdad SQL ÚNICA
+    # Ya no miramos flags en JSON, solo la tabla character_knowledge
     current_knowledge_level = get_character_knowledge_level(candidate['id'], player_id)
     already_investigated = current_knowledge_level >= KnowledgeLevel.KNOWN
     
-    # Mantenemos esto para lógica de precios/descuentos interna del JSON
+    # Datos de lógica interna (para descuentos/estado tracking)
     investigation_outcome = candidate.get("investigation_outcome")
     discount_applied = candidate.get("discount_applied", False)
 
@@ -357,8 +359,6 @@ def _process_recruitment_ui(player_id: int, candidate: Dict[str, Any], player_cr
         new_credits, update_data = process_recruitment(player_id, player_credits, candidate)
         
         # Obtenemos el nivel inicial calculado (puede venir de reglas de contratación o default)
-        # Nota: En la versión unificada, el repositorio ya creó la entrada de conocimiento durante la investigación,
-        # pero esto sirve para asegurar que si no estaba investigado, se cree como UNKNOWN o base.
         initial_knowledge = update_data.pop("initial_knowledge_level", None)
 
         if not update_player_credits(player_id, new_credits):

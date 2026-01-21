@@ -4,6 +4,7 @@ Repositorio para gestion de candidatos de reclutamiento.
 REFACTORIZADO: Ahora actúa como una interfaz sobre la tabla 'characters'
 filtrando por estado 'Candidato'.
 Actualizado v5.1.8: Persistencia de Conocimiento (SQL) en Investigación.
+Actualizado v5.1.9: Validación de persistencia unificada.
 """
 
 from typing import Dict, Any, List, Optional
@@ -236,6 +237,7 @@ def apply_investigation_result(candidate_id: int, outcome: str) -> bool:
     # Si la investigación fue exitosa, actualizamos la tabla de conocimiento SQL
     if outcome in ["SUCCESS", "CRIT_SUCCESS"]:
         if player_id:
+            # Ahora esto funcionará correctamente gracias al fix en character_repository
             set_character_knowledge_level(candidate_id, player_id, KnowledgeLevel.KNOWN)
 
     if outcome == "CRIT_SUCCESS":
