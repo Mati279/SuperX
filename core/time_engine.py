@@ -229,7 +229,6 @@ def _phase_decrement_and_persistence():
                 # Refactor MMFR: Cambio a estado_id 1 (Disponible)
                 update_character(char['id'], {
                     "estado_id": STATUS_ID_MAP["Disponible"],
-                    # "ubicacion": "Barracones",  <-- REMOVIDO: Causa error de columna inexistente
                     "stats_json": stats
                 })
                 log_event(f"{char['nombre']} has recovered from injuries.", char.get('player_id'))
@@ -286,6 +285,8 @@ def _process_candidate_search(player_id: int, current_tick: int):
     from services.character_generation_service import generate_character_pool
 
     log_event("🔍 INICIANDO PROCESO DE BÚSQUEDA DE CANDIDATOS...", player_id)
+    # DEBUG: Confirmar versión del código cargada en logs
+    logger.info(f"⚡ _process_candidate_search RUNNING (Player {player_id}) - v3 CLEAN FIX")
 
     try:
         # 1. Limpieza de candidatos previos no trackeados
@@ -322,7 +323,7 @@ def _process_candidate_search(player_id: int, current_tick: int):
                 stats = char.get("stats_json", {})
                 if "estado" not in stats: stats["estado"] = {}
                 
-                # Actualizar o crear la estructura de ubicación
+                # Actualizar o crear la estructura de ubicación en el JSON
                 current_loc = stats["estado"].get("ubicacion", {})
                 if isinstance(current_loc, dict):
                     current_loc["ubicacion_local"] = "Centro de Reclutamiento"
@@ -330,12 +331,15 @@ def _process_candidate_search(player_id: int, current_tick: int):
                 else:
                     stats["estado"]["ubicacion"] = {"ubicacion_local": "Centro de Reclutamiento"}
 
-                # Payload de actualización: SOLO columnas existentes + JSON
+                # Payload de actualización: LIMPIO DE CLAVES INVÁLIDAS
+                # Eliminada referencia a 'ubicacion' en la raíz
                 update_payload = {
                     "estado_id": STATUS_ID_MAP["Candidato"],
                     "stats_json": stats
-                    # "ubicacion": "Centro de Reclutamiento"  <-- REMOVIDO: Causaba error SQL
                 }
+                
+                # DEBUG CRITICO: Verificar contenido exacto antes de llamar a la DB
+                logger.info(f"DEBUG: Updating char {char_id} payload keys: {list(update_payload.keys())}")
                 
                 update_character(char_id, update_payload)
                 candidates_fixed += 1
@@ -536,7 +540,6 @@ def _phase_mission_resolution():
 
             update_character(char['id'], {
                 "estado_id": status_id,
-                # "ubicacion": loc_local, <-- REMOVIDO: Error de columna
                 "stats_json": stats
             })
             log_event(msg, player_id)
