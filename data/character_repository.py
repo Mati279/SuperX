@@ -6,6 +6,7 @@ Implementa el patrón Extract & Clean para sincronizar columnas SQL con metadato
 Actualizado v5.1.4: Estandarización de IDs de Roles (Fix Error 22P02).
 Actualizado v5.1.5: Fix Error Reclutamiento (recruit_candidate_db).
 Actualizado v5.1.6: Garantía de KnowledgeLevel en creación.
+Actualizado v5.1.7: Corrección de mapeo SQL en sistema de conocimiento (observer_player_id).
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -427,14 +428,14 @@ def update_character_stats(character_id: int, new_stats_json: Dict[str, Any], pl
     return update_character(character_id, payload)
 
 
-# --- SISTEMA DE CONOCIMIENTO ---
+# --- SISTEMA DE CONOCIMIENTO (Fixed: observer_player_id) ---
 
 def get_character_knowledge_level(character_id: int, player_id: int) -> KnowledgeLevel:
     try:
         response = _get_db().table("character_knowledge")\
             .select("knowledge_level")\
             .eq("character_id", character_id)\
-            .eq("player_id", player_id)\
+            .eq("observer_player_id", player_id)\
             .single().execute()
         
         if response.data:
@@ -447,9 +448,9 @@ def set_character_knowledge_level(character_id: int, player_id: int, level: Know
     try:
         _get_db().table("character_knowledge").upsert({
             "character_id": character_id,
-            "player_id": player_id,
+            "observer_player_id": player_id,
             "knowledge_level": level.value
-        }, on_conflict="character_id, player_id").execute()
+        }, on_conflict="character_id, observer_player_id").execute()
         return True
     except Exception as e:
         log_event(f"Error actualizando conocimiento: {e}", player_id, is_error=True)
