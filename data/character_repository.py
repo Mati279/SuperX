@@ -1,4 +1,4 @@
-# data/character_repository.py
+# data/character_repository.py (Completo)
 """
 Repositorio de Personajes.
 Gestiona la persistencia de personajes usando el modelo V2 Híbrido (SQL + JSON).
@@ -190,7 +190,7 @@ def create_commander(
                 "apellido": apellido_p,
                 "edad": bio_data.get("edad", 30),
                 "sexo": bio_data.get("sexo", BiologicalSex.UNKNOWN.value),
-                "biografia_corta": bio_data.get("biografia", f"Comandante {raza}"),
+                "biografia_corta": bio_data.get("biografia") or f"Comandante {raza}",
                 "bio_conocida": "Comandante de la Flota.",
                 "bio_profunda": "",
                 "apariencia_visual": bio_data.get("apariencia_visual")
@@ -254,6 +254,7 @@ def create_commander(
         return None
 
     except Exception as e:
+        print(e)
         log_event(f"Error creando comandante V2: {e}", player_id, is_error=True)
         raise Exception("Error del sistema al guardar el comandante.")
 
@@ -274,7 +275,9 @@ def update_commander_profile(
         
         habilidades = calculate_skills(attributes)
         
-        full_stats_dict["bio"]["biografia_corta"] = bio_data.get("biografia", full_stats_dict["bio"]["biografia_corta"])
+        # CORRECCIÓN: Asegurar que biografia_corta reciba un string vacío si el input es None para evitar fallos de Pydantic
+        full_stats_dict["bio"]["biografia_corta"] = bio_data.get("biografia") or ""
+        
         full_stats_dict["taxonomia"]["raza"] = bio_data.get("raza", full_stats_dict["taxonomia"]["raza"])
         full_stats_dict["progresion"]["clase"] = bio_data.get("clase", full_stats_dict["progresion"]["clase"])
         full_stats_dict["capacidades"]["atributos"] = attributes
@@ -298,8 +301,10 @@ def update_commander_profile(
         return response.data[0] if response.data else None
 
     except Exception as e:
+        # CORRECCIÓN: Agregar print(e) para visualizar el error real de validación en consola
+        print(e)
         log_event(f"Error update comandante: {e}", player_id, is_error=True)
-        raise Exception("Error actualizando perfil.")
+        raise Exception(f"Error actualizando perfil: {e}")
 
 def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Persiste un personaje generado."""

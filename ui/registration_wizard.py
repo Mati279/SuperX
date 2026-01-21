@@ -1,4 +1,4 @@
-# ui/registration_wizard.py
+# ui/registration_wizard.py (Completo)
 import streamlit as st
 from .state import cancel_registration, next_registration_step, login_user
 from data.player_repository import register_player_account
@@ -66,14 +66,16 @@ def _render_step_2_bio():
     with c2:
         clase = st.selectbox("Seleccionar Clase", list(CLASSES.keys()))
         st.info(f"🛡️ **{clase}**: {CLASSES[clase]['desc']}\n\n⭐ Atributo Principal: {CLASSES[clase]['bonus_attr'].capitalize()}")
-        sexo = st.selectbox("Sexo Biológico", ["Hombre", "Mujer"])
+        # CORRECCIÓN: Cambiado de ["Hombre", "Mujer"] a ["Masculino", "Femenino"] para cumplir con BiologicalSex Enum
+        sexo = st.selectbox("Sexo Biológico", ["Masculino", "Femenino"])
     
     bio_text = st.text_area("Biografía / Antecedentes", placeholder="Una breve historia de tu comandante...")
 
     if st.button("Confirmar Datos y Pasar a Atributos", type="primary"):
+        # CORRECCIÓN: Clave 'historia' cambiada a 'biografia' para consistencia con character_repository.py
         st.session_state.temp_char_bio = {
             "nombre": st.session_state.temp_player['nombre'], "raza": raza, "clase": clase,
-            "edad": edad, "sexo": sexo, "rol": "Comandante", "historia": bio_text
+            "edad": edad, "sexo": sexo, "rol": "Comandante", "biografia": bio_text
         }
         next_registration_step()
 
@@ -139,4 +141,6 @@ def _render_step_3_attributes():
                     else:
                         st.error("No se encontró el comandante. Contacta soporte.")
             except Exception as e:
-                st.error(f"Error al guardar: {e}")
+                # CORRECCIÓN: Mensaje de error más descriptivo para el usuario final
+                st.error(f"⛔ Error al procesar el expediente del comandante: {e}")
+                st.info("💡 Este error suele deberse a una discrepancia de tipos en la matriz de atributos o biografía. Revisa la consola para detalles técnicos.")

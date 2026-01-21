@@ -1,4 +1,4 @@
-# core/models.py
+# core/models.py (Completo)
 """
 Modelos de Dominio Tipados.
 Define las estructuras de datos centrales del juego usando Pydantic
@@ -348,13 +348,15 @@ class CommanderData(BaseModel):
             full_stats["comportamiento"]["lealtad"] = self.loyalty
 
             # 4. REHIDRATACIÓN: Estado y Ubicación (Desde Columnas SQL)
+            # CORRECCIÓN: Separar el estado biológico (Disponible/Herido) del rol operativo.
             status_map = {1: "Disponible", 2: "En Misión", 3: "Herido", 4: "Fallecido", 5: "Entrenando", 6: "En Tránsito", 7: "Candidato", 99: "Retirado"}
             status_text = status_map.get(self.estado_id, "Disponible")
             
-            # El texto de estado va ÚNICAMENTE a estados_activos
+            # El texto de estado (ej: "Disponible") va ÚNICAMENTE a estados_activos (List[str])
             full_stats["estado"]["estados_activos"] = [status_text]
             
-            # El rol operativo se toma de la columna SQL 'rol' (para cumplir con CharacterRole Enum)
+            # CORRECCIÓN CRÍTICA: El rol operativo se toma de la columna SQL 'rol' (para cumplir con CharacterRole Enum)
+            # No se debe inyectar "Disponible" aquí porque falla la validación del Enum.
             full_stats["estado"]["rol_asignado"] = self.rol if self.rol else "Sin Asignar"
             
             # Inyectar objeto de ubicación completo usando los IDs reales
