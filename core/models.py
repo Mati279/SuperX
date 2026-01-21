@@ -4,7 +4,7 @@ Modelos de Dominio Tipados.
 Define las estructuras de datos centrales del juego usando Pydantic
 para garantizar validación y serialización consistente.
 Refactorizado para cumplir con el esquema V2 Híbrido (SQL + JSON).
-Actualizado v5.1.0: Biografía de 3 capas, Feats complejos y Rehidratación MMFR.
+Actualizado v5.1.1: Corrección de Hidratación de Roles y Estados.
 """
 
 from typing import Dict, Any, Optional, List
@@ -76,7 +76,7 @@ class CharacterBio(BaseModel):
     model_config = ConfigDict(extra='allow')
     nombre: str
     apellido: str
-    edad: int
+    edad: int = Field(default=30)
     sexo: BiologicalSex = BiologicalSex.UNKNOWN
     
     # Biografía de 3 Capas (Consolidada v5.1.0)
@@ -91,7 +91,7 @@ class CharacterBio(BaseModel):
 
 class CharacterTaxonomy(BaseModel):
     """Taxonomía Biológica y Evolutiva."""
-    raza: str
+    raza: str = Field(default="Humano")
     transformaciones: List[str] = Field(default_factory=list)
 
 class CharacterProgression(BaseModel):
@@ -288,6 +288,7 @@ class CommanderData(BaseModel):
     class_id: int = 0
     loyalty: int = 50  # 0-100
     estado_id: int = 1  # 1=Disponible
+    rol: str = "Sin Asignar" # Nueva columna SQL (Source of Truth para rol operativo)
     
     # Jerarquía de Ubicación (Fuente de Verdad SQL)
     location_system_id: Optional[int] = None
@@ -316,16 +317,24 @@ class CommanderData(BaseModel):
         try:
             full_stats = copy.deepcopy(self.stats_json)
             
-            # Asegurar estructura mínima
-            if "bio" not in full_stats: full_stats["bio"] = {}
-            if "progresion" not in full_stats: full_stats["progresion"] = {}
-            if "estado" not in full_stats: full_stats["estado"] = {}
-            if "comportamiento" not in full_stats: full_stats["comportamiento"] = {}
-            if "taxonomia" not in full_stats: full_stats["taxonomia"] = {"raza": "Humano"}
+            # Asegurar estructura mínima mediante bucle de inicialización
+            for section in ["bio", "progresion", "estado", "comportamiento", "taxonomia", "capacidades", "logistica"]:
+                if section not in full_stats:
+                    full_stats[section] = {}
+            
+            # Fallback para taxonomía si está vacía
+            if not full_stats["taxonomia"].get("raza"):
+                full_stats["taxonomia"]["raza"] = "Humano"
             
             # 1. REHIDRATACIÓN: Datos Bio (Manteniendo Bio de 3 Capas)
             full_stats["bio"]["nombre"] = self.nombre
             full_stats["bio"]["apellido"] = self.apellido
+            
+            # REVISIÓN CharacterBio: Asegurar edad y sexo para evitar errores de validación
+            if "edad" not in full_stats["bio"]:
+                full_stats["bio"]["edad"] = 30
+            if "sexo" not in full_stats["bio"]:
+                full_stats["bio"]["sexo"] = "Desconocido"
             
             # 2. REHIDRATACIÓN: Progresión (Desde Columnas SQL)
             full_stats["progresion"]["nivel"] = self.level
@@ -342,8 +351,11 @@ class CommanderData(BaseModel):
             status_map = {1: "Disponible", 2: "En Misión", 3: "Herido", 4: "Fallecido", 5: "Entrenando", 6: "En Tránsito", 7: "Candidato", 99: "Retirado"}
             status_text = status_map.get(self.estado_id, "Disponible")
             
-            full_stats["estado"]["rol_asignado"] = status_text
+            # El texto de estado va ÚNICAMENTE a estados_activos
             full_stats["estado"]["estados_activos"] = [status_text]
+            
+            # El rol operativo se toma de la columna SQL 'rol' (para cumplir con CharacterRole Enum)
+            full_stats["estado"]["rol_asignado"] = self.rol if self.rol else "Sin Asignar"
             
             # Inyectar objeto de ubicación completo usando los IDs reales
             full_stats["estado"]["ubicacion"] = {
@@ -355,10 +367,11 @@ class CommanderData(BaseModel):
 
             return CharacterSchema(**full_stats)
 
-        except Exception:
-            # Fallback robusto para datos corruptos
+        except Exception as e:
+            # Fallback robusto para datos corruptos con log de error
+            print(f"DEBUG - Error en Hidratación: {str(e)}")
             return CharacterSchema(
-                bio=CharacterBio(nombre=self.nombre, apellido=self.apellido, edad=30, biografia_corta="Datos migrados (Error Schema)"),
+                bio=CharacterBio(nombre=self.nombre, apellido=self.apellido, edad=30, biografia_corta=f"Error Schema: {str(e)}"),
                 taxonomia=CharacterTaxonomy(raza="Humano"),
                 progresion=CharacterProgression(nivel=self.level, xp=self.xp),
                 capacidades=CharacterCapabilities(),

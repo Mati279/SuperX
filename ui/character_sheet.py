@@ -198,7 +198,6 @@ def render_character_sheet(character_data, player_id):
         if knowledge_level == KnowledgeLevel.UNKNOWN:
             st.caption("👁️ *Sólo rasgos visibles a simple vista.*")
         elif feats:
-            # Soporte para talentos estructurados u objetos simples
             feat_html = "".join([f'<span style="display:inline-block; padding:4px 10px; margin:4px; border-radius:15px; background:#333; color:#eee; border:1px solid #555;">🔸 {f["nombre"] if isinstance(f, dict) else f}</span>' for f in feats])
             st.markdown(feat_html, unsafe_allow_html=True)
 
@@ -227,13 +226,13 @@ def render_character_sheet(character_data, player_id):
             st.info("No hay datos de habilidades.")
 
     with tab_bio:
-        # Perfil Público: biografia_corta
+        # Perfil Público: biografia_corta (Ya migrada en el repo si era bio_superficial)
         bio_corta = bio_data.get('biografia_corta', "Sin datos públicos disponibles.")
         st.markdown("### Expediente Personal")
         st.markdown("**Perfil Público:**")
         st.write(bio_corta)
         
-        # Perfil Profesional: bio_conocida (Nivel KNOWN o superior)
+        # Expediente de Servicio: bio_conocida (Nivel KNOWN o superior)
         if knowledge_level in [KnowledgeLevel.KNOWN, KnowledgeLevel.FRIEND]:
             st.divider()
             st.markdown("**Expediente de Servicio:**")
@@ -245,7 +244,7 @@ def render_character_sheet(character_data, player_id):
             if traits:
                 st.markdown(" ".join([f'<span style="background:#2d3436; color:#a55eea; padding:3px 8px; border-radius:4px; margin-right:5px; border:1px solid #a55eea40;">{t}</span>' for t in traits]), unsafe_allow_html=True)
         
-        # Secretos/Vínculo: bio_profunda (Nivel FRIEND)
+        # Vínculo de Confianza: bio_profunda (Nivel FRIEND)
         if knowledge_level == KnowledgeLevel.FRIEND:
             st.divider()
             st.markdown("🔒 **Vínculo de Confianza:**")

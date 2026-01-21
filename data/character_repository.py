@@ -1,4 +1,11 @@
 # data/character_repository.py
+"""
+Repositorio de Personajes.
+Gestiona la persistencia de personajes usando el modelo V2 Híbrido (SQL + JSON).
+Implementa el patrón Extract & Clean para sincronizar columnas SQL con metadatos JSON.
+Actualizado v5.1.0: Migración de bio_superficial y protección de ADN Visual.
+"""
+
 from typing import Dict, Any, Optional, List, Tuple
 import copy
 from data.database import get_supabase
@@ -40,9 +47,9 @@ STATUS_ID_MAP = {
 # --- HELPER: EXTRACT & CLEAN ---
 def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    EXTRACT & CLEAN PATTERN (Refactorizado para Robustez).
+    EXTRACT & CLEAN PATTERN (Refactorizado v5.1.0).
     Separa los datos que van a columnas SQL (Fuente de Verdad) de los que se quedan en JSON.
-    Garantiza que portrait_url NO se contamine con el ADN Visual.
+    Garantiza la unificación de biografías y protege el ADN Visual.
     """
     # 1. Copia para no destruir el objeto original en memoria
     stats = copy.deepcopy(full_stats)
@@ -53,10 +60,24 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
         columns["nombre"] = stats["bio"].get("nombre", "Unknown")
         columns["apellido"] = stats["bio"].get("apellido", "")
         
-        # CORRECCIÓN: Eliminado el mapeo de apariencia_visual a portrait_url.
-        # El ADN Visual debe permanecer en el JSON para ser procesado por el image_service.
+        # MIGRACIÓN v5.1.0: bio_superficial -> biografia_corta
+        if "bio_superficial" in stats["bio"]:
+            # Si no existe biografia_corta, migramos el valor
+            if not stats["bio"].get("biografia_corta"):
+                stats["bio"]["biografia_corta"] = stats["bio"]["bio_superficial"]
+            # Siempre eliminamos el campo legacy para limpiar el JSON
+            stats["bio"].pop("bio_superficial", None)
+
+        # REGLA CRÍTICA: 'apariencia_visual' es TEXTO descriptivo (ADN Visual).
+        # Se queda exclusivamente en el JSON (stats). NO se mapea a portrait_url.
+        
+        # Si el input trae un 'portrait_url' explícito en bio, lo extraemos a columna
+        if "portrait_url" in stats["bio"]:
+            columns["portrait_url"] = stats["bio"].get("portrait_url")
+            stats["bio"].pop("portrait_url", None)
             
-        # Limpieza básica bio (mantenemos edad, sexo, bio_corta y apariencia_visual en JSON)
+        # Limpieza básica bio: nombre y apellido van a columnas SQL
+        # biografia_corta, bio_conocida, bio_profunda y apariencia_visual SE QUEDAN en JSON
         stats["bio"].pop("nombre", None)
         stats["bio"].pop("apellido", None)
 
@@ -69,7 +90,7 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
         clase_str = stats["progresion"].get("clase", "Novato")
         columns["class_id"] = CLASS_ID_MAP.get(clase_str, 0)
         
-        # Limpieza total de datos numéricos del JSON
+        # Limpieza de datos numéricos del JSON (la Fuente de Verdad es SQL)
         stats["progresion"].pop("nivel", None)
         stats["progresion"].pop("xp", None)
         stats["progresion"].pop("rango", None)
@@ -86,10 +107,9 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
             columns["location_planet_id"] = loc.get("planet_id")
             columns["location_sector_id"] = loc.get("sector_id")
             
-            # Borrar objeto ubicación del JSON (ahora vive en columnas)
+            # Borrar objeto ubicación del JSON (vive en columnas SQL)
             stats["estado"].pop("ubicacion", None)
         
-        # Borrar rol asignado
         stats["estado"].pop("rol_asignado", None)
         
     # 5. Extracción de Comportamiento (Lealtad)
@@ -113,7 +133,9 @@ def _ensure_v2_structure(stats_json: Dict, name: str = "") -> Dict:
             "apellido": name.split()[1] if name and len(name.split()) > 1 else "",
             "edad": 30,
             "sexo": "Desconocido",
-            "biografia_corta": "Migrado Auto"
+            "biografia_corta": "Migrado Auto",
+            "bio_conocida": "",
+            "bio_profunda": ""
         },
         "taxonomia": {"raza": "Humano", "transformaciones": []},
         "progresion": {
@@ -148,16 +170,13 @@ def create_commander(
     bio_data: Dict[str, Any],
     attributes: Dict[str, int]
 ) -> Optional[Dict[str, Any]]:
-    """
-    Crea un Comandante usando el esquema Híbrido V2.
-    """
+    """Crea un Comandante usando el esquema Híbrido V2."""
     from data.game_config_repository import get_current_tick
 
     try:
         habilidades = calculate_skills(attributes)
         current_tick = get_current_tick()
         
-        # Descomponer nombre
         parts = name.split(" ", 1)
         nombre_p = parts[0]
         apellido_p = parts[1] if len(parts) > 1 else ""
@@ -165,7 +184,6 @@ def create_commander(
         raza = bio_data.get("raza", "Humano")
         clase = bio_data.get("clase", "Comandante")
 
-        # Construir objeto completo primero
         full_stats = {
             "bio": {
                 "nombre": nombre_p,
@@ -173,12 +191,11 @@ def create_commander(
                 "edad": bio_data.get("edad", 30),
                 "sexo": bio_data.get("sexo", BiologicalSex.UNKNOWN.value),
                 "biografia_corta": bio_data.get("biografia", f"Comandante {raza}"),
+                "bio_conocida": "Comandante de la Flota.",
+                "bio_profunda": "",
                 "apariencia_visual": bio_data.get("apariencia_visual")
             },
-            "taxonomia": {
-                "raza": raza,
-                "transformaciones": []
-            },
+            "taxonomia": {"raza": raza, "transformaciones": []},
             "progresion": {
                 "nivel": 1,
                 "clase": clase,
@@ -193,25 +210,19 @@ def create_commander(
             "comportamiento": {
                 "rasgos_personalidad": ["Liderazgo"],
                 "relaciones": [],
-                "lealtad": 100 # Comandante siempre leal
+                "lealtad": 100 
             },
-            "logistica": {
-                "equipo": [],
-                "slots_ocupados": 0,
-                "slots_maximos": 10
-            },
+            "logistica": {"equipo": [], "slots_ocupados": 0, "slots_maximos": 10},
             "estado": {
                 "estados_activos": [COMMANDER_STATUS],
                 "rol_asignado": CharacterRole.COMMANDER.value,
                 "accion_actual": "Iniciando mandato",
-                # Inicialización de ubicación
                 "ubicacion": {
                    "system_id": None, "planet_id": None, "sector_id": None, "ubicacion_local": COMMANDER_LOCATION
                 }
             }
         }
 
-        # EXTRAER Y LIMPIAR
         cols, cleaned_stats = _extract_and_clean_data(full_stats)
 
         new_char_data = {
@@ -220,7 +231,6 @@ def create_commander(
             "recruited_at_tick": current_tick,
             "stats_json": cleaned_stats,
             
-            # Columnas Fuente de Verdad
             "nombre": cols.get("nombre"),
             "apellido": cols.get("apellido"),
             "rango": cols.get("rango"),
@@ -252,20 +262,16 @@ def update_commander_profile(
     bio_data: Dict[str, Any],
     attributes: Dict[str, int]
 ) -> Optional[Dict[str, Any]]:
-    """
-    Actualiza perfil respetando Híbrido V2.
-    """
+    """Actualiza perfil respetando Híbrido V2."""
     try:
         current = get_commander_by_player_id(player_id)
         if not current: return None
             
-        # Reconstruir stats completos para manipular (Hydration)
         from core.models import CommanderData
         cmd_obj = CommanderData(**current)
         full_stats_model = cmd_obj.sheet
         full_stats_dict = full_stats_model.model_dump()
         
-        # Modificar
         habilidades = calculate_skills(attributes)
         
         full_stats_dict["bio"]["biografia_corta"] = bio_data.get("biografia", full_stats_dict["bio"]["biografia_corta"])
@@ -274,7 +280,6 @@ def update_commander_profile(
         full_stats_dict["capacidades"]["atributos"] = attributes
         full_stats_dict["capacidades"]["habilidades"] = habilidades
 
-        # Extraer y Limpiar
         cols, cleaned_stats = _extract_and_clean_data(full_stats_dict)
 
         update_payload = {
@@ -297,26 +302,19 @@ def update_commander_profile(
         raise Exception("Error actualizando perfil.")
 
 def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Persiste un personaje generado. Acepta full stats dictionary.
-    Optimizado: Valida player_id antes de asignar conocimiento para evitar fallos con candidatos.
-    """
+    """Persiste un personaje generado."""
     from data.game_config_repository import get_current_tick
 
     try:
-        # Metadatos
         initial_knowledge = character_data.pop("initial_knowledge_level", None)
         tick = character_data.pop("recruited_at_tick", get_current_tick())
         
-        # Limpiar campos root si existen
         stats_input = copy.deepcopy(character_data)
         stats_input.pop("player_id", None)
         
-        # Si viene envuelto en stats_json, lo extraemos
         if "stats_json" in stats_input:
             stats_input = stats_input["stats_json"]
 
-        # Extract & Clean
         cols, cleaned_stats = _extract_and_clean_data(stats_input)
 
         payload = {
@@ -324,7 +322,6 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
             "recruited_at_tick": tick,
             "stats_json": cleaned_stats,
             
-            # Columnas Fuente de Verdad
             "nombre": cols.get("nombre", "Unit"),
             "apellido": cols.get("apellido", ""),
             "level": cols.get("level", 1),
@@ -336,7 +333,6 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
             "is_npc": False,
             "portrait_url": cols.get("portrait_url"),
             
-            # Ubicación
             "location_system_id": cols.get("location_system_id"),
             "location_planet_id": cols.get("location_planet_id"),
             "location_sector_id": cols.get("location_sector_id")
@@ -348,7 +344,6 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
             new_char = response.data[0]
             new_char_id = new_char["id"]
             
-            # REQUERIMIENTO: Solo establecer conocimiento si hay un ID de jugador válido (evita errores con candidatos)
             if player_id is not None:
                 kl = initial_knowledge if initial_knowledge else KnowledgeLevel.UNKNOWN
                 set_character_knowledge_level(new_char_id, player_id, kl)
@@ -380,14 +375,12 @@ def update_character(character_id: int, data: Dict[str, Any]) -> Optional[Dict[s
 
 def get_character_by_id(character_id: int) -> Optional[Dict[str, Any]]:
     try:
-        # Intenta obtener de la tabla characters
         response = _get_db().table("characters").select("*").eq("id", character_id).single().execute()
         return response.data
     except Exception:
         return None
 
 def update_character_xp(character_id: int, new_xp: int, player_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    """Actualización directa a columna SQL (Fuente de Verdad)."""
     try:
         response = _get_db().table("characters").update({"xp": new_xp}).eq("id", character_id).execute()
         return response.data[0] if response.data else None
@@ -399,28 +392,17 @@ def add_xp_to_character(character_id: int, xp_amount: int, player_id: Optional[i
     try:
         char = get_character_by_id(character_id)
         if not char: return None
-        
-        # Leer desde columna SQL (Fuente de Verdad)
         current_xp = char.get("xp", 0)
-        
-        # Fallback para datos muy viejos sin migrar
-        if current_xp is None:
-             current_xp = char.get("stats_json", {}).get("progresion", {}).get("xp", 0)
-
         return update_character_xp(character_id, current_xp + xp_amount, player_id)
     except Exception:
         return None
 
 def update_character_stats(character_id: int, new_stats_json: Dict[str, Any], player_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    """
-    Actualiza stats completos.
-    IMPORTANTE: Separa los datos para columnas SQL y JSON limpio.
-    """
+    """Actualiza stats completos separando SQL y JSON limpio."""
     cols, cleaned_stats = _extract_and_clean_data(new_stats_json)
     
     payload = {"stats_json": cleaned_stats}
     
-    # Actualizar columnas relevantes si cambiaron en el objeto de UI
     for field in ["nombre", "apellido", "level", "xp", "rango", "class_id", "estado_id", "loyalty", "portrait_url"]:
         if field in cols:
             payload[field] = cols[field]
@@ -446,7 +428,6 @@ def get_character_knowledge_level(character_id: int, player_id: int) -> Knowledg
 
 def set_character_knowledge_level(character_id: int, player_id: int, level: KnowledgeLevel) -> bool:
     try:
-        # Upsert
         _get_db().table("character_knowledge").upsert({
             "character_id": character_id,
             "player_id": player_id,
@@ -460,39 +441,27 @@ def set_character_knowledge_level(character_id: int, player_id: int, level: Know
 # --- WRAPPERS DE RECLUTAMIENTO Y GESTIÓN ---
 
 def recruit_random_character_with_ai(player_id: int, **kwargs) -> Optional[Dict[str, Any]]:
-    """Wrapper para el servicio de generación."""
     from services.character_generation_service import recruit_character_with_ai
     return recruit_character_with_ai(player_id, **kwargs)
 
 def get_recruitment_candidates(player_id: int, **kwargs) -> List[Dict[str, Any]]:
-    """Wrapper para obtener pool de candidatos."""
     from services.character_generation_service import generate_character_pool
     return generate_character_pool(player_id, **kwargs)
 
 def dismiss_character(character_id: int, player_id: int) -> bool:
-    """
-    Despide a un personaje de la facción.
-    Lógica MMFR: Si es 'FRIEND', pasa a Retirado (99). Si no, vuelve a Disponible (1).
-    """
+    """Despide a un personaje de la facción."""
     try:
         char = get_character_by_id(character_id)
         if not char or char.get("player_id") != player_id:
             return False
             
-        # Comprobar si es el comandante (no se puede despedir)
         if char.get("es_comandante", False):
             return False
 
         kl = get_character_knowledge_level(character_id, player_id)
-        
-        # Determinar nuevo estado
         nuevo_estado = STATUS_ID_MAP["Retirado"] if kl == KnowledgeLevel.FRIEND else STATUS_ID_MAP["Disponible"]
         
-        # Desvincular del jugador y cambiar estado
-        payload = {
-            "player_id": None,
-            "estado_id": nuevo_estado
-        }
+        payload = {"player_id": None, "estado_id": nuevo_estado}
         
         result = update_character(character_id, payload)
         if result:
