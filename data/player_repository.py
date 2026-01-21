@@ -206,17 +206,23 @@ def register_player_account(
 
         # 3. Comandante (Responsabilidad del Repo, el engine solo maneja mundo/assets)
         stats = generate_genesis_commander_stats(user_name)
+        
+        # FIX SCHEMA V2: Inyectar ubicación en JSON ya que la columna de texto se eliminó
+        if "estado" not in stats: stats["estado"] = {}
+        stats["estado"]["ubicacion_local"] = "Puesto de Mando"
+
         char_data = {
             "player_id": player_id,
             "nombre": user_name,
             "rango": "Comandante",
             "es_comandante": True,
-            "clase": "Operaciones",
-            "nivel": stats['nivel'],
+            # Schema V2 changes:
+            "class_id": 99,       # 99 = Comandante
+            "level": stats['nivel'],
             "xp": stats['xp'],
-            "ubicacion": "Puesto de Mando",
-            "estado": "Disponible",
+            "estado_id": 1,       # 1 = Disponible
             "stats_json": stats
+            # Eliminados: clase (texto), ubicacion (texto), estado (texto)
         }
 
         try:
@@ -392,17 +398,23 @@ def reset_player_progress(player_id: int) -> bool:
 
         # 2. Re-crear Comandante (Responsabilidad del Repo)
         stats = generate_genesis_commander_stats(player.get('nombre', 'Comandante'))
+        
+        # FIX SCHEMA V2: Inyectar ubicación en JSON
+        if "estado" not in stats: stats["estado"] = {}
+        stats["estado"]["ubicacion_local"] = "Puesto de Mando"
+        
         char_data = {
             "player_id": player_id,
             "nombre": player.get('nombre', 'Comandante'),
             "rango": "Comandante",
             "es_comandante": True,
-            "clase": "Operaciones",
-            "nivel": stats['nivel'],
+            # Schema V2 changes:
+            "class_id": 99,       # 99 = Comandante
+            "level": stats['nivel'],
             "xp": stats['xp'],
-            "ubicacion": "Puesto de Mando",
-            "estado": "Disponible",
+            "estado_id": 1,       # 1 = Disponible
             "stats_json": stats
+            # Eliminados: clase, ubicacion, estado
         }
         db.table("characters").insert(char_data).execute()
 

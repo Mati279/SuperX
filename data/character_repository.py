@@ -79,8 +79,8 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
     if "estado" in stats:
         status_text = stats["estado"].get("rol_asignado", "Disponible")
         columns["estado_id"] = STATUS_ID_MAP.get(status_text, 1)
-        # Columna legacy texto
-        columns["estado"] = status_text 
+        # Columna legacy texto eliminada de columns para evitar error SQL
+        # columns["estado"] = status_text 
         
         # Extracción de Jerarquía de Ubicación
         loc = stats["estado"].get("ubicacion", {})
@@ -89,9 +89,9 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
             columns["location_planet_id"] = loc.get("planet_id")
             columns["location_sector_id"] = loc.get("sector_id")
             
-            # Fallback legacy texto
-            if "ubicacion_local" in loc:
-                 columns["ubicacion"] = loc["ubicacion_local"]
+            # Fallback legacy texto eliminado de columnas SQL
+            # if "ubicacion_local" in loc:
+            #      columns["ubicacion"] = loc["ubicacion_local"]
             
             # Borrar objeto ubicación del JSON (ahora vive en columnas)
             stats["estado"].pop("ubicacion", None)
@@ -236,9 +236,10 @@ def create_commander(
             "estado_id": cols.get("estado_id"),
             "loyalty": cols.get("loyalty", 100),
             
-            # Legacy fields
-            "estado": cols.get("estado"), 
-            "ubicacion": cols.get("ubicacion", COMMANDER_LOCATION)
+            # Corregido: NO enviar columnas 'estado' o 'ubicacion' (texto) ya que no existen en el nuevo esquema
+            "location_system_id": cols.get("location_system_id"),
+            "location_planet_id": cols.get("location_planet_id"),
+            "location_sector_id": cols.get("location_sector_id")
         }
 
         response = _get_db().table("characters").insert(new_char_data).execute()
@@ -336,9 +337,6 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
             "loyalty": cols.get("loyalty", 50),
             "is_npc": False,
             "portrait_url": cols.get("portrait_url"),
-            
-            # Legacy Fields
-            "estado": cols.get("estado", "Disponible"),
             
             # Ubicación
             "location_system_id": cols.get("location_system_id"),
@@ -570,7 +568,6 @@ def dismiss_character(character_id: int, current_player_id: int) -> bool:
                 "player_id": None,
                 "stats_json": cleaned_stats,
                 "estado_id": 99, # Retirado ID
-                "estado": "Retirado"
             }
             action_msg = "jubilado/retirado"
         else:
@@ -579,7 +576,6 @@ def dismiss_character(character_id: int, current_player_id: int) -> bool:
                 "player_id": None,
                 "stats_json": cleaned_stats,
                 "estado_id": 1, # Disponible ID
-                "estado": "Disponible"
             }
             action_msg = "devuelto al pool"
 
