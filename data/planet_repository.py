@@ -3,6 +3,7 @@
 Repositorio de Planetas y Edificios.
 Gestiona activos planetarios, edificios, recursos y mejoras de base.
 Refactorizado para MMFR V2: Seguridad dinámica (0-100) y Mantenimiento.
+Actualizado v4.2.0: Soporte para Sectores y Control Orbital.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -72,35 +73,73 @@ def get_all_player_planets(player_id: int) -> List[Dict[str, Any]]:
 
 
 def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]]:
-    """Obtiene planetas del jugador con edificios precargados para el tick económico."""
+    """
+    Obtiene planetas del jugador con edificios y datos de sectores precargados para el tick económico.
+    Actualizado v4.2.0: Incluye datos de 'planets' (control) y mapea tipos de sectores a edificios.
+    """
     try:
+        # 1. Obtener Activos Planetarios + Datos de Control (Foreign Key a planets)
+        # Nota: Asumimos que la relación en supabase se llama 'planets' (singular o plural según configuración)
+        # Se traen campos críticos para penalizaciones económicas (disputa, bloqueo)
         planets_response = _get_db().table("planet_assets")\
-            .select("*")\
+            .select("*, planets(orbital_owner_id, surface_owner_id, is_disputed)")\
             .eq("player_id", player_id)\
             .execute()
 
         planets = planets_response.data if planets_response.data else []
         if not planets: return []
 
-        planet_ids = [p["id"] for p in planets]
+        planet_ids = [p["planet_id"] for p in planets] # IDs globales de planeta
+        asset_ids = [p["id"] for p in planets]         # IDs de los activos (colonias)
+
+        # 2. Obtener Edificios
         buildings_response = _get_db().table("planet_buildings")\
             .select("*")\
-            .in_("planet_asset_id", planet_ids)\
+            .in_("planet_asset_id", asset_ids)\
             .execute()
-
         buildings = buildings_response.data if buildings_response.data else []
-        buildings_by_planet: Dict[int, List[Dict]] = {}
+
+        # 3. Obtener Sectores (para saber el tipo de terreno donde está cada edificio)
+        sectors_response = _get_db().table("sectors")\
+            .select("id, type, planet_id")\
+            .in_("planet_id", planet_ids)\
+            .execute()
+        sectors = sectors_response.data if sectors_response.data else []
+        
+        # Crear mapa de ID Sector -> Tipo
+        sector_type_map = {s["id"]: s["type"] for s in sectors}
+
+        # 4. Organizar datos
+        buildings_by_asset: Dict[int, List[Dict]] = {}
         for building in buildings:
             pid = building["planet_asset_id"]
-            if pid not in buildings_by_planet: buildings_by_planet[pid] = []
-            buildings_by_planet[pid].append(building)
+            if pid not in buildings_by_asset: buildings_by_asset[pid] = []
+            
+            # Enriquecer edificio con el tipo de sector
+            sec_id = building.get("sector_id")
+            building["sector_type"] = sector_type_map.get(sec_id, "Desconocido") if sec_id else None
+            
+            buildings_by_asset[pid].append(building)
 
+        # 5. Ensamblar resultado final
         for planet in planets:
-            planet["buildings"] = buildings_by_planet.get(planet["id"], [])
+            # Aplanar datos de la relación 'planets' para acceso fácil
+            planet_data = planet.get("planets", {})
+            if planet_data:
+                planet["orbital_owner_id"] = planet_data.get("orbital_owner_id")
+                planet["surface_owner_id"] = planet_data.get("surface_owner_id")
+                planet["is_disputed"] = planet_data.get("is_disputed", False)
+            else:
+                # Fallback si falla el join
+                planet["orbital_owner_id"] = None
+                planet["surface_owner_id"] = player_id
+                planet["is_disputed"] = False
+
+            planet["buildings"] = buildings_by_asset.get(planet["id"], [])
 
         return planets
     except Exception as e:
-        log_event(f"Error obteniendo planetas con edificios: {e}", player_id, is_error=True)
+        log_event(f"Error obteniendo planetas full data: {e}", player_id, is_error=True)
         return []
 
 
@@ -115,7 +154,6 @@ def create_planet_asset(
     try:
         # Cálculo de seguridad inicial (Scale 0-100)
         # Fórmula V2: Base + (Población * Tasa)
-        # Nota: Population ya es un float en escala de billones.
         base_sec = ECONOMY_RATES.get("security_base", 25.0)
         per_pop = ECONOMY_RATES.get("security_per_1b_pop", 5.0)
         
@@ -137,10 +175,13 @@ def create_planet_asset(
             "infraestructura_defensiva": 0,
             "base_tier": 1
         }
-        # Nota: La columna 'felicidad' ha sido eliminada de la estructura
         
         response = _get_db().table("planet_assets").insert(asset_data).execute()
+        
+        # Actualizar dueño de superficie en la tabla maestra PLANETS
         if response.data:
+            _get_db().table("planets").update({"surface_owner_id": player_id}).eq("id", planet_id).execute()
+            
             log_event(f"Planeta colonizado: {settlement_name} (Seguridad inicial: {initial_security:.1f})", player_id)
             return response.data[0]
         return None
@@ -152,6 +193,8 @@ def create_planet_asset(
 # --- GESTIÓN DE BASE Y MÓDULOS (MÓDULO 20) ---
 
 def get_base_slots_info(planet_asset_id: int) -> Dict[str, int]:
+    # TODO V4.2: Actualizar para usar slots de sectores en lugar de lógica fija por Tier
+    # Por ahora mantenemos compatibilidad hacia atrás si no hay sectores
     asset = get_planet_asset_by_id(planet_asset_id)
     if not asset: return {"total": 0, "used": 0, "free": 0}
     tier = asset.get('base_tier', 1)
@@ -173,7 +216,6 @@ def upgrade_base_tier(planet_asset_id: int, player_id: int) -> bool:
         if current_tier >= 4: return False 
         
         # Aquí se debería validar recursos del jugador antes de actualizar
-        # (Lógica pendiente de integración completa con player_repository)
         
         _get_db().table("planet_assets").update({
             "base_tier": current_tier + 1
@@ -228,14 +270,16 @@ def build_structure(
     planet_asset_id: int,
     player_id: int,
     building_type: str,
-    tier: int = 1
+    tier: int = 1,
+    sector_id: Optional[int] = None # Nuevo parámetro v4.2
 ) -> Optional[Dict[str, Any]]:
     if building_type not in BUILDING_TYPES: return None
     definition = BUILDING_TYPES[building_type]
     
+    # Validación simple de slots (Legacy + Sector check pendiente)
     slots = get_base_slots_info(planet_asset_id)
     if slots['free'] <= 0:
-        log_event("No hay slots disponibles.", player_id, is_error=True)
+        log_event("No hay slots disponibles en la base global.", player_id, is_error=True)
         return None
 
     try:
@@ -249,9 +293,10 @@ def build_structure(
             "player_id": player_id,
             "building_type": building_type,
             "building_tier": tier,
+            "sector_id": sector_id, # Asignar al sector si se provee
             "is_active": True,
             "pops_required": definition.get("pops_required", 0),
-            "energy_consumption": 0, # Deprecado, usamos 'maintenance' en constantes
+            "energy_consumption": 0, 
             "built_at_tick": 1 
         }
 

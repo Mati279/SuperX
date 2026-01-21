@@ -1,8 +1,14 @@
+# core/galaxy_generator.py
 import math
 import random
 from typing import List, Tuple
-from .world_models import Galaxy, System, Star, Planet
-from .world_constants import STAR_TYPES, STAR_RARITY_WEIGHTS, PLANET_BIOMES
+from .world_models import Galaxy, System, Star, Planet, Sector
+from .world_constants import (
+    STAR_TYPES, STAR_RARITY_WEIGHTS, PLANET_BIOMES,
+    SECTOR_TYPE_URBAN, SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN, SECTOR_TYPE_INHOSPITABLE,
+    BIOME_INHOSPITABLE_CHANCE, BIOME_RESOURCE_MATRIX, MAX_SLOTS_PER_SECTOR,
+    RESOURCE_CHANCE_HIGH, RESOURCE_CHANCE_MEDIUM, RESOURCE_CHANCE_LOW, RESOURCE_CHANCE_NONE
+)
 
 class GalaxyGenerator:
     def __init__(self, seed: int = 42, num_systems: int = 40):
@@ -79,16 +85,87 @@ class GalaxyGenerator:
             biome_keys = list(PLANET_BIOMES.keys())
             biome = random.choice(biome_keys)
             
-            planets.append(Planet(
+            # Crear instancia básica de planeta
+            new_planet = Planet(
                 id=planet_id,
                 system_id=system.id,
                 name=f"{system.name}-{j+1}",
                 biome=biome,
-                is_habitable=PLANET_BIOMES[biome].get("slots", 0) > 0,
-                slots=PLANET_BIOMES[biome].get("slots", 2)
-            ))
+                is_habitable=PLANET_BIOMES[biome].get("construction_slots", 0) > 0,
+                slots=PLANET_BIOMES[biome].get("construction_slots", 2)
+            )
+            
+            # V4.2.0: Generar Sectores para el planeta
+            new_planet.sectors = self._generate_sectors_for_planet(new_planet)
+            
+            planets.append(new_planet)
             
         return planets
+
+    def _generate_sectors_for_planet(self, planet: Planet) -> List[Sector]:
+        """
+        Genera los sectores iniciales de un planeta basado en su bioma.
+        Garantiza al menos un sector Urbano si el planeta es habitable/poblado potencial.
+        """
+        sectors = []
+        num_sectors = 6  # Estándar hexagonal para profundidad de juego
+        
+        # Obtener probabilidades base según bioma
+        inhospitable_chance = BIOME_INHOSPITABLE_CHANCE.get(planet.biome, 0.5)
+        resource_chance = BIOME_RESOURCE_MATRIX.get(planet.biome, RESOURCE_CHANCE_LOW)
+        
+        has_urban = False
+        
+        for k in range(num_sectors):
+            sector_id = (planet.id * 100) + k
+            
+            # Determinar tipo de sector
+            roll_type = random.random()
+            
+            if roll_type < inhospitable_chance:
+                sec_type = SECTOR_TYPE_INHOSPITABLE
+                slots = 0
+            else:
+                # Si es habitable y jugable, distribuimos entre Llanura y Montaña
+                sec_type = random.choice([SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN])
+                slots = MAX_SLOTS_PER_SECTOR
+            
+            # Determinar recursos
+            res_roll = random.random()
+            resource_type = None
+            if sec_type != SECTOR_TYPE_INHOSPITABLE and res_roll < resource_chance:
+                # Placeholder: Aquí se asignaría un recurso específico
+                # Por ahora solo marcamos que tiene "Minerales" genéricos
+                resource_type = "Minerales Comunes"
+
+            sectors.append(Sector(
+                id=sector_id,
+                planet_id=planet.id,
+                type=sec_type,
+                slots=slots,
+                resource_type=resource_type
+            ))
+
+        # GARANTÍA: Si el planeta es "bueno", asegurar 1 sector Urbano inicial
+        # Esto es vital para que la colonia inicial tenga donde construirse.
+        if planet.is_habitable:
+            # Reemplazar el primer sector no-inhóspito con Urbano, o forzar el primero
+            target_idx = 0
+            found_candidate = False
+            
+            # Buscar un sector válido para urbanizar
+            for idx, s in enumerate(sectors):
+                if s.type != SECTOR_TYPE_INHOSPITABLE:
+                    target_idx = idx
+                    found_candidate = True
+                    break
+            
+            # Si todo es inhóspito pero el planeta dice ser habitable, forzamos el 0
+            sectors[target_idx].type = SECTOR_TYPE_URBAN
+            sectors[target_idx].slots = MAX_SLOTS_PER_SECTOR # Máxima capacidad
+            sectors[target_idx].resource_type = None # Urbano suele limpiar recursos naturales
+
+        return sectors
 
     def _generate_starlanes(self):
         """
