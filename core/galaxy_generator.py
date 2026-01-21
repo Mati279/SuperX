@@ -1,197 +1,159 @@
-# core/galaxy_generator.py
 import math
 import random
-from typing import List, Dict, Optional
-
-from .world_models import Galaxy, System, Star, Planet, Moon, AsteroidBelt, CelestialBody
-from .world_constants import (
-    STAR_TYPES,
-    STAR_RARITY_WEIGHTS,
-    PLANET_BIOMES,
-    ORBITAL_ZONES,
-    ASTEROID_BELT_CHANCE,
-    RESOURCE_STAR_WEIGHTS,
-)
-
-# --- Listas de Nombres Predefinidos para dar Sabor ---
-STAR_NAME_PREFIXES = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Omega"]
-STAR_NAME_SUFFIXES = ["Centauri", "Orionis", "Cygnus", "Draconis", "Pegasi", "Aquarii"]
-PLANET_NAMES = ["Aethel", "Barovia", "Cygnus X1", "Dantooine", "Endor", "Felucia", "Giedi", "Hoth", "Ithor", "Jakku", "Kamino"]
+from typing import List, Tuple
+from .world_models import Galaxy, System, Star, Planet
+from .world_constants import STAR_TYPES, STAR_RARITY_WEIGHTS, PLANET_BIOMES
 
 class GalaxyGenerator:
-    """
-    Clase responsable de la generación procedural de la galaxia.
-    Utiliza un 'seed' para que la galaxia sea la misma en cada ejecución.
-    """
-    def __init__(self, seed: int = 42, num_systems: int = 30):
+    def __init__(self, seed: int = 42, num_systems: int = 40):
+        # Aumentado de 30 a 40 para mayor densidad base
         self.seed = seed
         self.num_systems = num_systems
-        self.random = random.Random(seed)
         self.galaxy = Galaxy()
-        self._used_system_names = set()
-        self._celestial_body_id_counter = 0
-
-    def _get_unique_id(self) -> int:
-        self._celestial_body_id_counter += 1
-        return self._celestial_body_id_counter
-
-    def _generate_unique_system_name(self) -> str:
-        while True:
-            prefix = self.random.choice(STAR_NAME_PREFIXES)
-            suffix = self.random.choice(STAR_NAME_SUFFIXES)
-            num = self.random.randint(1, 100)
-            name = f"{prefix}-{suffix}-{num}"
-            if name not in self._used_system_names:
-                self._used_system_names.add(name)
-                return name
-
-    def _create_star(self) -> Star:
-        star_type_name = self.random.choices(
-            list(STAR_RARITY_WEIGHTS.keys()),
-            weights=list(STAR_RARITY_WEIGHTS.values()),
-            k=1
-        )[0]
-        
-        star_data = STAR_TYPES[star_type_name]
-        
-        return Star(
-            name=f"{star_type_name}",
-            type=star_type_name,
-            rarity=star_data['rarity'],
-            energy_modifier=star_data['energy_modifier'],
-            special_rule=star_data['special_rule'],
-            class_type=star_data['class']
-        )
-
-    def _pick_planet_size(self) -> str:
-        """Devuelve un tamaño basico para el planeta."""
-        roll = self.random.random()
-        if roll < 0.25:
-            return "Pequeno"
-        if roll < 0.75:
-            return "Mediano"
-        return "Grande"
-
-    def _sample_resources(self, star_class: str, max_items: int = 3) -> List[str]:
-        """Selecciona entre 1 y max_items recursos metalicos segun la clase estelar."""
-        weights = RESOURCE_STAR_WEIGHTS.get(star_class, {})
-        items = [(name, w) for name, w in weights.items() if w > 0]
-        if not items:
-            return []
-
-        chosen = set()
-        count = self.random.randint(1, max_items)
-        for _ in range(count):
-            names, w = zip(*items)
-            pick = self.random.choices(names, weights=w, k=1)[0]
-            chosen.add(pick)
-        return list(chosen)
-
-    def _create_planet(self, ring: int, system_name: str, zone_weights: Dict[str, int], star_class: str) -> Planet:
-        biome_name = self.random.choices(
-            list(zone_weights.keys()),
-            weights=list(zone_weights.values()),
-            k=1
-        )[0]
-        biome_data = PLANET_BIOMES[biome_name]
-        size = self._pick_planet_size()
-        explored_pct = round(self.random.uniform(5, 35), 2)
-        resources = self._sample_resources(star_class, max_items=3)
-
-        # Generar lunas
-        num_moons = self.random.randint(0, 5)
-        moons = []
-        for i in range(num_moons):
-            moon_id = self._get_unique_id()
-            moons.append(Moon(id=moon_id, name=f"Luna {i+1}"))
-            
-        return Planet(
-            id=self._get_unique_id(),
-            name=f"{system_name}-{ring}",
-            ring=ring,
-            biome=biome_name,
-            size=size,
-            bonuses=biome_data['bonuses'],
-            construction_slots=biome_data['construction_slots'],
-            maintenance_mod=biome_data['maintenance_mod'],
-            explored_pct=explored_pct,
-            resources=resources,
-            moons=moons
-        )
-
-    def _create_asteroid_belt(self, ring: int, system_name: str) -> AsteroidBelt:
-        return AsteroidBelt(
-            id=self._get_unique_id(),
-            name=f"Cinturón de {system_name}-{ring}",
-            ring=ring,
-            hazard_level=self.random.uniform(0.1, 0.9)
-        )
-
-    def _create_system(self, system_id: int, system_index: int) -> System:
-        system_name = self._generate_unique_system_name()
-        star = self._create_star()
-        
-        # --- Lógica de Posicionamiento en Espiral ---
-        # Estos valores se pueden ajustar para cambiar la forma de la galaxia
-        angle = system_index * 137.5  # Angulo dorado para distribución uniforme
-        radius_scale = 15  # Escala del radio
-        radius = radius_scale * math.sqrt(system_index)
-        
-        # Añadir algo de aleatoriedad para que no sea una espiral perfecta
-        angle_randomness = self.random.uniform(-10, 10)
-        radius_randomness = self.random.uniform(-5, 5)
-
-        # Coordenadas polares a cartesianas
-        # El centro de la galaxia estará en (500, 400)
-        center_x, center_y = 500, 400
-        x = center_x + (radius + radius_randomness) * math.cos(math.radians(angle + angle_randomness))
-        y = center_y + (radius + radius_randomness) * math.sin(math.radians(angle + angle_randomness))
-        
-        system = System(
-            id=system_id,
-            name=system_name,
-            star=star,
-            position=(x, y)
-        )
-
-        for ring in range(1, 7):
-            # Determinar la zona orbital
-            current_zone = None
-            for zone_info in ORBITAL_ZONES.values():
-                if ring in zone_info['rings']:
-                    current_zone = zone_info
-                    break
-            
-            # Decidir si el anillo tiene un planeta o un cinturón de asteroides
-            if self.random.random() < ASTEROID_BELT_CHANCE:
-                system.orbital_rings[ring] = self._create_asteroid_belt(ring, system_name)
-            else:
-                # No crear planeta si la zona no tiene opciones (ej. Oceánico en Zona Caliente)
-                if sum(current_zone['planet_weights'].values()) > 0:
-                    system.orbital_rings[ring] = self._create_planet(
-                        ring, system_name, current_zone['planet_weights'], star.class_type
-                    )
-                else:
-                    system.orbital_rings[ring] = None # Anillo vacío
-
-        return system
+        random.seed(self.seed)
 
     def generate_galaxy(self) -> Galaxy:
-        """Genera y devuelve el objeto Galaxia completo."""
-        if self.galaxy.systems:
-            return self.galaxy # No regenerar si ya existe
-
-        for i in range(self.num_systems):
-            system = self._create_system(system_id=i, system_index=i)
-            self.galaxy.systems.append(system)
+        """
+        Genera una nueva galaxia con sistemas, planetas y rutas (starlanes).
+        """
+        systems = []
         
+        # 1. Generar posiciones (Espirales simples)
+        for i in range(self.num_systems):
+            # Lógica simple de espiral para distribución
+            angle = 0.5 * i  # Ajustar para la forma de la espiral
+            dist = 10 * math.sqrt(i + 1) # Raíz cuadrada para distribución uniforme de área
+            
+            # Añadir algo de "jitter" aleatorio
+            jitter_x = random.uniform(-2, 2)
+            jitter_y = random.uniform(-2, 2)
+            
+            x = (dist * math.cos(angle)) + jitter_x
+            y = (dist * math.sin(angle)) + jitter_y
+            
+            star = self._generate_random_star()
+            
+            new_system = System(
+                id=i + 1,
+                name=f"System-{i+1:03d}", # Nombre placeholder
+                x=x,
+                y=y,
+                star=star,
+                planets=[]
+            )
+            
+            # Generar planetas para este sistema
+            new_system.planets = self._generate_planets_for_system(new_system)
+            systems.append(new_system)
+
+        self.galaxy.systems = systems
+        
+        # 2. Generar Starlanes usando Gabriel Graph
+        self._generate_starlanes()
+
         return self.galaxy
 
-# --- Instancia Singleton del Generador ---
-# De esta forma, toda la aplicación puede importar y usar la misma galaxia generada.
-_galaxy_generator_instance = GalaxyGenerator(seed=42, num_systems=30)
-GALAXY = _galaxy_generator_instance.generate_galaxy()
+    def _generate_random_star(self) -> Star:
+        """Selecciona una estrella basada en pesos de rareza."""
+        classes = list(STAR_RARITY_WEIGHTS.keys())
+        weights = list(STAR_RARITY_WEIGHTS.values())
+        
+        chosen_class = random.choices(classes, weights=weights, k=1)[0]
+        star_data = STAR_TYPES.get(chosen_class, STAR_TYPES["G"])
+        
+        return Star(
+            class_type=chosen_class,
+            color=star_data.get("color", "#FFFFFF"),
+            size=star_data.get("size", 1.0),
+            energy_output=star_data.get("energy_modifier", 1.0)
+        )
+
+    def _generate_planets_for_system(self, system: System) -> List[Planet]:
+        """Genera una cantidad aleatoria de planetas para el sistema."""
+        num_planets = random.randint(1, 6) # Configurable
+        planets = []
+        
+        for j in range(num_planets):
+            planet_id = (system.id * 100) + j
+            # Lógica simplificada de biomas
+            biome_keys = list(PLANET_BIOMES.keys())
+            biome = random.choice(biome_keys)
+            
+            planets.append(Planet(
+                id=planet_id,
+                system_id=system.id,
+                name=f"{system.name}-{j+1}",
+                biome=biome,
+                is_habitable=PLANET_BIOMES[biome].get("slots", 0) > 0,
+                slots=PLANET_BIOMES[biome].get("slots", 2)
+            ))
+            
+        return planets
+
+    def _generate_starlanes(self):
+        """
+        Genera conexiones entre sistemas usando el algoritmo Gabriel Graph.
+        Dos nodos A y B se conectan si el círculo con diámetro AB no contiene
+        ningún otro nodo C.
+        """
+        systems = self.galaxy.systems
+        n = len(systems)
+        starlanes = []
+
+        # Limpiar vecinos previos por seguridad
+        for sys in systems:
+            sys.neighbors = []
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                sys_a = systems[i]
+                sys_b = systems[j]
+
+                # 1. Calcular punto medio y distancia cuadrada AB
+                mid_x = (sys_a.x + sys_b.x) / 2
+                mid_y = (sys_a.y + sys_b.y) / 2
+                
+                dx = sys_a.x - sys_b.x
+                dy = sys_a.y - sys_b.y
+                dist_ab_sq = dx*dx + dy*dy
+                
+                # El radio al cuadrado del círculo de Gabriel es (d_ab / 2)^2
+                # O simplemente d_ab_sq / 4
+                radius_sq = dist_ab_sq / 4.0
+
+                # 2. Verificar condición de Gabriel
+                blocked = False
+                for k in range(n):
+                    if k == i or k == j:
+                        continue
+                    
+                    sys_c = systems[k]
+                    
+                    # Distancia cuadrada de C al punto medio
+                    dc_x = sys_c.x - mid_x
+                    dc_y = sys_c.y - mid_y
+                    dist_c_mid_sq = dc_x*dc_x + dc_y*dc_y
+
+                    # Si C está estrictamente dentro del círculo, bloquea la conexión
+                    if dist_c_mid_sq < radius_sq:
+                        blocked = True
+                        break
+                
+                # 3. Si nadie bloquea, creamos conexión
+                if not blocked:
+                    # Agregar a vecinos (grafo de adyacencia)
+                    if sys_b.id not in sys_a.neighbors:
+                        sys_a.neighbors.append(sys_b.id)
+                    if sys_a.id not in sys_b.neighbors:
+                        sys_b.neighbors.append(sys_a.id)
+                    
+                    # Agregar a lista global de aristas
+                    starlanes.append((sys_a.id, sys_b.id))
+
+        self.galaxy.starlanes = starlanes
+
+# Instancia Singleton (opcional, según uso en el proyecto)
+GALAXY = GalaxyGenerator().generate_galaxy()
 
 def get_galaxy() -> Galaxy:
-    """Función de acceso para obtener la galaxia generada."""
     return GALAXY

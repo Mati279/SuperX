@@ -1,64 +1,57 @@
-# core/world_models.py
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
-
-@dataclass
-class Star:
-    """Representa una estrella en el centro de un sistema."""
-    name: str
-    type: str
-    rarity: str
-    energy_modifier: float
-    special_rule: str
-    class_type: str # G, O, M, D, X
-
-@dataclass
-class Moon:
-    """Representa una luna orbitando un planeta."""
-    id: int
-    name: str
-    # Futuro: podría tener su propio bioma o características especiales
-    # base_slots: int = 1 
+from typing import List, Dict, Any, Tuple, Optional
 
 @dataclass
 class CelestialBody:
-    """Clase base para objetos en anillos orbitales."""
+    id: int
     name: str
-    ring: int
+    x: float = 0.0  # Coordenada relativa o global según contexto
+    y: float = 0.0
+
+@dataclass
+class Star:
+    # Representación simplificada de la estrella para el modelo
+    class_type: str  # O, B, A, F, G, K, M
+    color: str
+    size: float
+    energy_output: float
 
 @dataclass
 class Planet(CelestialBody):
-    """Representa un planeta en un anillo orbital."""
-    id: int
-    biome: str
-    size: str
-    bonuses: str
-    construction_slots: int
-    maintenance_mod: float
-    explored_pct: float = 0.0
-    resources: List[str] = field(default_factory=list)
-    moons: List[Moon] = field(default_factory=list)
+    system_id: int = 0
+    biome: str = "Desconocido"
+    is_habitable: bool = False
+    slots: int = 0
+    resources: Dict[str, float] = field(default_factory=dict)
+
+@dataclass
+class Moon(CelestialBody):
+    planet_id: int = 0
 
 @dataclass
 class AsteroidBelt(CelestialBody):
-    """Representa un campo de asteroides en un anillo orbital."""
-    id: int
-    hazard_level: float # Nivel de peligro de 0.1 a 1.0
-    # Futuro: podría tener una lista de recursos extraíbles
-    # available_resources: List[str] = field(default_factory=list)
+    system_id: int = 0
+    density: float = 1.0
 
 @dataclass
 class System:
-    """Representa un sistema estelar completo."""
     id: int
     name: str
+    x: float
+    y: float
     star: Star
-    orbital_rings: Dict[int, Optional[CelestialBody]] = field(default_factory=dict) # Anillo -> Planeta/Asteroide/None
-    position: tuple[int, int] = (0, 0) # Posición (x, y) en el mapa galáctico para el grafo
+    planets: List[Planet] = field(default_factory=list)
+    # Nuevo: Lista de IDs de sistemas conectados
+    neighbors: List[int] = field(default_factory=list) 
 
 @dataclass
 class Galaxy:
-    """Representa la galaxia entera, un conjunto de sistemas."""
     systems: List[System] = field(default_factory=list)
-    # Futuro: podría contener las conexiones del grafo para viajes inter-estelares
-    # system_connections: Dict[int, List[int]] = field(default_factory=dict)
+    # Nuevo: Lista de tuplas (id_origen, id_destino) representando las conexiones
+    starlanes: List[Tuple[int, int]] = field(default_factory=list) 
+    
+    def get_system_by_id(self, system_id: int) -> Optional[System]:
+        for sys in self.systems:
+            if sys.id == system_id:
+                return sys
+        return None
