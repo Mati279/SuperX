@@ -4,11 +4,11 @@ Modelos de Dominio Tipados.
 Define las estructuras de datos centrales del juego usando Pydantic
 para garantizar validación y serialización consistente.
 Refactorizado para cumplir con el esquema V2 Híbrido (SQL + JSON).
-Actualizado v5.1.1: Corrección de Hidratación de Roles y Estados.
+Actualizado v5.1.3: Robustez total en tipos de Roles y corrección de tipos SQL.
 """
 
-from typing import Dict, Any, Optional, List
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Dict, Any, Optional, List, Union
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from enum import Enum
 import copy
 
@@ -289,8 +289,15 @@ class CommanderData(BaseModel):
     loyalty: int = 50  # 0-100
     estado_id: int = 1  # 1=Disponible
     
-    # CORRECCIÓN: rol ahora es opcional con default para evitar errores si SQL devuelve NULL
+    # CORRECCIÓN: rol ahora es opcional con default. 
+    # El validador asegura que si la DB devuelve un número por error, no rompa la app.
     rol: Optional[str] = Field(default="Sin Asignar") 
+
+    @field_validator('rol', mode='before')
+    @classmethod
+    def coerce_rol_to_str(cls, v: Any) -> str:
+        if v is None: return "Sin Asignar"
+        return str(v)
     
     # Jerarquía de Ubicación (Fuente de Verdad SQL)
     location_system_id: Optional[int] = None
@@ -358,8 +365,11 @@ class CommanderData(BaseModel):
             full_stats["estado"]["estados_activos"] = [status_text]
             
             # CORRECCIÓN CRÍTICA: El rol operativo se toma de la columna SQL 'rol' (para cumplir con CharacterRole Enum)
-            # No se debe inyectar "Disponible" aquí porque falla la validación del Enum.
-            full_stats["estado"]["rol_asignado"] = self.rol if self.rol else "Sin Asignar"
+            # Si el valor de la columna no coincide con el Enum, caerá en NONE ("Sin Asignar")
+            try:
+                full_stats["estado"]["rol_asignado"] = CharacterRole(self.rol) if self.rol else CharacterRole.NONE
+            except ValueError:
+                full_stats["estado"]["rol_asignado"] = CharacterRole.NONE
             
             # Inyectar objeto de ubicación completo usando los IDs reales
             full_stats["estado"]["ubicacion"] = {
@@ -387,10 +397,10 @@ class CommanderData(BaseModel):
     @property
     def attributes(self) -> CharacterAttributes:
         """Acceso directo a atributos."""
-        if "capacidades" in self.stats_json and "atributos" in self.stats_json["capacidades"]:
-             return CharacterAttributes(**self.stats_json["capacidades"]["atributos"])
-        if "atributos" in self.stats_json:
-            return CharacterAttributes(**self.stats_json["atributos"])
+        if "capacidades" in stats_json and "atributos" in stats_json["capacidades"]:
+             return CharacterAttributes(**stats_json["capacidades"]["atributos"])
+        if "atributos" in stats_json:
+            return CharacterAttributes(**stats_json["atributos"])
         return CharacterAttributes()
 
     @property
@@ -399,8 +409,8 @@ class CommanderData(BaseModel):
 
     @property
     def clase(self) -> str:
-        if "progresion" in self.stats_json:
-            return self.stats_json["progresion"].get("clase", "Novato")
+        if "progresion" in stats_json:
+            return stats_json["progresion"].get("clase", "Novato")
         return "Novato"
 
     def get_merit_points(self) -> int:

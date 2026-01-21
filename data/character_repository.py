@@ -3,7 +3,7 @@
 Repositorio de Personajes.
 Gestiona la persistencia de personajes usando el modelo V2 Híbrido (SQL + JSON).
 Implementa el patrón Extract & Clean para sincronizar columnas SQL con metadatos JSON.
-Actualizado v5.1.2: Fix sincronización columna SQL 'rol' y robustez de payloads.
+Actualizado v5.1.3: Fix sincronización columna SQL 'rol' y robustez de payloads.
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -47,7 +47,7 @@ STATUS_ID_MAP = {
 # --- HELPER: EXTRACT & CLEAN ---
 def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    EXTRACT & CLEAN PATTERN (Refactorizado v5.1.2).
+    EXTRACT & CLEAN PATTERN (Refactorizado v5.1.3).
     Separa los datos que van a columnas SQL (Fuente de Verdad) de los que se quedan en JSON.
     Garantiza la unificación de biografías y protege el ADN Visual.
     """
@@ -88,13 +88,11 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
 
     # 4. Extracción de Estado, Rol y Ubicación
     if "estado" in stats:
+        # CORRECCIÓN: Asegurar que el rol sea siempre un string para la columna SQL TEXT
         rol_text = stats["estado"].get("rol_asignado", "Sin Asignar")
-        
-        # CORRECCIÓN: Extraer explícitamente el rol para la columna SQL
-        columns["rol"] = rol_text
+        columns["rol"] = str(rol_text)
         
         # Mapeo a ID de estado (biológico/disponibilidad)
-        # Nota: rol_asignado puede ser un estado o un rol. STATUS_ID_MAP maneja ambos.
         columns["estado_id"] = STATUS_ID_MAP.get(rol_text, 1)
         
         # Extracción de Jerarquía de Ubicación
@@ -235,8 +233,8 @@ def create_commander(
             "estado_id": cols.get("estado_id"),
             "loyalty": cols.get("loyalty", 100),
             
-            # CORRECCIÓN: Inyección del rol en la columna SQL
-            "rol": bio_data.get("rol", cols.get("rol", "Comandante")),
+            # Sincronización del rol en la columna SQL (Requiere columna TEXT)
+            "rol": str(bio_data.get("rol", cols.get("rol", "Comandante"))),
             
             "location_system_id": cols.get("location_system_id"),
             "location_planet_id": cols.get("location_planet_id"),
@@ -279,7 +277,6 @@ def update_commander_profile(
         full_stats_dict["capacidades"]["atributos"] = attributes
         full_stats_dict["capacidades"]["habilidades"] = habilidades
         
-        # Asegurar que el rol se actualiza en el estado para que _extract_and_clean lo capture
         if "rol" in bio_data:
             full_stats_dict["estado"]["rol_asignado"] = bio_data["rol"]
 
@@ -290,7 +287,7 @@ def update_commander_profile(
             "class_id": cols.get("class_id"),
             "nombre": cols.get("nombre"),
             "apellido": cols.get("apellido"),
-            "rol": cols.get("rol") # Sincronización de columna SQL
+            "rol": str(cols.get("rol", "Comandante")) # Sincronización de columna SQL
         }
 
         response = _get_db().table("characters")\
@@ -338,8 +335,7 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
             "is_npc": False,
             "portrait_url": cols.get("portrait_url"),
             
-            # CORRECCIÓN: Inyección del rol en la columna SQL
-            "rol": character_data.get("rol", cols.get("rol", "Sin Asignar")),
+            "rol": str(character_data.get("rol", cols.get("rol", "Sin Asignar"))),
             
             "location_system_id": cols.get("location_system_id"),
             "location_planet_id": cols.get("location_planet_id"),
