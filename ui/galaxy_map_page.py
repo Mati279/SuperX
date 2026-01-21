@@ -3,6 +3,7 @@
 Mapa Galáctico - Usa datos directamente de la Base de Datos.
 Refactorizado MMFR V2: Indicadores de Seguridad (Ss/Sp), Mantenimiento y Tooltips.
 Corrección: Seguridad 0 para planetas con Población 0 (Deshabitados).
+Fix: Manejo robusto de valores NULL en recursos (TypeError: 'NoneType' object is not subscriptable).
 """
 import json
 import math
@@ -126,9 +127,6 @@ def _render_system_view():
         asset_map = {}
 
     # 3. Calcular Métricas Consolidadas
-    # Seguridad (Ss) = Promedio de la seguridad de todos los planetas.
-    # Planetas con Asset -> Usan seguridad del Asset (Sp).
-    # Planetas Neutrales -> Si Pop > 0, estimación. Si Pop == 0, Seguridad 0.
     
     total_pop = 0.0
     security_sum = 0.0
@@ -138,7 +136,7 @@ def _render_system_view():
     per_pop_sec = ECONOMY_RATES.get('security_per_1b_pop', 5.0)
 
     for p in planets:
-        # Población real del planeta
+        # Población real del planeta (Acceso seguro)
         pop = p.get('poblacion') or 0.0
         total_pop += pop
         
@@ -190,7 +188,10 @@ def _render_system_view():
             
             # --- INFO STRING BUILDER ---
             info_parts = []
-            info_parts.append(f"Recursos: {', '.join(planet.get('resources', [])[:3])}")
+            
+            # FIX: Acceso robusto a recursos (Evita TypeError si resources es NULL en DB)
+            res_list = planet.get('resources') or []
+            info_parts.append(f"Recursos: {', '.join(res_list[:3])}")
             
             if p_pop > 0:
                 info_parts.append(f"👥 {p_pop:.1f}B")
@@ -406,7 +407,7 @@ def _render_interactive_galaxy_map():
     # --- PRE-CÁLCULO DE MÉTRICAS MASIVO (Optimización) ---
     # Evitamos N+1 queries obteniendo todo de una vez
     
-    # 1. Obtener todos los planetas con ID, system_id y población (Datos físicos)
+    # 1. Obtener todos los planetas (Acceso seguro a población y system_id)
     try:
         all_planets_data = get_supabase().table("planets").select("id, system_id, poblacion").execute().data
     except:
@@ -428,6 +429,7 @@ def _render_interactive_galaxy_map():
     for p in all_planets_data:
         sid = p['system_id']
         pid = p['id']
+        # PATRÓN ROBUSTO: (valor or 0.0) para evitar errores con NULLs en DB
         pop = p.get('poblacion') or 0.0
         
         # Denominador de planetas
@@ -447,10 +449,9 @@ def _render_interactive_galaxy_map():
                 base = ECONOMY_RATES.get('security_base', 25.0)
                 per_pop = ECONOMY_RATES.get('security_per_1b_pop', 5.0)
                 current_sec = base + (pop * per_pop)
-                # Clamp 0-100
                 current_sec = max(0.0, min(current_sec, 100.0))
             
-        system_security_sum[sid] = system_security_sum.get(sid, 0.0) + current_sec
+        system_security_sum[sid] = system_security_sum.get(sid, 0.0) + (current_sec or 0.0)
 
 
     # --- UI DE CONTROL ---
