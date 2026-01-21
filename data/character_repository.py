@@ -3,7 +3,7 @@
 Repositorio de Personajes.
 Gestiona la persistencia de personajes usando el modelo V2 Híbrido (SQL + JSON).
 Implementa el patrón Extract & Clean para sincronizar columnas SQL con metadatos JSON.
-Actualizado v5.1.0: Migración de bio_superficial y protección de ADN Visual.
+Actualizado v5.1.2: Fix sincronización columna SQL 'rol' y robustez de payloads.
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -17,7 +17,7 @@ def _get_db():
     return get_supabase()
 
 # Importamos KnowledgeLevel para tipado y validación
-from core.models import BiologicalSex, CharacterRole, KnowledgeLevel
+from core.models import BiologicalSex, CharacterRole, KnowledgeLevel, CommanderData
 from core.rules import calculate_skills
 from config.app_constants import (
     COMMANDER_RANK,
@@ -47,7 +47,7 @@ STATUS_ID_MAP = {
 # --- HELPER: EXTRACT & CLEAN ---
 def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    EXTRACT & CLEAN PATTERN (Refactorizado v5.1.0).
+    EXTRACT & CLEAN PATTERN (Refactorizado v5.1.2).
     Separa los datos que van a columnas SQL (Fuente de Verdad) de los que se quedan en JSON.
     Garantiza la unificación de biografías y protege el ADN Visual.
     """
@@ -62,22 +62,14 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
         
         # MIGRACIÓN v5.1.0: bio_superficial -> biografia_corta
         if "bio_superficial" in stats["bio"]:
-            # Si no existe biografia_corta, migramos el valor
             if not stats["bio"].get("biografia_corta"):
                 stats["bio"]["biografia_corta"] = stats["bio"]["bio_superficial"]
-            # Siempre eliminamos el campo legacy para limpiar el JSON
             stats["bio"].pop("bio_superficial", None)
 
-        # REGLA CRÍTICA: 'apariencia_visual' es TEXTO descriptivo (ADN Visual).
-        # Se queda exclusivamente en el JSON (stats). NO se mapea a portrait_url.
-        
-        # Si el input trae un 'portrait_url' explícito en bio, lo extraemos a columna
         if "portrait_url" in stats["bio"]:
             columns["portrait_url"] = stats["bio"].get("portrait_url")
             stats["bio"].pop("portrait_url", None)
             
-        # Limpieza básica bio: nombre y apellido van a columnas SQL
-        # biografia_corta, bio_conocida, bio_profunda y apariencia_visual SE QUEDAN en JSON
         stats["bio"].pop("nombre", None)
         stats["bio"].pop("apellido", None)
 
@@ -90,15 +82,20 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
         clase_str = stats["progresion"].get("clase", "Novato")
         columns["class_id"] = CLASS_ID_MAP.get(clase_str, 0)
         
-        # Limpieza de datos numéricos del JSON (la Fuente de Verdad es SQL)
         stats["progresion"].pop("nivel", None)
         stats["progresion"].pop("xp", None)
         stats["progresion"].pop("rango", None)
 
-    # 4. Extracción de Estado y Ubicación
+    # 4. Extracción de Estado, Rol y Ubicación
     if "estado" in stats:
-        status_text = stats["estado"].get("rol_asignado", "Disponible")
-        columns["estado_id"] = STATUS_ID_MAP.get(status_text, 1)
+        rol_text = stats["estado"].get("rol_asignado", "Sin Asignar")
+        
+        # CORRECCIÓN: Extraer explícitamente el rol para la columna SQL
+        columns["rol"] = rol_text
+        
+        # Mapeo a ID de estado (biológico/disponibilidad)
+        # Nota: rol_asignado puede ser un estado o un rol. STATUS_ID_MAP maneja ambos.
+        columns["estado_id"] = STATUS_ID_MAP.get(rol_text, 1)
         
         # Extracción de Jerarquía de Ubicación
         loc = stats["estado"].get("ubicacion", {})
@@ -106,8 +103,6 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
             columns["location_system_id"] = loc.get("system_id")
             columns["location_planet_id"] = loc.get("planet_id")
             columns["location_sector_id"] = loc.get("sector_id")
-            
-            # Borrar objeto ubicación del JSON (vive en columnas SQL)
             stats["estado"].pop("ubicacion", None)
         
         stats["estado"].pop("rol_asignado", None)
@@ -240,6 +235,9 @@ def create_commander(
             "estado_id": cols.get("estado_id"),
             "loyalty": cols.get("loyalty", 100),
             
+            # CORRECCIÓN: Inyección del rol en la columna SQL
+            "rol": bio_data.get("rol", cols.get("rol", "Comandante")),
+            
             "location_system_id": cols.get("location_system_id"),
             "location_planet_id": cols.get("location_planet_id"),
             "location_sector_id": cols.get("location_sector_id")
@@ -254,7 +252,7 @@ def create_commander(
         return None
 
     except Exception as e:
-        print(e)
+        print(f"DEBUG Error Create Commander: {e}")
         log_event(f"Error creando comandante V2: {e}", player_id, is_error=True)
         raise Exception("Error del sistema al guardar el comandante.")
 
@@ -268,20 +266,22 @@ def update_commander_profile(
         current = get_commander_by_player_id(player_id)
         if not current: return None
             
-        from core.models import CommanderData
         cmd_obj = CommanderData(**current)
         full_stats_model = cmd_obj.sheet
         full_stats_dict = full_stats_model.model_dump()
         
         habilidades = calculate_skills(attributes)
         
-        # CORRECCIÓN: Asegurar que biografia_corta reciba un string vacío si el input es None para evitar fallos de Pydantic
+        # Sincronización de datos entrantes hacia el esquema completo
         full_stats_dict["bio"]["biografia_corta"] = bio_data.get("biografia") or ""
-        
         full_stats_dict["taxonomia"]["raza"] = bio_data.get("raza", full_stats_dict["taxonomia"]["raza"])
         full_stats_dict["progresion"]["clase"] = bio_data.get("clase", full_stats_dict["progresion"]["clase"])
         full_stats_dict["capacidades"]["atributos"] = attributes
         full_stats_dict["capacidades"]["habilidades"] = habilidades
+        
+        # Asegurar que el rol se actualiza en el estado para que _extract_and_clean lo capture
+        if "rol" in bio_data:
+            full_stats_dict["estado"]["rol_asignado"] = bio_data["rol"]
 
         cols, cleaned_stats = _extract_and_clean_data(full_stats_dict)
 
@@ -289,7 +289,8 @@ def update_commander_profile(
             "stats_json": cleaned_stats,
             "class_id": cols.get("class_id"),
             "nombre": cols.get("nombre"),
-            "apellido": cols.get("apellido")
+            "apellido": cols.get("apellido"),
+            "rol": cols.get("rol") # Sincronización de columna SQL
         }
 
         response = _get_db().table("characters")\
@@ -301,8 +302,7 @@ def update_commander_profile(
         return response.data[0] if response.data else None
 
     except Exception as e:
-        # CORRECCIÓN: Agregar print(e) para visualizar el error real de validación en consola
-        print(e)
+        print(f"DEBUG Error Update Commander: {e}")
         log_event(f"Error update comandante: {e}", player_id, is_error=True)
         raise Exception(f"Error actualizando perfil: {e}")
 
@@ -337,6 +337,9 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
             "loyalty": cols.get("loyalty", 50),
             "is_npc": False,
             "portrait_url": cols.get("portrait_url"),
+            
+            # CORRECCIÓN: Inyección del rol en la columna SQL
+            "rol": character_data.get("rol", cols.get("rol", "Sin Asignar")),
             
             "location_system_id": cols.get("location_system_id"),
             "location_planet_id": cols.get("location_planet_id"),
@@ -408,7 +411,7 @@ def update_character_stats(character_id: int, new_stats_json: Dict[str, Any], pl
     
     payload = {"stats_json": cleaned_stats}
     
-    for field in ["nombre", "apellido", "level", "xp", "rango", "class_id", "estado_id", "loyalty", "portrait_url"]:
+    for field in ["nombre", "apellido", "level", "xp", "rango", "class_id", "estado_id", "loyalty", "portrait_url", "rol"]:
         if field in cols:
             payload[field] = cols[field]
 

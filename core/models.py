@@ -288,7 +288,9 @@ class CommanderData(BaseModel):
     class_id: int = 0
     loyalty: int = 50  # 0-100
     estado_id: int = 1  # 1=Disponible
-    rol: str = "Sin Asignar" # Nueva columna SQL (Source of Truth para rol operativo)
+    
+    # CORRECCIÓN: rol ahora es opcional con default para evitar errores si SQL devuelve NULL
+    rol: Optional[str] = Field(default="Sin Asignar") 
     
     # Jerarquía de Ubicación (Fuente de Verdad SQL)
     location_system_id: Optional[int] = None
