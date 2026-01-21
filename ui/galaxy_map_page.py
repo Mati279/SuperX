@@ -3,7 +3,7 @@
 Mapa Galáctico - Usa datos directamente de la Base de Datos.
 Refactorizado MMFR V2: Indicadores de Seguridad (Ss/Sp), Mantenimiento y Tooltips.
 Corrección: Seguridad 0 para planetas con Población 0 (Deshabitados).
-Fix: Manejo robusto de valores NULL en recursos (TypeError: 'NoneType' object is not subscriptable).
+Fix: Robustez en el acceso a 'base_tier' y 'poblacion' en assets (Evita KeyError).
 """
 import json
 import math
@@ -127,7 +127,6 @@ def _render_system_view():
         asset_map = {}
 
     # 3. Calcular Métricas Consolidadas
-    
     total_pop = 0.0
     security_sum = 0.0
 
@@ -136,7 +135,7 @@ def _render_system_view():
     per_pop_sec = ECONOMY_RATES.get('security_per_1b_pop', 5.0)
 
     for p in planets:
-        # Población real del planeta (Acceso seguro)
+        # Población real del planeta
         pop = p.get('poblacion') or 0.0
         total_pop += pop
         
@@ -188,10 +187,7 @@ def _render_system_view():
             
             # --- INFO STRING BUILDER ---
             info_parts = []
-            
-            # FIX: Acceso robusto a recursos (Evita TypeError si resources es NULL en DB)
-            res_list = planet.get('resources') or []
-            info_parts.append(f"Recursos: {', '.join(res_list[:3])}")
+            info_parts.append(f"Recursos: {', '.join((planet.get('resources') or [])[:3])}")
             
             if p_pop > 0:
                 info_parts.append(f"👥 {p_pop:.1f}B")
@@ -224,13 +220,19 @@ def _render_planet_view():
     planet_id = st.session_state.selected_planet_id
 
     try:
-        planet = get_supabase().table("planets").select("*").eq("id", planet_id).single().execute().data
+        planet_res = get_supabase().table("planets").select("*").eq("id", planet_id).single().execute()
+        planet = planet_res.data if planet_res else None
+        
         # Intentar obtener asset del jugador
         asset_res = get_supabase().table("planet_assets").select("*").eq("planet_id", planet_id).eq("player_id", player.id).single().execute()
-        asset = asset_res.data if asset_res.data else None
-    except: planet, asset = None, None
+        asset = asset_res.data if asset_res else None
+    except Exception as e:
+        st.error(f"Error de conexión con la Galaxia: {e}")
+        planet, asset = None, None
 
-    if not planet: _reset_to_system_view(); return
+    if not planet: 
+        if st.button("Regresar"): _reset_to_system_view()
+        return
 
     st.header(f"Planeta: {planet['name']}")
     
@@ -243,12 +245,17 @@ def _render_planet_view():
     real_pop = planet.get('poblacion') or 0.0
 
     if asset:
-        m1.metric("Población (Ciudadanos)", f"{asset['poblacion']:,}B")
+        # FIX: Acceso robusto para evitar KeyError si la base no tiene estos campos
+        asset_pop = asset.get('poblacion', 0.0)
+        m1.metric("Población (Ciudadanos)", f"{asset_pop:,.1f}B")
         
         sp = asset.get('seguridad', 25.0)
         delta_color = "normal" if sp >= 50 else "inverse" 
         m2.metric("Seguridad (Sp)", f"{sp:.1f}/100", delta_color=delta_color)
-        m3.metric("Nivel de Base", f"Tier {asset['base_tier']}")
+        
+        # FIX: Se usa .get() para base_tier
+        tier = asset.get('base_tier', 1)
+        m3.metric("Nivel de Base", f"Tier {tier}")
     else:
         # Cálculo estimado para visualización
         if real_pop <= 0:
@@ -405,23 +412,17 @@ def _render_interactive_galaxy_map():
     if not systems: st.error("No se pudieron cargar los sistemas."); return
 
     # --- PRE-CÁLCULO DE MÉTRICAS MASIVO (Optimización) ---
-    # Evitamos N+1 queries obteniendo todo de una vez
-    
-    # 1. Obtener todos los planetas (Acceso seguro a población y system_id)
     try:
         all_planets_data = get_supabase().table("planets").select("id, system_id, poblacion").execute().data
     except:
         all_planets_data = []
 
-    # 2. Obtener assets con planet_id y seguridad (Datos políticos)
     try:
         all_assets_data = get_supabase().table("planet_assets").select("planet_id, seguridad, system_id").execute().data
-        # Lookup rápido de seguridad por ID de planeta
         asset_security_map = {row['planet_id']: row.get('seguridad', 0.0) for row in all_assets_data}
     except:
         asset_security_map = {}
 
-    # 3. Procesar métricas por sistema
     system_planet_counts = {}
     system_total_pop = {}
     system_security_sum = {}
@@ -429,20 +430,14 @@ def _render_interactive_galaxy_map():
     for p in all_planets_data:
         sid = p['system_id']
         pid = p['id']
-        # PATRÓN ROBUSTO: (valor or 0.0) para evitar errores con NULLs en DB
         pop = p.get('poblacion') or 0.0
         
-        # Denominador de planetas
         system_planet_counts[sid] = system_planet_counts.get(sid, 0) + 1
-        # Suma de población real
         system_total_pop[sid] = system_total_pop.get(sid, 0.0) + pop
         
-        # Lógica de Seguridad Híbrida
         if pid in asset_security_map:
-            # Planeta colonizado: Usar seguridad real del asset
             current_sec = asset_security_map[pid]
         else:
-            # Planeta neutral: Calcular seguridad estimada
             if pop <= 0:
                 current_sec = 0.0
             else:
@@ -451,7 +446,7 @@ def _render_interactive_galaxy_map():
                 current_sec = base + (pop * per_pop)
                 current_sec = max(0.0, min(current_sec, 100.0))
             
-        system_security_sum[sid] = system_security_sum.get(sid, 0.0) + (current_sec or 0.0)
+        system_security_sum[sid] = system_security_sum.get(sid, 0.0) + current_sec
 
 
     # --- UI DE CONTROL ---
@@ -481,8 +476,6 @@ def _render_interactive_galaxy_map():
         if st.session_state.preview_system_id is not None:
             preview_sys = next((s for s in systems if s['id'] == st.session_state.preview_system_id), None)
             if preview_sys:
-                
-                # Obtener métricas para el preview
                 pid = preview_sys['id']
                 p_count = system_planet_counts.get(pid, 0)
                 sec_sum = system_security_sum.get(pid, 0.0)
@@ -509,7 +502,6 @@ def _render_interactive_galaxy_map():
         star_class = sys.get('star_class', 'G')
         base_radius = STAR_SIZES.get(star_class, 7) * star_scale
         
-        # Calcular métricas individuales para el tooltip
         sid = sys['id']
         p_count = system_planet_counts.get(sid, 0)
         sec_sum = system_security_sum.get(sid, 0.0)
@@ -525,7 +517,6 @@ def _render_interactive_galaxy_map():
             "y": round(y, 2),
             "color": STAR_COLORS.get(star_class, "#FFFFFF"), 
             "radius": round(base_radius, 2),
-            # Datos extra para tooltip
             "ss": round(calculated_ss, 1),
             "pop": round(total_pop_real, 2)
         })
@@ -536,7 +527,6 @@ def _render_interactive_galaxy_map():
     connections_json = json.dumps(connections)
     player_home_json = json.dumps([player_home_system_id] if player_home_system_id else [])
 
-    # HTML/JS con Tooltips
     html_template = f"""
     <!DOCTYPE html><html><head><script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
     <style>
@@ -548,8 +538,6 @@ def _render_interactive_galaxy_map():
         .star.player-home{{stroke:#4dff88;stroke-width:3px;animation:pulse 2s infinite}}
         @keyframes pulse{{0%{{stroke-opacity:0.5}}50%{{stroke-opacity:1}}100%{{stroke-opacity:0.5}}}}
         .route{{stroke:#5b7bff;stroke-opacity:0.2;stroke-width:1.5;pointer-events:none}}
-        
-        /* Tooltip Styling */
         #tooltip {{
             position: absolute;
             background: rgba(10, 15, 20, 0.95);
@@ -586,10 +574,8 @@ def _render_interactive_galaxy_map():
         c.classList.add("star");
         if(homes.has(s.id))c.classList.add("player-home");
         
-        // Interaction Logic
         c.onclick=()=>{{const u=new URL(window.parent.location.href);u.searchParams.set("preview_id",s.id);window.parent.location.href=u.toString()}};
         
-        // Tooltip Events
         c.onmouseenter = () => {{
             tooltip.style.display = 'block';
             tooltip.innerHTML = `<strong>${{s.name}}</strong> (Clase ${{s.class}})<br>` +
@@ -598,7 +584,6 @@ def _render_interactive_galaxy_map():
         }};
         
         c.onmousemove = (e) => {{
-            // Coordenadas relativas al viewport
             tooltip.style.left = (e.clientX + 15) + 'px';
             tooltip.style.top = (e.clientY + 15) + 'px';
         }};
@@ -610,7 +595,6 @@ def _render_interactive_galaxy_map():
         sLayer.appendChild(c)
     }});
     
-    // PanZoom Initialization
     const panZoom = svgPanZoom("#galaxy-map",{{zoomEnabled:true,controlIconsEnabled:false,fit:true,center:true,minZoom:0.5,maxZoom:10}});
     </script></body></html>
     """
