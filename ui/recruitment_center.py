@@ -1,4 +1,4 @@
-# ui/recruitment_center.py
+# ui/recruitment_center.py (Completo)
 """
 Centro de Reclutamiento Galáctico - Contratación de nuevos operativos.
 
@@ -7,6 +7,7 @@ Sistema de Reclutamiento v3 (Asíncrono):
 - Generación diferida al Tick.
 - Persistencia unificada.
 Debug v2.3: Validación de IA en cabecera y disparador manual de emergencia para pruebas.
+Debug v2.4: Fix error en actualización de columnas SQL al reclutar.
 """
 
 import streamlit as st
@@ -15,7 +16,8 @@ from typing import Dict, Any, Optional
 from ui.state import get_player
 from data.database import get_service_container
 from data.player_repository import get_player_credits, update_player_credits
-from data.character_repository import update_character, set_character_knowledge_level
+# Importamos recruit_candidate_db para manejar la conversion de datos al DB
+from data.character_repository import update_character, set_character_knowledge_level, recruit_candidate_db
 from data.recruitment_repository import (
     get_recruitment_candidates,
     set_candidate_tracked,
@@ -328,7 +330,9 @@ def _process_recruitment_ui(player_id: int, candidate: Dict[str, Any], player_cr
             st.error("Error en transaccion financiera.")
             return
 
-        updated_char = update_character(candidate["id"], update_data)
+        # CORRECCION: Usar recruit_candidate_db para manejar el mapeo de columnas SQL vs JSON
+        # Evita error "Error actualizando datos" por pasar columnas invalidas (estado, ubicacion)
+        updated_char = recruit_candidate_db(candidate["id"], update_data)
 
         if updated_char:
             if initial_knowledge:

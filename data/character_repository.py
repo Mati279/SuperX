@@ -4,6 +4,7 @@ Repositorio de Personajes.
 Gestiona la persistencia de personajes usando el modelo V2 Híbrido (SQL + JSON).
 Implementa el patrón Extract & Clean para sincronizar columnas SQL con metadatos JSON.
 Actualizado v5.1.4: Estandarización de IDs de Roles (Fix Error 22P02).
+Actualizado v5.1.5: Fix Error Reclutamiento (recruit_candidate_db).
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -486,3 +487,43 @@ def dismiss_character(character_id: int, player_id: int) -> bool:
     except Exception as e:
         log_event(f"Error en dismiss_character: {e}", player_id, is_error=True)
         return False
+
+def recruit_candidate_db(character_id: int, update_dict: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Wrapper específico para reclutar: Convierte dict de alto nivel a columnas SQL validas.
+    Soluciona error de columnas inexistentes ('estado', 'ubicacion') en update_character al reclutar.
+    """
+    try:
+        char = get_character_by_id(character_id)
+        if not char: return None
+        
+        stats = char.get("stats_json", {})
+        
+        # 1. Aplicar cambios al JSON
+        new_rank = update_dict.get("rango", "Recluta")
+        new_status_str = update_dict.get("estado", "Disponible")
+        
+        if "progresion" not in stats: stats["progresion"] = {}
+        stats["progresion"]["rango"] = new_rank
+        
+        if "estado" not in stats: stats["estado"] = {}
+        stats["estado"]["estados_activos"] = [new_status_str]
+        stats["estado"]["rol_asignado"] = "Sin Asignar" # Reset rol logic
+        
+        # 2. Preparar Payload SQL
+        # Mapeo explicito de estado (texto -> ID)
+        status_id = STATUS_ID_MAP.get(new_status_str, 1)
+        
+        payload = {
+            "stats_json": stats,
+            "rango": new_rank,
+            "estado_id": status_id,
+            "rol": 0, # Sin Asignar
+            # location_system_id, etc. se mantienen igual (NULL o herencia)
+        }
+        
+        return update_character(character_id, payload)
+        
+    except Exception as e:
+        log_event(f"Error en recruit_candidate_db: {e}", is_error=True)
+        return None
