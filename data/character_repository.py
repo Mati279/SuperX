@@ -42,7 +42,7 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
     """
     EXTRACT & CLEAN PATTERN (Refactorizado para Robustez).
     Separa los datos que van a columnas SQL (Fuente de Verdad) de los que se quedan en JSON.
-    Garantiza que portrait_url reciba el ADN Visual de la IA.
+    Garantiza que portrait_url NO se contamine con el ADN Visual.
     """
     # 1. Copia para no destruir el objeto original en memoria
     stats = copy.deepcopy(full_stats)
@@ -53,12 +53,10 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
         columns["nombre"] = stats["bio"].get("nombre", "Unknown")
         columns["apellido"] = stats["bio"].get("apellido", "")
         
-        # Mapeo de ADN Visual (apariencia_visual) -> Columna portrait_url
-        if "apariencia_visual" in stats["bio"]:
-            columns["portrait_url"] = stats["bio"]["apariencia_visual"]
-            # NOTA: Mantenemos el campo en el JSON para la visualización detallada
+        # CORRECCIÓN: Eliminado el mapeo de apariencia_visual a portrait_url.
+        # El ADN Visual debe permanecer en el JSON para ser procesado por el image_service.
             
-        # Limpieza básica bio (mantenemos edad, sexo, bio_corta en JSON)
+        # Limpieza básica bio (mantenemos edad, sexo, bio_corta y apariencia_visual en JSON)
         stats["bio"].pop("nombre", None)
         stats["bio"].pop("apellido", None)
 
@@ -174,7 +172,8 @@ def create_commander(
                 "apellido": apellido_p,
                 "edad": bio_data.get("edad", 30),
                 "sexo": bio_data.get("sexo", BiologicalSex.UNKNOWN.value),
-                "biografia_corta": bio_data.get("biografia", f"Comandante {raza}")
+                "biografia_corta": bio_data.get("biografia", f"Comandante {raza}"),
+                "apariencia_visual": bio_data.get("apariencia_visual")
             },
             "taxonomia": {
                 "raza": raza,
@@ -221,7 +220,7 @@ def create_commander(
             "recruited_at_tick": current_tick,
             "stats_json": cleaned_stats,
             
-            # Columnas extraídas (Fuente de Verdad)
+            # Columnas Fuente de Verdad
             "nombre": cols.get("nombre"),
             "apellido": cols.get("apellido"),
             "rango": cols.get("rango"),

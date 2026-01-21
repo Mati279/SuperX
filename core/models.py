@@ -323,8 +323,9 @@ class CommanderData(BaseModel):
             # 1. REHIDRATACIÓN: Datos Bio
             full_stats["bio"]["nombre"] = self.nombre
             full_stats["bio"]["apellido"] = self.apellido
-            if self.portrait_url:
-                full_stats["bio"]["apariencia_visual"] = self.portrait_url
+            
+            # NOTA DE SEGURIDAD: Ya NO sobreescribimos apariencia_visual con portrait_url.
+            # El ADN Visual (apariencia_visual) debe preservarse tal cual viene del JSON original.
             
             # 2. REHIDRATACIÓN: Progresión (Desde Columnas SQL)
             full_stats["progresion"]["nivel"] = self.level
