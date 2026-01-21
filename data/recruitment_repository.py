@@ -19,6 +19,7 @@ def _get_db():
 
 # --- CONSTANTES ---
 CANDIDATE_LIFESPAN_TICKS = 4
+CANDIDATE_STATUS_ID = 7  # ID asignado en STATUS_ID_MAP de character_repository
 
 
 # --- FUNCIONES CRUD (ADAPTADAS A TABLA CHARACTERS) ---
@@ -29,10 +30,11 @@ def get_recruitment_candidates(player_id: int) -> List[Dict[str, Any]]:
     Adapta la estructura para que la UI la consuma fácilmente.
     """
     try:
+        # CORRECCIÓN MMFR: Filtrar por estado_id numérico en lugar de texto
         response = _get_db().table("characters")\
             .select("*")\
             .eq("player_id", player_id)\
-            .eq("estado", CharacterStatus.CANDIDATE.value)\
+            .eq("estado_id", CANDIDATE_STATUS_ID)\
             .execute()
         
         candidates = []
@@ -78,10 +80,11 @@ def remove_candidate(candidate_id: int) -> bool:
     Usado cuando expiran. Al contratar, se cambia el estado, no se borra.
     """
     try:
+        # CORRECCIÓN MMFR: Filtrar por estado_id numérico
         _get_db().table("characters")\
             .delete()\
             .eq("id", candidate_id)\
-            .eq("estado", CharacterStatus.CANDIDATE.value)\
+            .eq("estado_id", CANDIDATE_STATUS_ID)\
             .execute()
         return True
     except Exception as e:

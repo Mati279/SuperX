@@ -246,6 +246,7 @@ def _render_planet_view():
 
     if asset:
         # FIX: Acceso robusto para evitar KeyError si la base no tiene estos campos
+        # Se prefiere .get() ya que asset viene directamente del execute().data de Supabase
         asset_pop = asset.get('poblacion', 0.0)
         m1.metric("Población (Ciudadanos)", f"{asset_pop:,.1f}B")
         
@@ -253,9 +254,13 @@ def _render_planet_view():
         delta_color = "normal" if sp >= 50 else "inverse" 
         m2.metric("Seguridad (Sp)", f"{sp:.1f}/100", delta_color=delta_color)
         
-        # FIX: Se usa .get() para base_tier
+        # FIX MMFR: Se usa .get() para base_tier con valor por defecto 1 para evitar KeyError reportado
         tier = asset.get('base_tier', 1)
         m3.metric("Nivel de Base", f"Tier {tier}")
+        
+        # Debug complementario (visible solo si hay inconsistencias críticas)
+        if 'base_tier' not in asset:
+             st.caption("⚠️ Nota: 'base_tier' no detectado en el asset SQL. Usando valor por defecto.")
     else:
         # Cálculo estimado para visualización
         if real_pop <= 0:

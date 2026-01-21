@@ -411,7 +411,7 @@ class CommanderData(BaseModel):
 class PlanetAsset(BaseModel):
     """
     Activo planetario (colonia del jugador).
-    Actualizado: Seguridad 0-100, sin Felicidad.
+    Actualizado post-refactorización MMFR.
     """
     model_config = ConfigDict(extra='allow')
 
@@ -420,15 +420,22 @@ class PlanetAsset(BaseModel):
     system_id: int
     player_id: int
     nombre_asentamiento: str = "Colonia"
-    poblacion: int = 0
+    poblacion: float = 0.0  # Población en Billones
     pops_activos: int = 0
     pops_desempleados: int = 0
+    
+    # Nivel de Base (Fuente de Verdad SQL)
+    base_tier: int = Field(default=1, ge=1)
     
     # Seguridad ahora es 0-100 (float)
     seguridad: float = Field(default=25.0, ge=0.0, le=100.0)
     infraestructura_defensiva: int = 0
-    
-    # Felicidad eliminada en refactorización MMFR
+
+    # Infraestructura de Módulos (Sincronización UI)
+    module_sensor_ground: int = 0
+    module_sensor_orbital: int = 0
+    module_defense_aa: int = 0
+    module_defense_ground: int = 0
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'PlanetAsset':

@@ -32,6 +32,7 @@ STATUS_ID_MAP = {
     "Fallecido": 4,
     "Entrenando": 5,
     "En Tránsito": 6,
+    "Candidato": 7,  # Agregado para MMFR
     "Retirado": 99,
     "Sin Asignar": 1
 }
@@ -420,172 +421,45 @@ def update_character_stats(character_id: int, new_stats_json: Dict[str, Any], pl
     
     payload = {"stats_json": cleaned_stats}
     
-    # Actualizar columnas relevantes si cambiaron en el objeto de entrada
+    # Actualizar columnas relevantes si cambiaron en el objeto de UI
+    if "nombre" in cols: payload["nombre"] = cols["nombre"]
+    if "apellido" in cols: payload["apellido"] = cols["apellido"]
     if "level" in cols: payload["level"] = cols["level"]
     if "xp" in cols: payload["xp"] = cols["xp"]
+    if "rango" in cols: payload["rango"] = cols["rango"]
+    if "class_id" in cols: payload["class_id"] = cols["class_id"]
     if "estado_id" in cols: payload["estado_id"] = cols["estado_id"]
     if "loyalty" in cols: payload["loyalty"] = cols["loyalty"]
-    if "class_id" in cols: payload["class_id"] = cols["class_id"]
-    if "rango" in cols: payload["rango"] = cols["rango"]
-    
-    # Ubicación también
-    if "location_system_id" in cols: payload["location_system_id"] = cols["location_system_id"]
-    if "location_planet_id" in cols: payload["location_planet_id"] = cols["location_planet_id"]
-    if "location_sector_id" in cols: payload["location_sector_id"] = cols["location_sector_id"]
-    
+    if "portrait_url" in cols: payload["portrait_url"] = cols["portrait_url"]
+
     return update_character(character_id, payload)
 
-def update_character_level(character_id: int, new_level: int, new_stats_json: Dict[str, Any], player_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    """Actualiza nivel directamente en SQL y sincroniza JSON."""
-    rango = new_stats_json.get("progresion", {}).get("rango", "Recluta")
-    cols, cleaned_stats = _extract_and_clean_data(new_stats_json)
-    
-    # Forzamos el nivel pasado explícitamente si difiere
-    cols["level"] = new_level
-    
-    return update_character(character_id, {
-        "stats_json": cleaned_stats,
-        "rango": rango,
-        "level": new_level
-    })
 
-def recruit_character(player_id: int, character_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    return create_character(player_id, character_data)
+# --- SISTEMA DE CONOCIMIENTO (TABLA character_knowledge) ---
 
-def recruit_random_character_with_ai(
-    player_id: int,
-    location_planet_id: Optional[int] = None,
-    predominant_race: Optional[str] = None,
-    min_level: int = 1,
-    max_level: int = 1
-) -> Optional[Dict[str, Any]]:
-    from services.character_generation_service import recruit_character_with_ai
-    return recruit_character_with_ai(
-        player_id=player_id,
-        location_planet_id=location_planet_id,
-        predominant_race=predominant_race,
-        min_level=min_level,
-        max_level=max_level
-    )
-
-def get_recruitment_candidates(
-    player_id: int,
-    pool_size: int = 3,
-    location_planet_id: Optional[int] = None,
-    predominant_race: Optional[str] = None,
-    min_level: int = 1,
-    max_level: int = 1
-) -> list[Dict[str, Any]]:
-    from services.character_generation_service import generate_character_pool
-    return generate_character_pool(
-        player_id=player_id,
-        pool_size=pool_size,
-        location_planet_id=location_planet_id,
-        predominant_race=predominant_race,
-        min_level=min_level,
-        max_level=max_level
-    )
-
-# --- GESTIÓN DE CONOCIMIENTO ---
-
-def set_character_knowledge_level(
-    character_id: int,
-    observer_player_id: int,
-    knowledge_level: KnowledgeLevel
-) -> bool:
-    try:
-        data = {
-            "character_id": character_id,
-            "observer_player_id": observer_player_id,
-            "knowledge_level": knowledge_level.value,
-            "updated_at": "now()"
-        }
-        response = _get_db().table("character_knowledge").upsert(data, on_conflict="character_id, observer_player_id").execute()
-        return bool(response.data)
-    except Exception as e:
-        log_event(f"Error setting knowledge level (SQL): {e}", observer_player_id, is_error=True)
-        return False
-
-def get_character_knowledge_level(
-    character_id: int,
-    observer_player_id: int
-) -> KnowledgeLevel:
+def get_character_knowledge_level(character_id: int, player_id: int) -> KnowledgeLevel:
     try:
         response = _get_db().table("character_knowledge")\
             .select("knowledge_level")\
             .eq("character_id", character_id)\
-            .eq("observer_player_id", observer_player_id)\
-            .maybe_single()\
-            .execute()
-            
+            .eq("player_id", player_id)\
+            .single().execute()
+        
         if response.data:
             return KnowledgeLevel(response.data["knowledge_level"])
-            
-        char = get_character_by_id(character_id)
-        if char and char.get("es_comandante") and char.get("player_id") == observer_player_id:
-            return KnowledgeLevel.FRIEND
-
         return KnowledgeLevel.UNKNOWN
     except Exception:
         return KnowledgeLevel.UNKNOWN
 
-def get_known_characters_by_player(player_id: int) -> List[Dict[str, Any]]:
+def set_character_knowledge_level(character_id: int, player_id: int, level: KnowledgeLevel) -> bool:
     try:
-        response = _get_db().table("character_knowledge")\
-            .select("knowledge_level, characters!inner(*)")\
-            .eq("observer_player_id", player_id)\
-            .execute()
-        return response.data if response.data else []
+        # Upsert
+        _get_db().table("character_knowledge").upsert({
+            "character_id": character_id,
+            "player_id": player_id,
+            "knowledge_level": level.value
+        }, on_conflict="character_id, player_id").execute()
+        return True
     except Exception as e:
-        log_event(f"Error fetching known characters: {e}", player_id, is_error=True)
-        return []
-
-def dismiss_character(character_id: int, current_player_id: int) -> bool:
-    try:
-        char = get_character_by_id(character_id)
-        if not char: return False
-        
-        if char.get("player_id") != current_player_id:
-            log_event(f"Intento de despido no autorizado", current_player_id, is_error=True)
-            return False
-
-        knowledge_level = get_character_knowledge_level(character_id, current_player_id)
-        stats = char.get("stats_json", {})
-        
-        # Limpieza previa para asegurar que el objeto a guardar esté saneado
-        cols, cleaned_stats = _extract_and_clean_data(stats)
-        
-        update_payload = {}
-        action_msg = ""
-
-        if knowledge_level == KnowledgeLevel.FRIEND:
-            # RETIRADO
-            # Nota: retired se guarda en JSON legacy o podríamos usar un estado_id nuevo
-            cleaned_stats["estado"] = cleaned_stats.get("estado", {})
-            cleaned_stats["estado"]["retired"] = True
-            
-            update_payload = {
-                "player_id": None,
-                "stats_json": cleaned_stats,
-                "estado_id": 99, # Retirado ID
-            }
-            action_msg = "jubilado/retirado"
-        else:
-            # DEVUELTO AL POOL
-            update_payload = {
-                "player_id": None,
-                "stats_json": cleaned_stats,
-                "estado_id": 1, # Disponible ID
-            }
-            action_msg = "devuelto al pool"
-
-        response = _get_db().table("characters").update(update_payload).eq("id", character_id).execute()
-        
-        if response.data:
-            log_event(f"Personaje {char.get('nombre')} ha sido {action_msg}.", current_player_id)
-            return True
-        return False
-
-    except Exception as e:
-        log_event(f"Error al despedir personaje: {e}", current_player_id, is_error=True)
+        log_event(f"Error actualizando conocimiento: {e}", player_id, is_error=True)
         return False
