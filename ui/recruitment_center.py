@@ -11,6 +11,7 @@ Debug v2.4: Fix error en actualización de columnas SQL al reclutar.
 Debug v2.5: Herramientas de investigación determinista implementadas.
 Actualizado v5.1.8: Fuente de Verdad Unificada (SQL Knowledge System).
 Actualizado v5.1.9: Visualización estrictamente basada en KnowledgeLevel.
+Fix v5.2.0: Corrección de falso positivo en "already_investigated" por comparación de strings en Enum.
 """
 
 import streamlit as st
@@ -136,7 +137,11 @@ def _render_candidate_card(
     # FIX: Fuente de verdad SQL ÚNICA
     # Ya no miramos flags en JSON, solo la tabla character_knowledge
     current_knowledge_level = get_character_knowledge_level(candidate['id'], player_id)
-    already_investigated = current_knowledge_level >= KnowledgeLevel.KNOWN
+    
+    # FIX BUG V5.2.0: Comparación explícita.
+    # El operador >= con strings ("desconocido" > "conocido") causaba falsos positivos.
+    # Ahora verificamos explícitamente si está en los niveles que permiten ver info completa.
+    already_investigated = current_knowledge_level in [KnowledgeLevel.KNOWN, KnowledgeLevel.FRIEND]
     
     # Datos de lógica interna (para descuentos/estado tracking)
     investigation_outcome = candidate.get("investigation_outcome")
