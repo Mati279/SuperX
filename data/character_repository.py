@@ -7,6 +7,7 @@ Actualizado v5.1.4: Estandarización de IDs de Roles (Fix Error 22P02).
 Actualizado v5.1.5: Fix Error Reclutamiento (recruit_candidate_db).
 Actualizado v5.1.6: Garantía de KnowledgeLevel en creación.
 Actualizado v5.1.7: Corrección de mapeo SQL en sistema de conocimiento (observer_player_id).
+Actualizado v5.1.8: Sincronización bidireccional SQL-JSON para nivel_acceso.
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -445,12 +446,32 @@ def get_character_knowledge_level(character_id: int, player_id: int) -> Knowledg
         return KnowledgeLevel.UNKNOWN
 
 def set_character_knowledge_level(character_id: int, player_id: int, level: KnowledgeLevel) -> bool:
+    """
+    Establece el nivel de conocimiento y sincroniza con el JSON del personaje.
+    """
     try:
+        # 1. Persistencia Relacional (Fuente de Verdad de la Relación)
         _get_db().table("character_knowledge").upsert({
             "character_id": character_id,
             "observer_player_id": player_id,
             "knowledge_level": level.value
         }, on_conflict="character_id, observer_player_id").execute()
+        
+        # 2. Sincronización con JSON (Para UI/Legacy)
+        # Mapeo de valores segun reglas del sistema
+        access_map = {
+            KnowledgeLevel.UNKNOWN: "desconocido",
+            KnowledgeLevel.KNOWN: "conocido",
+            KnowledgeLevel.FRIEND: "profundo"
+        }
+        
+        current_char = get_character_by_id(character_id)
+        if current_char and "stats_json" in current_char:
+            stats = current_char["stats_json"]
+            if "bio" in stats:
+                stats["bio"]["nivel_acceso"] = access_map.get(level, "desconocido")
+                update_character_stats(character_id, stats)
+        
         return True
     except Exception as e:
         log_event(f"Error actualizando conocimiento: {e}", player_id, is_error=True)

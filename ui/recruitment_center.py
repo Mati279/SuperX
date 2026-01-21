@@ -9,6 +9,7 @@ Sistema de Reclutamiento v3 (Asíncrono):
 Debug v2.3: Validación de IA en cabecera y disparador manual de emergencia para pruebas.
 Debug v2.4: Fix error en actualización de columnas SQL al reclutar.
 Debug v2.5: Herramientas de investigación determinista implementadas.
+Actualizado v5.1.8: Persistencia de estado KNOWN si fue investigado antes de contratar.
 """
 
 import streamlit as st
@@ -35,6 +36,7 @@ from data.world_repository import (
 from data.log_repository import log_event
 from config.app_constants import DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS, DEFAULT_RECRUIT_LOCATION
 from core.character_engine import BIO_ACCESS_UNKNOWN, BIO_ACCESS_KNOWN
+from core.models import KnowledgeLevel
 # Importamos la nueva función de análisis
 from core.recruitment_logic import process_recruitment, analyze_candidates_value
 
@@ -357,8 +359,19 @@ def _process_recruitment_ui(player_id: int, candidate: Dict[str, Any], player_cr
         updated_char = recruit_candidate_db(candidate["id"], update_data)
 
         if updated_char:
+            # Determinamos el nivel de conocimiento inicial
+            # 1. Si viene explicito (ej: tripulacion inicial), lo usamos.
+            # 2. Si el candidato ya fue investigado (outcome SUCCESS), es KNOWN.
+            # 3. Si no, es UNKNOWN por defecto.
+            
+            final_knowledge = KnowledgeLevel.UNKNOWN
+            
             if initial_knowledge:
-                set_character_knowledge_level(candidate["id"], player_id, initial_knowledge)
+                final_knowledge = initial_knowledge
+            elif candidate.get("investigation_outcome") in ["SUCCESS", "CRIT_SUCCESS"]:
+                final_knowledge = KnowledgeLevel.KNOWN
+            
+            set_character_knowledge_level(candidate["id"], player_id, final_knowledge)
 
             st.success(f"¡{candidate['nombre']} se ha unido a tu faccion!")
             log_event(f"RECLUTAMIENTO: {candidate['nombre']} contratado (ID: {candidate['id']}).", player_id)
