@@ -4,7 +4,7 @@ Modelos de Dominio Tipados.
 Define las estructuras de datos centrales del juego usando Pydantic
 para garantizar validación y serialización consistente.
 Refactorizado para cumplir con el esquema V2 Híbrido (SQL + JSON).
-Actualizado v5.1.3: Robustez total en tipos de Roles y corrección de tipos SQL.
+Actualizado v5.1.4: Estandarización de IDs de Roles (Fix Error 22P02).
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -289,14 +289,31 @@ class CommanderData(BaseModel):
     loyalty: int = 50  # 0-100
     estado_id: int = 1  # 1=Disponible
     
-    # CORRECCIÓN: rol ahora es opcional con default. 
-    # El validador asegura que si la DB devuelve un número por error, no rompa la app.
-    rol: Optional[str] = Field(default="Sin Asignar") 
+    # Estandarización V5.1.4: rol es un ID entero en la DB.
+    rol: Optional[Union[str, int]] = Field(default=0) 
 
     @field_validator('rol', mode='before')
     @classmethod
-    def coerce_rol_to_str(cls, v: Any) -> str:
-        if v is None: return "Sin Asignar"
+    def hydrate_role_id(cls, v: Any) -> str:
+        """
+        HIDRATACIÓN DE ROL: Convierte IDs enteros de la DB a strings del Enum CharacterRole.
+        Mapeo Inverso al definido en el repositorio.
+        """
+        role_reverse_map = {
+            0: "Sin Asignar",
+            1: "Comandante",
+            2: "Piloto",
+            3: "Artillero",
+            4: "Ingeniero",
+            5: "Médico",
+            6: "Científico",
+            7: "Diplomático",
+            8: "Infante"
+        }
+        if isinstance(v, int):
+            return role_reverse_map.get(v, "Sin Asignar")
+        if v is None: 
+            return "Sin Asignar"
         return str(v)
     
     # Jerarquía de Ubicación (Fuente de Verdad SQL)
@@ -331,21 +348,17 @@ class CommanderData(BaseModel):
                 if section not in full_stats:
                     full_stats[section] = {}
             
-            # Fallback para taxonomía si está vacía
             if not full_stats["taxonomia"].get("raza"):
                 full_stats["taxonomia"]["raza"] = "Humano"
             
-            # 1. REHIDRATACIÓN: Datos Bio (Manteniendo Bio de 3 Capas)
             full_stats["bio"]["nombre"] = self.nombre
             full_stats["bio"]["apellido"] = self.apellido
             
-            # REVISIÓN CharacterBio: Asegurar edad y sexo para evitar errores de validación
             if "edad" not in full_stats["bio"]:
                 full_stats["bio"]["edad"] = 30
             if "sexo" not in full_stats["bio"]:
                 full_stats["bio"]["sexo"] = "Desconocido"
             
-            # 2. REHIDRATACIÓN: Progresión (Desde Columnas SQL)
             full_stats["progresion"]["nivel"] = self.level
             full_stats["progresion"]["xp"] = self.xp
             full_stats["progresion"]["rango"] = self.rango
@@ -353,36 +366,26 @@ class CommanderData(BaseModel):
             if "clase" not in full_stats["progresion"]:
                 full_stats["progresion"]["clase"] = "Desconocida"
 
-            # 3. REHIDRATACIÓN: Comportamiento (Lealtad SQL)
             full_stats["comportamiento"]["lealtad"] = self.loyalty
 
-            # 4. REHIDRATACIÓN: Estado y Ubicación (Desde Columnas SQL)
-            # CORRECCIÓN: Separar el estado biológico (Disponible/Herido) del rol operativo.
             status_map = {1: "Disponible", 2: "En Misión", 3: "Herido", 4: "Fallecido", 5: "Entrenando", 6: "En Tránsito", 7: "Candidato", 99: "Retirado"}
             status_text = status_map.get(self.estado_id, "Disponible")
             
-            # El texto de estado (ej: "Disponible") va ÚNICAMENTE a estados_activos (List[str])
             full_stats["estado"]["estados_activos"] = [status_text]
             
-            # CORRECCIÓN CRÍTICA: El rol operativo se toma de la columna SQL 'rol' (para cumplir con CharacterRole Enum)
-            # Si el valor de la columna no coincide con el Enum, caerá en NONE ("Sin Asignar")
-            try:
-                full_stats["estado"]["rol_asignado"] = CharacterRole(self.rol) if self.rol else CharacterRole.NONE
-            except ValueError:
-                full_stats["estado"]["rol_asignado"] = CharacterRole.NONE
+            # Sincronización de rol operativo (ya hidratado por el validator)
+            full_stats["estado"]["rol_asignado"] = self.rol if self.rol else "Sin Asignar"
             
-            # Inyectar objeto de ubicación completo usando los IDs reales
             full_stats["estado"]["ubicacion"] = {
                 "system_id": self.location_system_id,
                 "planet_id": self.location_planet_id,
                 "sector_id": self.location_sector_id,
-                "ubicacion_local": self.ubicacion # Fallback texto legacy
+                "ubicacion_local": self.ubicacion 
             }
 
             return CharacterSchema(**full_stats)
 
         except Exception as e:
-            # Fallback robusto para datos corruptos con log de error
             print(f"DEBUG - Error en Hidratación: {str(e)}")
             return CharacterSchema(
                 bio=CharacterBio(nombre=self.nombre, apellido=self.apellido, edad=30, biografia_corta=f"Error Schema: {str(e)}"),
@@ -397,10 +400,10 @@ class CommanderData(BaseModel):
     @property
     def attributes(self) -> CharacterAttributes:
         """Acceso directo a atributos."""
-        if "capacidades" in stats_json and "atributos" in stats_json["capacidades"]:
-             return CharacterAttributes(**stats_json["capacidades"]["atributos"])
-        if "atributos" in stats_json:
-            return CharacterAttributes(**stats_json["atributos"])
+        if "capacidades" in self.stats_json and "atributos" in self.stats_json["capacidades"]:
+             return CharacterAttributes(**self.stats_json["capacidades"]["atributos"])
+        if "atributos" in self.stats_json:
+            return CharacterAttributes(**self.stats_json["atributos"])
         return CharacterAttributes()
 
     @property
@@ -409,8 +412,8 @@ class CommanderData(BaseModel):
 
     @property
     def clase(self) -> str:
-        if "progresion" in stats_json:
-            return stats_json["progresion"].get("clase", "Novato")
+        if "progresion" in self.stats_json:
+            return self.stats_json["progresion"].get("clase", "Novato")
         return "Novato"
 
     def get_merit_points(self) -> int:

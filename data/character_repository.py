@@ -3,7 +3,7 @@
 Repositorio de Personajes.
 Gestiona la persistencia de personajes usando el modelo V2 Híbrido (SQL + JSON).
 Implementa el patrón Extract & Clean para sincronizar columnas SQL con metadatos JSON.
-Actualizado v5.1.3: Fix sincronización columna SQL 'rol' y robustez de payloads.
+Actualizado v5.1.4: Estandarización de IDs de Roles (Fix Error 22P02).
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -32,6 +32,19 @@ CLASS_ID_MAP = {
     "Desconocida": 0
 }
 
+# MAPEO DE ROLES A IDS (Fix v5.1.4)
+ROLE_ID_MAP = {
+    "Sin Asignar": 0,
+    "Comandante": 1,
+    "Piloto": 2,
+    "Artillero": 3,
+    "Ingeniero": 4,
+    "Médico": 5,
+    "Científico": 6,
+    "Diplomático": 7,
+    "Infante": 8
+}
+
 STATUS_ID_MAP = {
     "Disponible": 1,
     "En Misión": 2,
@@ -39,7 +52,7 @@ STATUS_ID_MAP = {
     "Fallecido": 4,
     "Entrenando": 5,
     "En Tránsito": 6,
-    "Candidato": 7,  # Agregado para MMFR
+    "Candidato": 7,
     "Retirado": 99,
     "Sin Asignar": 1
 }
@@ -47,11 +60,10 @@ STATUS_ID_MAP = {
 # --- HELPER: EXTRACT & CLEAN ---
 def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    EXTRACT & CLEAN PATTERN (Refactorizado v5.1.3).
+    EXTRACT & CLEAN PATTERN (Refactorizado v5.1.4).
     Separa los datos que van a columnas SQL (Fuente de Verdad) de los que se quedan en JSON.
-    Garantiza la unificación de biografías y protege el ADN Visual.
+    Convierte nombres de roles a IDs numéricos para compatibilidad SQL.
     """
-    # 1. Copia para no destruir el objeto original en memoria
     stats = copy.deepcopy(full_stats)
     columns = {}
 
@@ -60,7 +72,6 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
         columns["nombre"] = stats["bio"].get("nombre", "Unknown")
         columns["apellido"] = stats["bio"].get("apellido", "")
         
-        # MIGRACIÓN v5.1.0: bio_superficial -> biografia_corta
         if "bio_superficial" in stats["bio"]:
             if not stats["bio"].get("biografia_corta"):
                 stats["bio"]["biografia_corta"] = stats["bio"]["bio_superficial"]
@@ -73,7 +84,7 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
         stats["bio"].pop("nombre", None)
         stats["bio"].pop("apellido", None)
 
-    # 3. Extracción de Progresión (Fuente de Verdad SQL)
+    # 3. Extracción de Progresión
     if "progresion" in stats:
         columns["level"] = stats["progresion"].get("nivel", 1)
         columns["xp"] = stats["progresion"].get("xp", 0)
@@ -86,16 +97,15 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
         stats["progresion"].pop("xp", None)
         stats["progresion"].pop("rango", None)
 
-    # 4. Extracción de Estado, Rol y Ubicación
+    # 4. Extracción de Estado, Rol (ID) y Ubicación
     if "estado" in stats:
-        # CORRECCIÓN: Asegurar que el rol sea siempre un string para la columna SQL TEXT
         rol_text = stats["estado"].get("rol_asignado", "Sin Asignar")
-        columns["rol"] = str(rol_text)
         
-        # Mapeo a ID de estado (biológico/disponibilidad)
+        # Sincronización de Rol como INTEGER ID (Fix 22P02)
+        columns["rol"] = ROLE_ID_MAP.get(rol_text, 0)
+        
         columns["estado_id"] = STATUS_ID_MAP.get(rol_text, 1)
         
-        # Extracción de Jerarquía de Ubicación
         loc = stats["estado"].get("ubicacion", {})
         if isinstance(loc, dict):
             columns["location_system_id"] = loc.get("system_id")
@@ -105,7 +115,7 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
         
         stats["estado"].pop("rol_asignado", None)
         
-    # 5. Extracción de Comportamiento (Lealtad)
+    # 5. Extracción de Comportamiento
     if "comportamiento" in stats:
         if "lealtad" in stats["comportamiento"]:
             columns["loyalty"] = stats["comportamiento"]["lealtad"]
@@ -116,7 +126,7 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
 
 # Helper para migración/compatibilidad
 def _ensure_v2_structure(stats_json: Dict, name: str = "") -> Dict:
-    """Asegura que el JSON tenga la estructura V2, migrando si es necesario."""
+    """Asegura que el JSON tenga la estructura V2."""
     if "bio" in stats_json:
         return stats_json 
     
@@ -233,8 +243,8 @@ def create_commander(
             "estado_id": cols.get("estado_id"),
             "loyalty": cols.get("loyalty", 100),
             
-            # Sincronización del rol en la columna SQL (Requiere columna TEXT)
-            "rol": str(bio_data.get("rol", cols.get("rol", "Comandante"))),
+            # Persistencia de ROL como ID INTEGER (Fuente: ROLE_ID_MAP)
+            "rol": cols.get("rol", 1), 
             
             "location_system_id": cols.get("location_system_id"),
             "location_planet_id": cols.get("location_planet_id"),
@@ -259,7 +269,7 @@ def update_commander_profile(
     bio_data: Dict[str, Any],
     attributes: Dict[str, int]
 ) -> Optional[Dict[str, Any]]:
-    """Actualiza perfil respetando Híbrido V2."""
+    """Actualiza perfil respetando Híbrido V2 e IDs de roles."""
     try:
         current = get_commander_by_player_id(player_id)
         if not current: return None
@@ -270,7 +280,6 @@ def update_commander_profile(
         
         habilidades = calculate_skills(attributes)
         
-        # Sincronización de datos entrantes hacia el esquema completo
         full_stats_dict["bio"]["biografia_corta"] = bio_data.get("biografia") or ""
         full_stats_dict["taxonomia"]["raza"] = bio_data.get("raza", full_stats_dict["taxonomia"]["raza"])
         full_stats_dict["progresion"]["clase"] = bio_data.get("clase", full_stats_dict["progresion"]["clase"])
@@ -287,7 +296,7 @@ def update_commander_profile(
             "class_id": cols.get("class_id"),
             "nombre": cols.get("nombre"),
             "apellido": cols.get("apellido"),
-            "rol": str(cols.get("rol", "Comandante")) # Sincronización de columna SQL
+            "rol": cols.get("rol") # ID numérico procesado por ROLE_ID_MAP
         }
 
         response = _get_db().table("characters")\
@@ -304,7 +313,7 @@ def update_commander_profile(
         raise Exception(f"Error actualizando perfil: {e}")
 
 def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Persiste un personaje generado."""
+    """Persiste un personaje generado con ID de rol numérico."""
     from data.game_config_repository import get_current_tick
 
     try:
@@ -335,7 +344,8 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
             "is_npc": False,
             "portrait_url": cols.get("portrait_url"),
             
-            "rol": str(character_data.get("rol", cols.get("rol", "Sin Asignar"))),
+            # Sincronización de Rol como INTEGER ID
+            "rol": cols.get("rol", 0),
             
             "location_system_id": cols.get("location_system_id"),
             "location_planet_id": cols.get("location_planet_id"),
@@ -414,7 +424,7 @@ def update_character_stats(character_id: int, new_stats_json: Dict[str, Any], pl
     return update_character(character_id, payload)
 
 
-# --- SISTEMA DE CONOCIMIENTO (TABLA character_knowledge) ---
+# --- SISTEMA DE CONOCIMIENTO ---
 
 def get_character_knowledge_level(character_id: int, player_id: int) -> KnowledgeLevel:
     try:
@@ -442,7 +452,7 @@ def set_character_knowledge_level(character_id: int, player_id: int, level: Know
         log_event(f"Error actualizando conocimiento: {e}", player_id, is_error=True)
         return False
 
-# --- WRAPPERS DE RECLUTAMIENTO Y GESTIÓN ---
+# --- WRAPPERS DE RECLUTAMIENTO ---
 
 def recruit_random_character_with_ai(player_id: int, **kwargs) -> Optional[Dict[str, Any]]:
     from services.character_generation_service import recruit_character_with_ai
