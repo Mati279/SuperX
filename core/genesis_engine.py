@@ -54,11 +54,15 @@ def genesis_protocol(player_id: int) -> bool:
         if not response_planets.data:
             log_event(f"⚠ Sistema {system_id} vacío. Buscando respaldo...", player_id, is_error=True)
             # Fallback: buscar cualquier planeta
-            fallback = db.table("planets").select("id, name, system_id").limit(1).single().execute()
+            # FIX: Usamos limit(1) en lugar de single() para evitar excepciones si la tabla está vacía
+            fallback = db.table("planets").select("id, name, system_id").limit(1).execute()
+            
             if not fallback.data: 
                 print("❌ CRITICAL: No existen planetas en la base de datos.")
                 return False
-            target_planet = fallback.data
+                
+            # Al usar limit(1), data es una lista [planet], tomamos el primero
+            target_planet = fallback.data[0]
             system_id = target_planet['system_id'] 
         else:
             target_planet = random.choice(response_planets.data)

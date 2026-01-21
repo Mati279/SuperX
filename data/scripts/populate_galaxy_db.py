@@ -68,29 +68,30 @@ def populate_database():
     apply_demographic_distribution()
     
     # 3. Crear Jugadores de Prueba (Bots)
-    print("🤖 Creando facciones de prueba...")
-    test_factions = [
-        ("Imperio Solari", "Solari"),
-        ("Republica Nova", "Nova"),
-        ("Sindicato Q", "Q-Syn"),
-        ("Alianza Estelar", "Starlance")
-    ]
-    
-    for faction_name, user_prefix in test_factions:
-        username = f"{user_prefix}_Cmd"
-        pin = "1234"
-        
-        try:
-            # Crear cuenta (register_player_account ya ejecuta génesis completo)
-            # Genesis Engine sobreescribirá la población del asset del jugador con el valor "Fair Start" (1.5B+)
-            player = register_player_account(username, pin, faction_name, None)
-            if player:
-                print(f"   ✅ Facción creada: {faction_name} (ID: {player['id']})")
-                print(f"      📍 Base establecida correctamente.")
-        except Exception as e:
-            print(f"   ⚠️ Error creando {faction_name}: {e}")
+    # ⚠️ DESACTIVADO POR SOLICITUD DEL USUARIO
+    # print("🤖 Creando facciones de prueba...")
+    # test_factions = [
+    #     ("Imperio Solari", "Solari"),
+    #     ("Republica Nova", "Nova"),
+    #     ("Sindicato Q", "Q-Syn"),
+    #     ("Alianza Estelar", "Starlance")
+    # ]
+    # 
+    # for faction_name, user_prefix in test_factions:
+    #     username = f"{user_prefix}_Cmd"
+    #     pin = "1234"
+    #     
+    #     try:
+    #         # Crear cuenta (register_player_account ya ejecuta génesis completo)
+    #         # Genesis Engine sobreescribirá la población del asset del jugador con el valor "Fair Start" (1.5B+)
+    #         player = register_player_account(username, pin, faction_name, None)
+    #         if player:
+    #             print(f"   ✅ Facción creada: {faction_name} (ID: {player['id']})")
+    #             print(f"      📍 Base establecida correctamente.")
+    #     except Exception as e:
+    #         print(f"   ⚠️ Error creando {faction_name}: {e}")
             
-    print("✅ Población completada.")
+    print("✅ Población completada (Facciones de prueba omitidas).")
 
 if __name__ == "__main__":
     populate_database()
