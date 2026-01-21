@@ -65,6 +65,7 @@ def generate_and_upload_tactical_image(
     2. ¿Tiene ADN Visual? NO -> Genéralo y GUÁRDALO en DB.
     3. Genera Imagen combinando (ADN Visual + Situación).
     4. Sube con nombre semántico.
+    5. Actualiza portrait_url en la tabla characters.
     """
     try:
         # 1. Obtener datos del personaje
@@ -108,7 +109,7 @@ def generate_and_upload_tactical_image(
 
         # 4. Generación de Imagen
         response = client.models.generate_images(
-            model='imagen-4.0-fast-generate-001', # Ajustar a 'imagen-4.0-fast-generate-001' si tienes acceso
+            model='imagen-4.0-fast-generate-001', 
             prompt=final_prompt,
             config=types.GenerateImagesConfig(
                 number_of_images=1,
@@ -123,7 +124,6 @@ def generate_and_upload_tactical_image(
         image_bytes = response.generated_images[0].image.image_bytes
         
         # 5. Nombre Semántico del Archivo
-        # Limpieza de nombre: Espacios -> _, Solo alfanumérico
         safe_name = re.sub(r'[^a-zA-Z0-9]', '', character.nombre.replace(' ', '_'))
         safe_action = re.sub(r'[^a-zA-Z0-9]', '', prompt_situation[:15].replace(' ', '_'))
         timestamp = int(time.time())
@@ -140,6 +140,12 @@ def generate_and_upload_tactical_image(
         )
 
         public_url = supabase.storage.from_(bucket_name).get_public_url(file_name)
+        
+        # 7. Persistencia de la URL en la columna portrait_url (MMFR compatible)
+        if public_url:
+            update_character(character.id, {"portrait_url": public_url})
+            log_event(f"🖼️ Retrato actualizado para {character.nombre}.", player_id)
+
         return public_url
 
     except Exception as e:

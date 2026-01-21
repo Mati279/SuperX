@@ -3,7 +3,7 @@
 Servicio de Generación de Personajes con IA.
 Actualizado para Especialización de Personajes de Alto Nivel y Biografías Coherentes.
 Implementa distribución ponderada de atributos y habilidades según la clase.
-Debug v2.2: Restaurada lógica de colisión de nombres y logging robusto.
+Debug v2.3: Implementada limpieza de JSON robusta y escape de comillas en prompt.
 """
 
 import random
@@ -21,6 +21,7 @@ from data.log_repository import log_event
 from data.character_repository import create_character
 from data.planet_repository import get_planet_by_id
 from data.world_repository import get_world_state
+from utils.helpers import clean_json_string
 
 from core.constants import RACES, CLASSES, SKILL_MAPPING
 from core.rules import calculate_skills
@@ -82,7 +83,8 @@ DENSIDAD OBJETIVO: ~80-100 palabras. Estilo "Prompt de Stable Diffusion/Midjourn
 
 REGLAS TÉCNICAS:
 - Responde SOLO con JSON válido.
-- NO uses comillas dobles (") dentro de los textos.
+- IMPORTANTE: Asegúrate de que todas las comillas dobles dentro de los textos estén escapadas con barra invertida (\\") o usa comillas simples en su lugar para evitar errores de parsing.
+- NO uses comillas dobles (") fuera de la estructura de claves/valores del JSON.
 """
 
 
@@ -255,6 +257,7 @@ def generate_identity_with_ai_sync(
 ) -> GeneratedIdentity:
     """
     Versión síncrona con logging extendido y manejo de errores legible.
+    Utiliza clean_json_string para robustecer el parsing.
     """
     container = get_service_container()
 
@@ -307,7 +310,10 @@ def generate_identity_with_ai_sync(
 
             if response and response.text:
                 try:
-                    data = json.loads(response.text)
+                    # Aplicamos limpieza de JSON antes del parsing
+                    cleaned_text = clean_json_string(response.text)
+                    data = json.loads(cleaned_text)
+                    
                     log_event(f"AI_DEBUG: Identidad generada para {data.get('nombre')}.")
                     return GeneratedIdentity(
                         nombre=data.get("nombre", "SinNombre"),
@@ -318,7 +324,7 @@ def generate_identity_with_ai_sync(
                         apariencia_visual=data.get("apariencia_visual", "") 
                     )
                 except json.JSONDecodeError as je:
-                    log_event(f"AI_ERROR: Error parseando JSON (Intento {attempt+1}): {je}", is_error=True)
+                    log_event(f"AI_ERROR: Error parseando JSON (Intento {attempt+1}): {je}. Raw: {response.text[:100]}...", is_error=True)
                     continue
         except Exception as e:
             log_event(f"AI_CRITICAL: Error en generate_content: {str(e)}", is_error=True)
