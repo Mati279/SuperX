@@ -5,6 +5,7 @@ Define las estructuras de datos centrales del juego usando Pydantic
 para garantizar validación y serialización consistente.
 Refactorizado para cumplir con el esquema V2 Híbrido (SQL + JSON).
 Actualizado v4.1.4: Soporte para Mercado y Órdenes.
+Refactorizado v5.0.0: Fuente de Verdad SQL (MMFR).
 """
 
 from typing import Dict, Any, Optional, List
@@ -121,6 +122,7 @@ class CharacterBehavior(BaseModel):
     """Perfiles de Comportamiento y Capas Sociales."""
     rasgos_personalidad: List[str] = Field(default_factory=list)
     relaciones: List[Dict[str, Any]] = Field(default_factory=list) # Lista de nodos de relación
+    lealtad: int = Field(default=50, ge=0, le=100) # Inyectado desde SQL
 
 class CharacterLogistics(BaseModel):
     """Logística y Equipamiento."""
@@ -130,7 +132,7 @@ class CharacterLogistics(BaseModel):
 
 class CharacterLocation(BaseModel):
     """Geolocalización Lógica."""
-    # IDs Relacionales (Prioridad)
+    # IDs Relacionales (Prioridad - Inyectados desde SQL)
     system_id: Optional[int] = None
     planet_id: Optional[int] = None
     sector_id: Optional[int] = None
@@ -150,7 +152,7 @@ class CharacterDynamicState(BaseModel):
 class CharacterSchema(BaseModel):
     """
     ESQUEMA MAESTRO DEL PERSONAJE.
-    Representa la estructura completa almacenada en 'stats_json'.
+    Representa la estructura completa procesada (hidratada).
     """
     model_config = ConfigDict(extra='allow')
     
@@ -264,6 +266,7 @@ class CommanderData(BaseModel):
     """
     Datos del comandante o personaje recuperados de la DB.
     Wrapper sobre la tabla 'characters' en modelo Híbrido Relacional/JSON.
+    Ahora refleja la 'Fuente de Verdad' en columnas SQL.
     """
     model_config = ConfigDict(extra='allow')
 
@@ -276,20 +279,21 @@ class CommanderData(BaseModel):
     es_comandante: bool = True
     is_npc: bool = False
     
-    # Datos Relacionales Numéricos
+    # Datos Relacionales Numéricos (Fuente de Verdad)
     level: int = 1
     xp: int = 0
     class_id: int = 0
+    loyalty: int = 50  # 0-100
     estado_id: int = 1  # 1=Disponible
     
-    # Jerarquía de Ubicación
+    # Jerarquía de Ubicación (Fuente de Verdad)
     location_system_id: Optional[int] = None
     location_planet_id: Optional[int] = None
     location_sector_id: Optional[int] = None
     
-    # Legacy/Fallback
+    # Legacy/Fallback (Se mantienen para UI simple)
     ubicacion: str = "Base Principal"
-    estado: str = "Disponible" # Se mantiene para compatibilidad con código viejo que lee string
+    estado: str = "Disponible"
     
     # Metadata
     portrait_url: Optional[str] = None
@@ -297,14 +301,14 @@ class CommanderData(BaseModel):
     last_processed_tick: int = 0
     faccion_id: Optional[int] = None
 
-    # JSON "lite" (sin datos redundantes)
+    # JSON "lite" (Datos complejos no relacionales)
     stats_json: Dict[str, Any] = Field(default_factory=dict)
 
     @property
     def sheet(self) -> CharacterSchema:
         """
         Devuelve el esquema completo del personaje validado.
-        REHIDRATA el JSON inyectando los valores de columnas SQL.
+        REHIDRATA el JSON inyectando los valores de columnas SQL (Source of Truth).
         """
         try:
             full_stats = copy.deepcopy(self.stats_json)
@@ -313,45 +317,52 @@ class CommanderData(BaseModel):
             if "bio" not in full_stats: full_stats["bio"] = {}
             if "progresion" not in full_stats: full_stats["progresion"] = {}
             if "estado" not in full_stats: full_stats["estado"] = {}
+            if "comportamiento" not in full_stats: full_stats["comportamiento"] = {}
             if "taxonomia" not in full_stats: full_stats["taxonomia"] = {"raza": "Humano"}
             
             # 1. REHIDRATACIÓN: Datos Bio
             full_stats["bio"]["nombre"] = self.nombre
             full_stats["bio"]["apellido"] = self.apellido
+            if self.portrait_url:
+                full_stats["bio"]["apariencia_visual"] = self.portrait_url
             
-            # 2. REHIDRATACIÓN: Progresión
+            # 2. REHIDRATACIÓN: Progresión (Desde Columnas SQL)
             full_stats["progresion"]["nivel"] = self.level
             full_stats["progresion"]["xp"] = self.xp
             full_stats["progresion"]["rango"] = self.rango
+            # Nota: class_id podría mapearse a nombre de clase si tuviéramos la tabla de clases cargada.
+            # Por ahora confiamos en el string en JSON o "Desconocida".
             if "clase" not in full_stats["progresion"]:
                 full_stats["progresion"]["clase"] = "Desconocida"
 
-            # 3. REHIDRATACIÓN: Estado y Ubicación
-            # Mapeo simple inverso para UI
-            status_map = {1: "Disponible", 2: "En Misión", 3: "Herido", 4: "Fallecido", 5: "Entrenando"}
+            # 3. REHIDRATACIÓN: Comportamiento (Lealtad)
+            full_stats["comportamiento"]["lealtad"] = self.loyalty
+
+            # 4. REHIDRATACIÓN: Estado y Ubicación (Desde Columnas SQL)
+            status_map = {1: "Disponible", 2: "En Misión", 3: "Herido", 4: "Fallecido", 5: "Entrenando", 6: "En Tránsito", 99: "Retirado"}
             status_text = status_map.get(self.estado_id, "Disponible")
             
             full_stats["estado"]["rol_asignado"] = status_text
             full_stats["estado"]["estados_activos"] = [status_text]
             
-            # Inyectar objeto de ubicación completo
+            # Inyectar objeto de ubicación completo usando los IDs reales
             full_stats["estado"]["ubicacion"] = {
                 "system_id": self.location_system_id,
                 "planet_id": self.location_planet_id,
                 "sector_id": self.location_sector_id,
-                "ubicacion_local": self.ubicacion # Fallback texto
+                "ubicacion_local": self.ubicacion # Fallback texto legacy
             }
 
             return CharacterSchema(**full_stats)
 
         except Exception:
-            # Fallback para datos antiguos o corruptos
+            # Fallback robusto para datos corruptos
             return CharacterSchema(
-                bio=CharacterBio(nombre=self.nombre, apellido="", edad=30, biografia_corta="Datos migrados"),
+                bio=CharacterBio(nombre=self.nombre, apellido="", edad=30, biografia_corta="Datos migrados (Error Schema)"),
                 taxonomia=CharacterTaxonomy(raza="Humano"),
-                progresion=CharacterProgression(),
+                progresion=CharacterProgression(nivel=self.level, xp=self.xp),
                 capacidades=CharacterCapabilities(),
-                comportamiento=CharacterBehavior(),
+                comportamiento=CharacterBehavior(lealtad=self.loyalty),
                 logistica=CharacterLogistics(),
                 estado=CharacterDynamicState()
             )
@@ -391,7 +402,8 @@ class CommanderData(BaseModel):
     def from_dict(cls, data: Dict[str, Any]) -> 'CommanderData':
         if not data:
             raise ValueError("No se puede crear CommanderData desde datos vacíos")
-        return cls(**{k: v for k, v in data.items() if v is not None})
+        # Filtrar claves que no están en el modelo para evitar errores si la DB trae columnas extra
+        return cls(**{k: v for k, v in data.items() if k in cls.model_fields})
 
 
 # --- MODELOS DE PLANETA Y EDIFICIOS ---

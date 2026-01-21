@@ -1,7 +1,7 @@
 # ui/character_sheet.py
 import streamlit as st
 import pandas as pd
-from core.models import KnowledgeLevel, CharacterRole
+from core.models import KnowledgeLevel, CharacterRole, CommanderData
 
 # --- CONSTANTES DE COLOR (ESCALA EXTENDIDA) ---
 COLOR_LEVEL_0 = "#888888"   # Inepto / Gris (0-19)
@@ -83,33 +83,63 @@ def _safe_get_data(stats, keys_v2, keys_v1_fallback, default_val=None):
 
 def render_character_sheet(character_data, player_id):
     """
-    Renderiza la ficha de personaje con estética unificada y escala de color de 7 niveles.
+    Renderiza la ficha de personaje con estética unificada.
+    Refactorizado MMFR: Usa CommanderData para hidratar datos desde columnas SQL.
     """
     from data.character_repository import get_character_knowledge_level
     
+    # 1. Hidratación MMFR: Convertir dict DB -> Objeto Negocio -> Schema completo
+    try:
+        # CommanderData.from_dict filtra claves extra y mapea columnas a propiedades
+        char_obj = CommanderData.from_dict(character_data)
+        # .sheet reconstruye el JSON completo inyectando level, xp, loyalty desde columnas
+        sheet = char_obj.sheet
+        # Convertimos a dict para compatibilidad con el resto del código de UI
+        stats = sheet.model_dump()
+    except Exception as e:
+        # Fallback de seguridad por si el schema falla
+        st.warning(f"Error visualizando ficha (Fallback Mode): {e}")
+        stats = character_data.get('stats_json', {})
+        char_obj = None
+
     char_id = character_data['id']
-    stats = character_data.get('stats_json', {})
     knowledge_level = get_character_knowledge_level(char_id, player_id)
 
-    # --- DATOS BÁSICOS ---
+    # --- DATOS BÁSICOS (Leídos del Schema Hidratado) ---
     bio_data = stats.get('bio', {})
-    tax = stats.get('taxonomia', {}) or {'raza': stats.get('raza', 'Humano')}
-    prog = stats.get('progresion', {}) or {'clase': stats.get('clase', 'Novato'), 'nivel': stats.get('nivel', 1)}
+    tax = stats.get('taxonomia', {})
+    prog = stats.get('progresion', {})
+    comp = stats.get('comportamiento', {})
+    estado_data = stats.get('estado', {})
 
-    nombre = character_data['nombre']
+    nombre = bio_data.get('nombre', 'Desconocido')
     raza = tax.get('raza', 'Humano')
     clase = prog.get('clase', 'Novato')
     nivel = prog.get('nivel', 1)
     edad = bio_data.get('edad', '??')
-    rango = character_data.get('rango', 'Agente')
+    rango = prog.get('rango', 'Agente') 
+    
+    # Nuevos campos MMFR
+    lealtad = comp.get('lealtad', 50)
+    # Ubicación: el modelo ya inyectó 'ubicacion_local' texto en el objeto de ubicación
+    ubicacion_obj = estado_data.get('ubicacion', {})
+    ubicacion_txt = ubicacion_obj.get('ubicacion_local', 'Desconocida')
+
+    # Retrato (Prioridad: Columna SQL -> JSON -> Generado)
+    portrait_url = character_data.get('portrait_url') or bio_data.get('apariencia_visual')
+    if not portrait_url:
+        portrait_url = f"https://ui-avatars.com/api/?name={nombre.replace(' ', '+')}&background=random"
 
     # --- HEADER ---
     col_avatar, col_basic = st.columns([1, 3])
     
     with col_avatar:
-        st.image(f"https://ui-avatars.com/api/?name={nombre.replace(' ', '+')}&background=random", caption=rango)
+        st.image(portrait_url, caption=rango)
 
     with col_basic:
+        # Color Lealtad
+        loyalty_color = "#e74c3c" if lealtad < 30 else "#f1c40f" if lealtad < 70 else "#2ecc71"
+        
         header_html = f"""
         <div style="
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
@@ -118,21 +148,31 @@ def render_character_sheet(character_data, player_id):
             border-left: 4px solid #45b7d1;
             margin-bottom: 10px;
         ">
-            <div style="font-size: 1.8em; font-weight: bold; color: #fff; margin-bottom: 5px;">
-                {nombre}
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div style="font-size: 1.8em; font-weight: bold; color: #fff;">
+                    {nombre}
+                </div>
+                <div style="background:{loyalty_color}20; border:1px solid {loyalty_color}; color:{loyalty_color}; padding:2px 8px; border-radius:12px; font-size:0.8em;">
+                    Lealtad: {lealtad}%
+                </div>
             </div>
-            <div style="font-size: 1em; color: #ccc;">
+            <div style="font-size: 1em; color: #ccc; margin-top:5px;">
                 <span style="color: #a55eea; font-weight: bold;">{raza}</span> | 
                 <span style="color: #ffd700; font-weight: bold;">Nivel {nivel}</span> | 
-                <span style="color: #ccc;">{clase}</span> |
-                <span style="color: #888;">{edad} años</span>
+                <span style="color: #ccc;">{clase}</span>
+            </div>
+            <div style="font-size: 0.9em; color: #888; margin-top:4px;">
+                 📍 {ubicacion_txt} | 🎂 {edad} años
             </div>
         </div>
         """
         st.markdown(header_html, unsafe_allow_html=True)
         
         if knowledge_level != KnowledgeLevel.UNKNOWN:
-            st.caption(f"**XP:** {prog.get('xp', 0)} / {prog.get('xp_next', 500)}")
+             xp_curr = prog.get('xp', 0)
+             xp_next = prog.get('xp_next', 500)
+             pct = min(1.0, float(xp_curr) / float(max(1, xp_next)))
+             st.progress(pct, text=f"XP: {xp_curr} / {xp_next}")
 
     st.divider()
 
@@ -217,4 +257,5 @@ def render_character_sheet(character_data, player_id):
     with tab_debug:
         if character_data.get('player_id') == player_id:
             st.caption(f"Nivel de Conocimiento: {knowledge_level.name}")
+            st.caption("JSON Hidratado (Source of Truth + JSONB):")
             st.json(stats)

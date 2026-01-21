@@ -39,9 +39,8 @@ STATUS_ID_MAP = {
 # --- HELPER: EXTRACT & CLEAN ---
 def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    EXTRACT & CLEAN PATTERN.
-    Separa los datos que van a columnas SQL de los que se quedan en JSON.
-    Maneja la jerarquía de ubicación de 3 niveles.
+    EXTRACT & CLEAN PATTERN (Refactorizado MMFR).
+    Separa los datos que van a columnas SQL (Fuente de Verdad) de los que se quedan en JSON.
     Retorna (column_data, cleaned_stats_json).
     """
     # 1. Copia para no destruir el objeto original en memoria
@@ -52,11 +51,16 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
     if "bio" in stats:
         columns["nombre"] = stats["bio"].get("nombre", "Unknown")
         columns["apellido"] = stats["bio"].get("apellido", "")
-        # Eliminamos del JSON
+        # Retrato / ADN Visual
+        if "apariencia_visual" in stats["bio"]:
+            columns["portrait_url"] = stats["bio"]["apariencia_visual"]
+            stats["bio"].pop("apariencia_visual", None)
+            
+        # Limpieza básica bio (mantenemos edad, sexo, bio_corta en JSON)
         stats["bio"].pop("nombre", None)
         stats["bio"].pop("apellido", None)
 
-    # 3. Extracción de Progresión
+    # 3. Extracción de Progresión (Fuente de Verdad SQL)
     if "progresion" in stats:
         columns["level"] = stats["progresion"].get("nivel", 1)
         columns["xp"] = stats["progresion"].get("xp", 0)
@@ -65,11 +69,11 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
         clase_str = stats["progresion"].get("clase", "Novato")
         columns["class_id"] = CLASS_ID_MAP.get(clase_str, 0)
         
-        # Limpieza
+        # Limpieza total de datos numéricos del JSON
         stats["progresion"].pop("nivel", None)
         stats["progresion"].pop("xp", None)
         stats["progresion"].pop("rango", None)
-        # Mantenemos 'clase' en JSON por UI display
+        # Mantenemos 'clase' string en JSON para UI legacy/fallback
 
     # 4. Extracción de Estado y Ubicación
     if "estado" in stats:
@@ -79,18 +83,28 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
         columns["estado"] = status_text 
         
         # Extracción de Jerarquía de Ubicación
-        # Buscamos el objeto "ubicacion" con IDs
         loc = stats["estado"].get("ubicacion", {})
         if isinstance(loc, dict):
             columns["location_system_id"] = loc.get("system_id")
             columns["location_planet_id"] = loc.get("planet_id")
             columns["location_sector_id"] = loc.get("sector_id")
-            # Borrar objeto ubicación del JSON
+            
+            # Fallback legacy texto
+            if "ubicacion_local" in loc:
+                 columns["ubicacion"] = loc["ubicacion_local"]
+            
+            # Borrar objeto ubicación del JSON (ahora vive en columnas)
             stats["estado"].pop("ubicacion", None)
         
         # Borrar rol asignado
         stats["estado"].pop("rol_asignado", None)
-    
+        
+    # 5. Extracción de Comportamiento (Lealtad)
+    if "comportamiento" in stats:
+        if "lealtad" in stats["comportamiento"]:
+            columns["loyalty"] = stats["comportamiento"]["lealtad"]
+            stats["comportamiento"].pop("lealtad", None)
+
     return columns, stats
 
 
@@ -120,7 +134,7 @@ def _ensure_v2_structure(stats_json: Dict, name: str = "") -> Dict:
             "habilidades": stats_json.get("habilidades", {}),
             "feats": []
         },
-        "comportamiento": {"rasgos_personalidad": [], "relaciones": []},
+        "comportamiento": {"rasgos_personalidad": [], "relaciones": [], "lealtad": 50},
         "logistica": {"equipo": [], "slots_ocupados": 0, "slots_maximos": 10},
         "estado": {
             "estados_activos": ["Disponible"],
@@ -184,7 +198,8 @@ def create_commander(
             },
             "comportamiento": {
                 "rasgos_personalidad": ["Liderazgo"],
-                "relaciones": []
+                "relaciones": [],
+                "lealtad": 100 # Comandante siempre leal
             },
             "logistica": {
                 "equipo": [],
@@ -197,7 +212,7 @@ def create_commander(
                 "accion_actual": "Iniciando mandato",
                 # Inicialización de ubicación
                 "ubicacion": {
-                   "system_id": None, "planet_id": None, "sector_id": None 
+                   "system_id": None, "planet_id": None, "sector_id": None, "ubicacion_local": COMMANDER_LOCATION
                 }
             }
         }
@@ -211,7 +226,7 @@ def create_commander(
             "recruited_at_tick": current_tick,
             "stats_json": cleaned_stats,
             
-            # Columnas extraídas
+            # Columnas extraídas (Fuente de Verdad)
             "nombre": cols.get("nombre"),
             "apellido": cols.get("apellido"),
             "rango": cols.get("rango"),
@@ -219,8 +234,11 @@ def create_commander(
             "xp": cols.get("xp"),
             "class_id": cols.get("class_id"),
             "estado_id": cols.get("estado_id"),
-            "estado": cols.get("estado"), # Legacy
-            "ubicacion": COMMANDER_LOCATION # Legacy
+            "loyalty": cols.get("loyalty", 100),
+            
+            # Legacy fields
+            "estado": cols.get("estado"), 
+            "ubicacion": cols.get("ubicacion", COMMANDER_LOCATION)
         }
 
         response = _get_db().table("characters").insert(new_char_data).execute()
@@ -247,7 +265,7 @@ def update_commander_profile(
         current = get_commander_by_player_id(player_id)
         if not current: return None
             
-        # Reconstruir stats completos para manipular
+        # Reconstruir stats completos para manipular (Hydration)
         from core.models import CommanderData
         cmd_obj = CommanderData(**current)
         full_stats_model = cmd_obj.sheet
@@ -307,7 +325,7 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
             "recruited_at_tick": tick,
             "stats_json": cleaned_stats,
             
-            # Columnas
+            # Columnas Fuente de Verdad
             "nombre": cols.get("nombre", "Unit"),
             "apellido": cols.get("apellido", ""),
             "level": cols.get("level", 1),
@@ -315,8 +333,12 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
             "rango": cols.get("rango", "Recluta"),
             "class_id": cols.get("class_id", 0),
             "estado_id": cols.get("estado_id", 1),
-            "estado": cols.get("estado", "Disponible"),
+            "loyalty": cols.get("loyalty", 50),
             "is_npc": False,
+            "portrait_url": cols.get("portrait_url"),
+            
+            # Legacy Fields
+            "estado": cols.get("estado", "Disponible"),
             
             # Ubicación
             "location_system_id": cols.get("location_system_id"),
@@ -367,7 +389,7 @@ def get_character_by_id(character_id: int) -> Optional[Dict[str, Any]]:
         return None
 
 def update_character_xp(character_id: int, new_xp: int, player_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    """Actualización directa a columna SQL."""
+    """Actualización directa a columna SQL (Fuente de Verdad)."""
     try:
         response = _get_db().table("characters").update({"xp": new_xp}).eq("id", character_id).execute()
         return response.data[0] if response.data else None
@@ -380,8 +402,10 @@ def add_xp_to_character(character_id: int, xp_amount: int, player_id: Optional[i
         char = get_character_by_id(character_id)
         if not char: return None
         
+        # Leer desde columna SQL (Fuente de Verdad)
         current_xp = char.get("xp", 0)
-        # Fallback para datos viejos
+        
+        # Fallback para datos muy viejos sin migrar
         if current_xp is None:
              current_xp = char.get("stats_json", {}).get("progresion", {}).get("xp", 0)
 
@@ -390,24 +414,36 @@ def add_xp_to_character(character_id: int, xp_amount: int, player_id: Optional[i
         return None
 
 def update_character_stats(character_id: int, new_stats_json: Dict[str, Any], player_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    # Limpiar JSON entrante antes de guardar
+    """
+    Actualiza stats completos.
+    IMPORTANTE: Separa los datos para columnas SQL y JSON limpio.
+    """
     cols, cleaned_stats = _extract_and_clean_data(new_stats_json)
     
     payload = {"stats_json": cleaned_stats}
-    # Actualizar columnas relevantes si cambiaron
+    
+    # Actualizar columnas relevantes si cambiaron en el objeto de entrada
     if "level" in cols: payload["level"] = cols["level"]
     if "xp" in cols: payload["xp"] = cols["xp"]
     if "estado_id" in cols: payload["estado_id"] = cols["estado_id"]
+    if "loyalty" in cols: payload["loyalty"] = cols["loyalty"]
+    if "class_id" in cols: payload["class_id"] = cols["class_id"]
+    if "rango" in cols: payload["rango"] = cols["rango"]
     
     # Ubicación también
     if "location_system_id" in cols: payload["location_system_id"] = cols["location_system_id"]
     if "location_planet_id" in cols: payload["location_planet_id"] = cols["location_planet_id"]
+    if "location_sector_id" in cols: payload["location_sector_id"] = cols["location_sector_id"]
     
     return update_character(character_id, payload)
 
 def update_character_level(character_id: int, new_level: int, new_stats_json: Dict[str, Any], player_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """Actualiza nivel directamente en SQL y sincroniza JSON."""
     rango = new_stats_json.get("progresion", {}).get("rango", "Recluta")
     cols, cleaned_stats = _extract_and_clean_data(new_stats_json)
+    
+    # Forzamos el nivel pasado explícitamente si difiere
+    cols["level"] = new_level
     
     return update_character(character_id, {
         "stats_json": cleaned_stats,
@@ -518,17 +554,21 @@ def dismiss_character(character_id: int, current_player_id: int) -> bool:
         knowledge_level = get_character_knowledge_level(character_id, current_player_id)
         stats = char.get("stats_json", {})
         
+        # Limpieza previa para asegurar que el objeto a guardar esté saneado
+        cols, cleaned_stats = _extract_and_clean_data(stats)
+        
         update_payload = {}
         action_msg = ""
 
         if knowledge_level == KnowledgeLevel.FRIEND:
             # RETIRADO
-            stats["estado"] = stats.get("estado", {})
-            stats["estado"]["retired"] = True
+            # Nota: retired se guarda en JSON legacy o podríamos usar un estado_id nuevo
+            cleaned_stats["estado"] = cleaned_stats.get("estado", {})
+            cleaned_stats["estado"]["retired"] = True
             
             update_payload = {
                 "player_id": None,
-                "stats_json": stats,
+                "stats_json": cleaned_stats,
                 "estado_id": 99, # Retirado ID
                 "estado": "Retirado"
             }
@@ -537,7 +577,7 @@ def dismiss_character(character_id: int, current_player_id: int) -> bool:
             # DEVUELTO AL POOL
             update_payload = {
                 "player_id": None,
-                "stats_json": stats,
+                "stats_json": cleaned_stats,
                 "estado_id": 1, # Disponible ID
                 "estado": "Disponible"
             }
