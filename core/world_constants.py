@@ -234,6 +234,9 @@ ECONOMY_RATES = {
     "security_bonus_defense_orbital": 10.0
 }
 
+# Penalización a la eficiencia económica si el planeta está en disputa o bloqueado (v4.2.0)
+DISPUTED_PENALTY_MULTIPLIER = 0.3
+
 BROKER_PRICES = {
     "materiales": 20,
     "componentes": 30,
