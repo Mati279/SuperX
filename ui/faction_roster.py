@@ -128,21 +128,25 @@ def render_faction_roster():
     if non_commander_count == 0:
         st.info("Parece que tu facción recién se está estableciendo. Reúne a tu equipo inicial.")
 
-        if st.button("Conocer a la tripulación", type="primary", help="Genera tu equipo inicial con ayuda de la IA"):
+        # BOTÓN MODIFICADO: "Reunir al personal"
+        if st.button("Reunir al personal", type="primary", help="Genera tu equipo inicial con ayuda de la IA"):
             try:
                 with st.spinner("Convocando personal y estableciendo enlaces neuronales..."):
                     # 1. Veterano (Nvl 5)
                     vet = recruit_random_character_with_ai(player_id, min_level=5, max_level=5)
                     if vet:
+                        # Se asegura conocimiento KNOWN para el nivel alto
                         set_character_knowledge_level(vet['id'], player_id, KnowledgeLevel.KNOWN)
 
                     # 2. Oficiales (Nvl 3)
                     for _ in range(2):
                         off = recruit_random_character_with_ai(player_id, min_level=3, max_level=3)
                         if off:
+                             # Se asegura conocimiento KNOWN para oficiales medios
                             set_character_knowledge_level(off['id'], player_id, KnowledgeLevel.KNOWN)
 
                     # 3. Reclutas (Nvl 1)
+                    # No se establece nivel de conocimiento explícito, por lo que permanecen UNKNOWN
                     for _ in range(3):
                         recruit_random_character_with_ai(player_id, min_level=1, max_level=1)
 
