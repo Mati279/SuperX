@@ -73,6 +73,7 @@ def get_filtered_roster(player_id: int, source: str = "all") -> str:
     """
     Obtiene el expediente completo y visible de los personajes.
     Incluye atributos y habilidades (o las Top 5 si es desconocido).
+    Refactorizado para leer columnas SQL como fuente de verdad.
     """
     sources = []
     
@@ -103,7 +104,6 @@ def get_filtered_roster(player_id: int, source: str = "all") -> str:
         knowledge_level = get_character_knowledge_level(char_id, player_id)
 
         # Preparar acceso a estructura V2 (Capacidades)
-        # Esto simplifica la lógica de fallback
         capacidades = stats.get("capacidades", {})
 
         # Regla 1: Atributos SIEMPRE visibles (UI Parity)
@@ -114,11 +114,9 @@ def get_filtered_roster(player_id: int, source: str = "all") -> str:
 
         # Regla 2: Habilidades
         # get_visible_skills manejará top_n=5 para UNKNOWN
-        # FIX V2: Buscar primero en capacidades['habilidades']
         if capacidades and "habilidades" in capacidades:
             raw_skills = capacidades["habilidades"]
         else:
-            # Fallback legacy V1
             raw_skills = stats.get("habilidades", {})
             
         visible_skills = get_visible_skills(raw_skills, knowledge_level, top_n=5)
@@ -127,23 +125,39 @@ def get_filtered_roster(player_id: int, source: str = "all") -> str:
         visible_bio = get_visible_biography(stats, knowledge_level)
 
         # Regla 4: Feats
-        # FIX V2: Buscar primero en capacidades['feats']
         if capacidades and "feats" in capacidades:
             raw_feats = capacidades["feats"]
         else:
-            # Fallback legacy V1
             raw_feats = stats.get("feats", [])
 
         visible_feats = get_visible_feats(raw_feats, knowledge_level)
+
+        # --- REFACTOR: DATOS DESDE COLUMNAS SQL (Source of Truth) ---
+        # Priorizamos las claves directas del dict (que vienen de columnas SQL)
+        # sobre el JSON anidado.
+        
+        nivel_real = char.get("level")
+        if nivel_real is None:
+            nivel_real = stats.get("progresion", {}).get("nivel", 1)
+            
+        rango_real = char.get("rango")
+        if not rango_real:
+            rango_real = stats.get("progresion", {}).get("rango", "Sin Rango")
+            
+        # Nota: clase_social suele estar en JSON, pero class_id en SQL. 
+        # Usamos fallback genérico.
+        clase_txt = char.get("clase_social") 
+        if not clase_txt:
+             clase_txt = stats.get("progresion", {}).get("clase", "Desconocido")
 
         # Construir objeto JSON
         entry = {
             "id": char_id,
             "nombre": char.get("nombre", "Desconocido"),
-            "rango": char.get("rango", "Sin Rango"),
-            "clase": char.get("clase_social", "Desconocido"),
-            "raza": char.get("raza", "Humano"),
-            "nivel_personaje": stats.get("progresion", {}).get("nivel", 1),
+            "rango": rango_real,
+            "clase": clase_txt,
+            "raza": char.get("raza", "Humano"), # Suele ser columna en V2
+            "nivel_personaje": nivel_real,
             "estado": char.get("_source_type"),
             "nivel_conocimiento": knowledge_level.value,
             "atributos": attributes,
@@ -237,7 +251,7 @@ TOOL_DECLARATIONS = [
         name="get_filtered_roster",
         description="""OBTIENE EXPEDIENTES COMPLETOS (PROCESADOS).
 Usa esto SOLO para análisis cualitativo detallado de pocos individuos (< 5).
-Devuelve 'habilidades_visibles' (Skills) y 'atributos' (Stats Base).
+Devuelve 'habilidades_visibles' (Skills) y 'atributos' (Stats Base) y 'nivel_personaje' (SQL).
 ADVERTENCIA: No usar para búsquedas masivas o comparaciones numéricas de toda la base de datos (Usar execute_sql_query).""",
         parameters=types.Schema(
             type=types.Type.OBJECT,
@@ -252,8 +266,9 @@ ADVERTENCIA: No usar para búsquedas masivas o comparaciones numéricas de toda 
         name="execute_sql_query",
         description="""EJECUTA CONSULTAS SQL (Solo Lectura/SELECT).
 CRÍTICO para comparaciones numéricas, búsquedas complejas o filtrado en grupos grandes.
+COLUMNAS IMPORTANTES: 'level', 'xp', 'loyalty', 'rango'.
 Estructura JSONB: stats_json->'capacidades'->'habilidades' (diccionario key:value) o 'atributos'.
-Ejemplo: SELECT nombre FROM characters WHERE (stats_json->'capacidades'->'atributos'->>'intelecto')::int > 10""",
+Ejemplo: SELECT nombre, level FROM characters WHERE level > 3 AND (stats_json->'capacidades'->'atributos'->>'intelecto')::int > 10""",
         parameters=types.Schema(
             type=types.Type.OBJECT,
             properties={
@@ -274,7 +289,6 @@ Ejemplo: SELECT nombre FROM characters WHERE (stats_json->'capacidades'->'atribu
             required=["table_name"]
         )
     ),
-    # --- NUEVA DECLARACIÓN ---
     types.FunctionDeclaration(
         name="generate_tactical_visual",
         description="""Genera una imagen visual táctica (planeta, nave, entidad, paisaje) basada en una descripción detallada.

@@ -74,27 +74,37 @@ Para consultas complejas, comparaciones numéricas, búsquedas en grupos grandes
 USA `execute_sql_query` para filtrar y ordenar directamente en la base de datos.
 
 ### SCHEMA MAP (TABLA 'characters')
-- **Datos Base:** `id` (int), `nombre` (text), `player_id` (int, NULL para reclutas/candidatos).
-- **Stats (JSONB):** Columna `stats_json`. Estructura interna:
-  - **Habilidades:** `stats_json->'capacidades'->'habilidades'->>'NombreHabilidad'` (Al leer usa `->>`, devuelve texto, castear a `::int` para comparar).
-  - **Atributos:** `stats_json->'capacidades'->'atributos'->>'NombreAtributo'` (Castear a `::int`).
-  - **Estado:** `stats_json->'estado'` (ej: 'ACTIVO', 'HERIDO').
-  - **Rasgos/Feats:** `stats_json->'capacidades'->'feats'` (Array JSON).
-- **Ubicación:** `system_id` (int), `planet_id` (uuid).
+**IMPORTANTE: Estructura Híbrida (SQL + JSONB)**
+
+1. **COLUMNAS DIRECTAS (SQL) - Úsalas para filtrar y ordenar:**
+   - `id` (int): Identificador único.
+   - `nombre` (text): Nombre del personaje.
+   - `apellido` (text): Apellido.
+   - `player_id` (int): Dueño del personaje (NULL para reclutas/libres).
+   - `level` (int): Nivel actual del personaje.
+   - `xp` (int): Experiencia acumulada.
+   - `rango` (text): Rango militar/civil (ej: "Recluta", "Capitán").
+   - `loyalty` (int): Lealtad actual (0-100).
+   - `location_planet_id` (int): ID del planeta donde está ubicado.
+   - `class_id` (int): ID numérico de la clase (trabajo).
+
+2. **COLUMNAS JSONB (`stats_json`) - Datos complejos:**
+   - **Habilidades:** `stats_json->'capacidades'->'habilidades'->>'NombreHabilidad'` (Castear a `::int`).
+   - **Atributos:** `stats_json->'capacidades'->'atributos'->>'NombreAtributo'` (Castear a `::int`).
+   - **Biografía:** `stats_json->'bio'->>'biografia_publica'`.
+   - **Rasgos/Feats:** `stats_json->'capacidades'->'feats'` (Array JSON).
 
 ### ESTRATEGIA DE CONSULTA
 1. **Identificar ID de Jugador:** Usa el `player_id` de tus credenciales para filtrar personajes propios (`WHERE player_id = ...`).
 2. **Reclutas:** Para buscar candidatos disponibles en el mercado, usa `WHERE player_id IS NULL`.
-3. **Casteo Numérico:** IMPORTANTE. Los valores en JSONB son texto. Usa `::int` para comparar.
-   - MAL: `...->>'Medicina' > 5`
-   - BIEN: `(...->>'Medicina')::int > 5`
-4. **Manejo de Errores:** Si la query falla, el sistema te devolverá el error SQL. Analízalo, corrige la sintaxis (ej: comillas, nombres de campos) y reintenta.
+3. **Casteo Numérico:** IMPORTANTE. Los valores dentro del JSONB son texto. Usa `::int` para comparar.
+   - Las columnas SQL (`level`, `loyalty`, etc.) NO requieren casteo.
 
-### EJEMPLOS DE QUERIES (Referencia)
-- **Buscar médico experto (Habilidad > 5):**
-  `SELECT nombre, stats_json->'capacidades'->'habilidades'->>'Medicina' as nivel FROM characters WHERE (stats_json->'capacidades'->'habilidades'->>'Medicina')::int > 5 AND player_id = <TU_PLAYER_ID>`
-- **Comparar reclutas (Sin player_id):**
-  `SELECT nombre, stats_json->'capacidades'->'atributos'->>'intelecto' as int FROM characters WHERE player_id IS NULL AND (stats_json->'capacidades'->'atributos'->>'intelecto')::int > 12 ORDER BY 2 DESC`
+### EJEMPLOS DE QUERIES (Referencia Actualizada)
+- **Buscar médico experto (Nivel > 3 y Habilidad Medicina > 5):**
+  `SELECT nombre, level, stats_json->'capacidades'->'habilidades'->>'Medicina' as nivel_med FROM characters WHERE level > 3 AND (stats_json->'capacidades'->'habilidades'->>'Medicina')::int > 5 AND player_id = <TU_PLAYER_ID>`
+- **Listar reclutas de alto potencial (Intelecto > 12) ordenados por nivel:**
+  `SELECT nombre, level, stats_json->'capacidades'->'atributos'->>'intelecto' as int FROM characters WHERE player_id IS NULL AND (stats_json->'capacidades'->'atributos'->>'intelecto')::int > 12 ORDER BY level DESC`
 
 ## PROTOCOLO DE ANÁLISIS DE COMPETENCIAS (JERARQUÍA ESTRICTA)
 Cuando debas evaluar personal, asignar tareas o determinar quién es el mejor para una función (ej: "¿Quién es el mejor médico?"), DEBES SEGUIR ESTA JERARQUÍA DE PENSAMIENTO:
@@ -215,6 +225,10 @@ def _build_tactical_context(player_id: int, commander_data: Dict) -> TacticalCon
 
         stats = commander_data.get('stats_json', {})
         attributes = stats.get('atributos', {})
+        
+        # Compatibilidad V2: Si attributes está vacío, intentar buscar en 'capacidades'
+        if not attributes and 'capacidades' in stats:
+             attributes = stats['capacidades'].get('atributos', {})
 
         # Obtener ubicación detallada (sistema, planeta, base)
         location_details = get_commander_location_display(commander_data['id'])
@@ -442,6 +456,10 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
         # Calcular puntos de mérito y resolver acción
         stats = commander.get('stats_json', {})
         attributes = stats.get('atributos', {})
+        # Compatibilidad V2: Buscar en capacidades si no está en raíz
+        if not attributes and 'capacidades' in stats:
+             attributes = stats['capacidades'].get('atributos', {})
+             
         merit_points = sum(attributes.values()) if attributes else 0
 
         mrg_result = resolve_action(

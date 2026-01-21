@@ -1,6 +1,7 @@
 # core/character_engine.py
 """
 Motor de Personajes - Gestión de conocimiento, progresión y biografías.
+Refactorizado para Esquema Híbrido (SQL + JSON).
 """
 from typing import Dict, Any, Tuple, List, Optional
 import random
@@ -52,14 +53,11 @@ def get_visible_biography(
     Retorna la biografía visible según el nivel de conocimiento.
 
     Args:
-        stats_json: El diccionario stats_json del personaje (estructura V2)
+        stats_json: El diccionario stats_json del personaje.
         knowledge_level: Nivel de conocimiento del observador.
-                         Si es None, usa el campo nivel_acceso del bio.
 
     Returns:
-        - UNKNOWN: biografia_corta (o bio_superficial)
-        - KNOWN: bio_conocida
-        - FRIEND: bio_conocida + " " + bio_profunda
+        Texto biográfico filtrado.
     """
     bio = stats_json.get("bio", {})
 
@@ -103,14 +101,6 @@ def get_visible_feats(
 ) -> List[Dict[str, Any]]:
     """
     Filtra los feats según el nivel de conocimiento.
-
-    Args:
-        feats: Lista de feats (pueden ser strings o dicts)
-        knowledge_level: Nivel de conocimiento del observador
-
-    Returns:
-        - UNKNOWN: Solo feats con visible=True
-        - KNOWN/FRIEND: Todos los feats
     """
     if knowledge_level in (KnowledgeLevel.KNOWN, KnowledgeLevel.FRIEND):
         # Retornar todos, normalizados a dict
@@ -140,15 +130,6 @@ def get_visible_skills(
 ) -> Dict[str, int]:
     """
     Filtra las habilidades según el nivel de conocimiento.
-
-    Args:
-        skills: Diccionario de habilidades {nombre: valor}
-        knowledge_level: Nivel de conocimiento del observador
-        top_n: Número de top habilidades a mostrar para UNKNOWN
-
-    Returns:
-        - UNKNOWN: Solo las top N habilidades
-        - KNOWN/FRIEND: Todas las habilidades
     """
     if knowledge_level in (KnowledgeLevel.KNOWN, KnowledgeLevel.FRIEND):
         return skills
@@ -166,65 +147,99 @@ def get_visible_skills(
 def reveal_secret_on_friend(
     character_id: int,
     player_id: int,
-    stats_json: Dict[str, Any]
+    char_data: Dict[str, Any]
 ) -> Tuple[SecretType, str, Dict[str, Any]]:
     """
     Revela un secreto aleatorio al alcanzar nivel FRIEND y aplica el efecto.
+    Refactorizado para manejar columnas SQL como fuente de verdad.
 
     Args:
         character_id: ID del personaje
         player_id: ID del jugador observador
-        stats_json: Stats actuales del personaje
+        char_data: Diccionario COMPLETO del personaje (cols SQL + stats_json)
 
     Returns:
-        Tuple de (tipo_secreto, mensaje, stats_actualizados)
+        Tuple de (tipo_secreto, mensaje, stats_json_actualizados)
     """
     from data.character_repository import update_character
 
     # Seleccionar tipo de secreto aleatorio
     secret_type = random.choice(list(SecretType))
+    
+    # Extraer stats_json (siempre necesario para flags y atributos)
+    stats_json = char_data.get("stats_json", {})
+    if not stats_json:
+        stats_json = {}
 
-    # Obtener datos del personaje
-    char_name = stats_json.get("bio", {}).get("nombre", "Personaje")
-    nivel = stats_json.get("progresion", {}).get("nivel", 1)
+    # --- REFACTOR: LECTURA HÍBRIDA (SQL First) ---
+    # Leemos nivel desde columna SQL, fallback a JSON
+    nivel_actual = char_data.get("level")
+    if nivel_actual is None:
+        nivel_actual = stats_json.get("progresion", {}).get("nivel", 1)
+        
+    char_name = char_data.get("nombre") or stats_json.get("bio", {}).get("nombre", "Personaje")
 
     msg = ""
+    update_payload = {} # Diccionario para enviar a update_character
 
     if secret_type == SecretType.PROFESSIONAL:
         # +XP fijo según nivel (nivel * 100)
-        xp_bonus = nivel * 100
-        current_xp = stats_json.get("progresion", {}).get("xp", 0)
-        stats_json["progresion"]["xp"] = current_xp + xp_bonus
+        xp_bonus = nivel_actual * 100
+        
+        # Leer XP actual (SQL First)
+        current_xp = char_data.get("xp")
+        if current_xp is None:
+            current_xp = stats_json.get("progresion", {}).get("xp", 0)
+            
+        new_xp = current_xp + xp_bonus
+        
+        # Preparar actualización DUAL (SQL + JSON) para consistencia
+        update_payload["xp"] = new_xp
+        
+        if "progresion" not in stats_json:
+            stats_json["progresion"] = {}
+        stats_json["progresion"]["xp"] = new_xp
+        
         msg = f"🎓 SECRETO PROFESIONAL: {char_name} revela técnicas de entrenamiento avanzadas. +{xp_bonus} XP."
 
     elif secret_type == SecretType.PERSONAL:
-        # +2 Voluntad
-        current_vol = stats_json.get("capacidades", {}).get("atributos", {}).get("voluntad", 10)
+        # +2 Voluntad (Atributo sigue viviendo en JSON->Capacidades)
+        # Buscar en V2 (capacidades->atributos) o V1 (atributos)
+        attributes_container = stats_json.get("capacidades", {}).get("atributos")
+        if attributes_container is None:
+             # Fallback o crear estructura V2
+             if "capacidades" not in stats_json: stats_json["capacidades"] = {}
+             if "atributos" not in stats_json["capacidades"]: stats_json["capacidades"]["atributos"] = {}
+             attributes_container = stats_json["capacidades"]["atributos"]
+
+        # Si estaba vacio, inicializar (aunque raro en este punto)
+        current_vol = attributes_container.get("voluntad", 5)
         new_vol = min(20, current_vol + 2)  # Cap en 20
-        if "capacidades" not in stats_json:
-            stats_json["capacidades"] = {}
-        if "atributos" not in stats_json["capacidades"]:
-            stats_json["capacidades"]["atributos"] = {}
-        stats_json["capacidades"]["atributos"]["voluntad"] = new_vol
+        
+        attributes_container["voluntad"] = new_vol
         msg = f"💚 SECRETO PERSONAL: {char_name} encuentra un sentido de pertenencia contigo. +2 Voluntad."
 
     elif secret_type == SecretType.CRITICAL:
-        # Flag de misión personal
+        # Flag de misión personal (JSON Logic)
         if "comportamiento" not in stats_json:
             stats_json["comportamiento"] = {}
         stats_json["comportamiento"]["mision_personal_disponible"] = True
         msg = f"⚠️ SECRETO CRÍTICO: {char_name} revela algo importante de su pasado. Se desbloquea una misión personal."
 
-    # Guardar secreto revelado
+    # Guardar flag de secreto revelado (JSON Logic)
     if "secreto_revelado" not in stats_json:
         stats_json["secreto_revelado"] = {}
     stats_json["secreto_revelado"] = {
         "tipo": secret_type.value,
-        "revelado_tick": None  # Se llena desde el caller con el tick actual
+        "revelado_tick": None  # Se llena desde el caller con el tick actual si es necesario
     }
 
+    # Empaquetar stats_json en el payload
+    update_payload["stats_json"] = stats_json
+
     # Actualizar en DB
-    update_character(character_id, {"stats_json": stats_json})
+    # Nota: update_character maneja kwargs mapeando a columnas si existen
+    update_character(character_id, update_payload)
 
     return secret_type, msg, stats_json
 
@@ -268,6 +283,7 @@ def process_passive_knowledge_updates(player_id: int, current_tick: int) -> List
     )
 
     updates_log = []
+    # get_all_player_characters devuelve dicts híbridos (cols SQL + stats_json)
     characters = get_all_player_characters(player_id)
 
     for char in characters:
@@ -283,6 +299,7 @@ def process_passive_knowledge_updates(player_id: int, current_tick: int) -> List
             continue
 
         # Obtener ticks en servicio
+        # Preferir columna SQL si existe en el dict
         recruited_tick = char.get("recruited_at_tick", current_tick)
         ticks_in_service = max(0, current_tick - recruited_tick)
 
@@ -312,7 +329,7 @@ def process_passive_knowledge_updates(player_id: int, current_tick: int) -> List
                     updates_log.append(msg)
                     log_event(msg, player_id)
 
-                    # Actualizar nivel_acceso interno
+                    # Actualizar nivel_acceso interno (JSON)
                     update_character_access_level(char_id, BIO_ACCESS_KNOWN)
 
                 elif new_level_enum == KnowledgeLevel.FRIEND:
@@ -320,14 +337,15 @@ def process_passive_knowledge_updates(player_id: int, current_tick: int) -> List
                     updates_log.append(msg)
                     log_event(msg, player_id)
 
-                    # Actualizar nivel_acceso interno
+                    # Actualizar nivel_acceso interno (JSON)
                     update_character_access_level(char_id, BIO_ACCESS_DEEP)
 
                     # Revelar secreto
+                    # FIX: Pasamos 'char' completo para acceder a cols SQL
                     secret_type, secret_msg, _ = reveal_secret_on_friend(
                         char_id,
                         player_id,
-                        stats
+                        char
                     )
                     updates_log.append(secret_msg)
                     log_event(secret_msg, player_id)
