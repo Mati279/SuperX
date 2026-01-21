@@ -16,7 +16,7 @@ from data.world_repository import (
 from data.player_repository import get_all_players
 # Imports para la lógica del MRG (Misiones)
 from data.database import get_supabase
-from data.character_repository import update_character
+from data.character_repository import update_character, STATUS_ID_MAP
 
 # Configuración de Logging Profesional
 logger = logging.getLogger(__name__)
@@ -180,9 +180,10 @@ def _phase_decrement_and_persistence():
         db = _get_db()
 
         # 1. Decrement mission remaining days
+        # Refactor MMFR: Filtro por estado_id 2 (En Misión)
         missions_res = db.table("characters")\
             .select("id, player_id, nombre, stats_json")\
-            .eq("estado", "En Mision")\
+            .eq("estado_id", STATUS_ID_MAP["En Misión"])\
             .execute()
 
         for char in (missions_res.data or []):
@@ -199,9 +200,10 @@ def _phase_decrement_and_persistence():
                     log_event(f"Mission ready for resolution: {char['nombre']}", char.get('player_id'))
 
         # 2. Heal wounded characters
+        # Refactor MMFR: Filtro por estado_id 3 (Herido)
         wounded_res = db.table("characters")\
             .select("id, player_id, nombre, stats_json")\
-            .eq("estado", "Herido")\
+            .eq("estado_id", STATUS_ID_MAP["Herido"])\
             .execute()
 
         for char in (wounded_res.data or []):
@@ -213,8 +215,9 @@ def _phase_decrement_and_persistence():
                 update_character(char['id'], {"stats_json": stats})
             else:
                 stats.pop('wound_ticks_remaining', None)
+                # Refactor MMFR: Cambio a estado_id 1 (Disponible)
                 update_character(char['id'], {
-                    "estado": "Disponible",
+                    "estado_id": STATUS_ID_MAP["Disponible"],
                     "ubicacion": "Barracones",
                     "stats_json": stats
                 })
@@ -420,7 +423,12 @@ def _phase_mission_resolution():
     """Fase 6: Resolución de Misiones (MRG v2.0)."""
     log_event("running phase 6: Resolución de Misiones (MRG 2d50)...")
     try:
-        response = _get_db().table("characters").select("*").eq("estado", "En Misión").execute()
+        # Refactor MMFR: Filtro por estado_id 2 (En Misión)
+        response = _get_db().table("characters")\
+            .select("*")\
+            .eq("estado_id", STATUS_ID_MAP["En Misión"])\
+            .execute()
+            
         active_operatives = response.data or []
         for char in active_operatives:
             player_id = char['player_id']
@@ -434,15 +442,21 @@ def _phase_mission_resolution():
                 reward = int(mission_data.get('reward', 200) * (0.75 if result.result_type == ResultType.PARTIAL_SUCCESS else 1.1))
                 update_player_credits(player_id, get_player_credits(player_id) + reward)
                 msg = f"✅ ÉXITO: {char['nombre']} completó misión. Recompensa: {reward} C."
-                status, loc = "Disponible", "Barracones"
+                status_id, loc = STATUS_ID_MAP["Disponible"], "Barracones"
             else:
-                status = "Herido" if result.result_type == ResultType.CRITICAL_FAILURE else "Disponible"
-                loc = "Enfermería" if status == "Herido" else "Barracones"
-                msg = f"❌ FRACASO: {char['nombre']} falló la misión."
-                if status == "Herido": msg += " Sufrió heridas graves."
+                # Refactor MMFR: Mapeo de resultados a IDs
+                if result.result_type == ResultType.CRITICAL_FAILURE:
+                    status_id = STATUS_ID_MAP["Herido"]
+                    loc = "Enfermería"
+                    msg = f"❌ FRACASO: {char['nombre']} falló la misión. Sufrió heridas graves."
+                else:
+                    status_id = STATUS_ID_MAP["Disponible"]
+                    loc = "Barracones"
+                    msg = f"❌ FRACASO: {char['nombre']} falló la misión."
             
             if 'active_mission' in stats: del stats['active_mission']
-            update_character(char['id'], {"estado": status, "ubicacion": loc, "stats_json": stats})
+            # Refactor MMFR: Se envía estado_id en lugar de estado (texto)
+            update_character(char['id'], {"estado_id": status_id, "ubicacion": loc, "stats_json": stats})
             log_event(msg, player_id)
     except Exception as e:
         logger.error(f"Error en fase de misiones: {e}")
