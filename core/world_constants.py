@@ -4,8 +4,11 @@ Constantes universales y definiciones de juego.
 Incluye recursos, tipos de estrellas y definiciones de edificios/módulos.
 Actualizado v4.1.3: Recurso Datos y Categorías de Lujo.
 Actualizado v4.2.0: Arquitectura de Sectores y Matriz de Probabilidad.
+Actualizado v4.3.0: Planetología Avanzada y Subdivisión de Sectores (Refactorización Completa).
 """
-from typing import Dict
+from typing import Dict, List
+
+# --- ESTRELLAS ---
 
 # Tipos de estrellas y sus colores para el mapa
 STAR_TYPES = {
@@ -29,44 +32,70 @@ STAR_RARITY_WEIGHTS = {
     "M": 0.20,  # Enanas rojas comunes
 }
 
-# Biomas planetarios para generacion procedural
+# --- PLANETOLOGÍA AVANZADA (TAREA 2) ---
+
+# Clases de Masa y Capacidad de Sectores
+PLANET_MASS_CLASSES = {
+    'Enano': 2,
+    'Estándar': 4,
+    'Grande': 6,
+    'Gigante': 8
+}
+
+# Pesos de Probabilidad por Zona Orbital
+# Alta=6, Media=3, Baja=1
+ORBITAL_ZONE_WEIGHTS = {
+    "ALTA": 6,
+    "MEDIA": 3,
+    "BAJA": 1
+}
+
+# Modificadores de Seguridad por distancia (Distancia al Sol)
+SECURITY_MOD_INNER = {1: -5, 2: -3}
+SECURITY_MOD_OUTER = {5: -3, 6: -5}
+
+# Tabla Maestra de Biomas (Extraída de image_c5ef58.png)
 PLANET_BIOMES = {
-    "Desertico": {"bonuses": {"materiales": 1}, "construction_slots": 4, "maintenance_mod": 1.2},
-    "Oceanico": {"bonuses": {"energia": 1}, "construction_slots": 3, "maintenance_mod": 1.0},
-    "Templado": {"bonuses": {"poblacion": 1}, "construction_slots": 6, "maintenance_mod": 0.8},
-    "Glacial": {"bonuses": {"componentes": 1}, "construction_slots": 3, "maintenance_mod": 1.3},
-    "Volcanico": {"bonuses": {"materiales": 2}, "construction_slots": 2, "maintenance_mod": 1.5},
-    "Toxico": {"bonuses": {"quimicos": 1}, "construction_slots": 2, "maintenance_mod": 1.8},
-    "Gaseoso": {"bonuses": {"combustible": 2}, "construction_slots": 0, "maintenance_mod": 2.0},
-    "Arido": {"bonuses": {}, "construction_slots": 4, "maintenance_mod": 1.1},
+    "Volcánico": {
+        "resources": ["Magnetita", "Cristales de Foco", "Azufre"],
+        "modifiers": {"habitability": -30, "industry": +20},
+        "description": "Actividad tectónica extrema y ríos de lava. Común en zona interna.",
+        "allowed_zones": {"INNER": "ALTA", "HABITABLE": "BAJA", "OUTER": None}
+    },
+    "Tóxico": {
+        "resources": ["Gases Nobles", "Núcleos de Datos Crípticos"],
+        "modifiers": {"habitability": -50, "science": +15},
+        "description": "Atmósfera corrosiva rica en compuestos químicos raros.",
+        "allowed_zones": {"INNER": "ALTA", "HABITABLE": "MEDIA", "OUTER": "BAJA"}
+    },
+    "Templado": {
+        "resources": ["Agua", "Oxígeno", "Biomasa"],
+        "modifiers": {"habitability": +40, "growth": +10},
+        "description": "Clima estable y ecosistemas diversos. Ideal para la vida.",
+        "allowed_zones": {"INNER": None, "HABITABLE": "ALTA", "OUTER": None}
+    },
+    "Oceánico": {
+        "resources": ["Agua", "Hielo Metano", "Perlas de Sílice"],
+        "modifiers": {"habitability": +20, "food": +25},
+        "description": "Superficie cubierta casi totalmente por agua líquida.",
+        "allowed_zones": {"INNER": None, "HABITABLE": "ALTA", "OUTER": "MEDIA"}
+    },
+    "Glacial": {
+        "resources": ["Hielo Creativo", "Isótopos Fríos"],
+        "modifiers": {"habitability": -20, "energy": +10},
+        "description": "Temperaturas bajo cero con depósitos minerales congelados.",
+        "allowed_zones": {"INNER": None, "HABITABLE": "BAJA", "OUTER": "ALTA"}
+    },
+    "Gaseoso": {
+        "resources": ["Helio-3", "Hidrógeno", "Núcleos de Datos Crípticos"],
+        "modifiers": {"habitability": -100, "extraction": +40},
+        "description": "Gigante sin superficie sólida, extracción mediante plataformas.",
+        "allowed_zones": {"INNER": None, "HABITABLE": None, "OUTER": "ALTA"}
+    }
 }
 
-# Configuracion de zonas orbitales
-ORBITAL_ZONES = {
-    "inner": {
-        "rings": [1, 2],
-        "planet_weights": {
-            "Volcanico": 3, "Desertico": 2, "Toxico": 1, "Arido": 1,
-            "Oceanico": 0, "Templado": 0, "Glacial": 0, "Gaseoso": 0
-        }
-    },
-    "habitable": {
-        "rings": [3, 4],
-        "planet_weights": {
-            "Templado": 4, "Oceanico": 3, "Desertico": 2, "Arido": 2,
-            "Volcanico": 0, "Toxico": 0, "Glacial": 1, "Gaseoso": 0
-        }
-    },
-    "outer": {
-        "rings": [5, 6],
-        "planet_weights": {
-            "Glacial": 3, "Gaseoso": 4, "Arido": 2, "Toxico": 1,
-            "Volcanico": 0, "Desertico": 0, "Oceanico": 0, "Templado": 0
-        }
-    },
-}
+# --- RECURSOS Y PESOS ---
 
-# Probabilidad de cinturon de asteroides
 ASTEROID_BELT_CHANCE = 0.15
 
 # Pesos de recursos por clase de estrella
@@ -80,7 +109,6 @@ RESOURCE_STAR_WEIGHTS = {
     "M": {"Hierro": 2, "Aluminio": 3, "Cobre": 2},
 }
 
-# Recursos metálicos (para generación de planetas y filtros de mapa)
 METAL_RESOURCES = {
     "Hierro": {"value": 1, "tier": 1},
     "Titanio": {"value": 2, "tier": 1},
@@ -93,14 +121,12 @@ METAL_RESOURCES = {
 
 # --- REGLAS DE BASE (MÓDULO 20) ---
 
-# Costos para ascender el Tier de la Base Principal
 BASE_TIER_COSTS = {
     2: {"creditos": 2000, "materiales": 1000},
     3: {"creditos": 5000, "materiales": 2500, "tecnologia": "Expansión Modular"},
     4: {"creditos": 10000, "materiales": 5000, "tecnologia": "Citadela Planetaria"}
 }
 
-# Módulos de Infraestructura (Sensores y Defensas)
 INFRASTRUCTURE_MODULES = {
     "sensor_ground": {
         "name": "Sensor Planetario", 
@@ -130,9 +156,6 @@ INFRASTRUCTURE_MODULES = {
     }
 }
 
-# Edificios Construibles (Ocupan Slots)
-# 'maintenance' define el costo POR TURNO para operar.
-# Si no se paga, el edificio se desactiva (is_active=False).
 BUILDING_TYPES = {
     "hq": {
         "name": "Comando Central",
@@ -174,7 +197,7 @@ BUILDING_TYPES = {
     "fusion_reactor": {
         "name": "Reactor de Fusión",
         "material_cost": 500,
-        "maintenance": {"creditos": 50, "materiales": 10}, # Requiere 'combustible' (materiales)
+        "maintenance": {"creditos": 50, "materiales": 10},
         "description": "Generación masiva de energía (Tier 2).",
         "pops_required": 50,
         "min_tier": 2,
@@ -192,32 +215,24 @@ BUILDING_TYPES = {
     }
 }
 
-# Prioridad de apagado (Mayor número = Se apaga primero)
 BUILDING_SHUTDOWN_PRIORITY = {
     "extraccion": 4,
     "industria": 3,
     "tecnologia": 2,
     "defensa": 1,
-    "energia": 0, # Energía es vital, se intenta mantener hasta el final
+    "energia": 0,
     "administracion": 0
 }
 
 ECONOMY_RATES = {
-    # Actualizado para escala de Población 1.0 - 10.0 (1.0 = 1B Habitantes)
-    "income_per_pop": 150.0, # Créditos por 1.0 de pop (antes 0.1 por unidad)
-    
-    # Valores base para cálculo de Seguridad (0-100)
+    "income_per_pop": 150.0,
     "security_base": 25.0,
-    "security_per_1b_pop": 5.0, # +5 seguridad por cada 1.0 de pop (1B)
-    
-    # Bonus de infraestructura a la seguridad (puntos planos)
+    "security_per_1b_pop": 5.0,
     "security_bonus_sensor": 2.0,
     "security_bonus_defense_aa": 5.0,
     "security_bonus_defense_ground": 5.0,
     "security_bonus_defense_orbital": 10.0
 }
-
-# --- ECONOMÍA V4.1.2: PRECIOS Y RECURSOS ---
 
 BROKER_PRICES = {
     "materiales": 20,
@@ -258,9 +273,7 @@ LUXURY_DATA = {
     },
 }
 
-# ==========================================
-# SECTORES Y GENERACIÓN V4.2.0
-# ==========================================
+# --- SECTORES Y GENERACIÓN V4.2.0 ---
 
 SECTOR_TYPE_URBAN = "Urbano"
 SECTOR_TYPE_PLAIN = "Llanura"
@@ -280,37 +293,4 @@ RESOURCE_CHANCE_MEDIUM = 0.30
 RESOURCE_CHANCE_LOW = 0.10
 RESOURCE_CHANCE_NONE = 0.0
 
-# MATRIZ DE PROBABILIDAD (Biome -> Resource Chance)
-# Mapeado a las keys de PLANET_BIOMES
-BIOME_RESOURCE_MATRIX: Dict[str, float] = {
-    "Templado": RESOURCE_CHANCE_HIGH,
-    "Desertico": RESOURCE_CHANCE_MEDIUM,
-    "Oceanico": RESOURCE_CHANCE_MEDIUM,
-    "Glacial": RESOURCE_CHANCE_LOW,
-    "Volcanico": RESOURCE_CHANCE_HIGH,
-    "Toxico": RESOURCE_CHANCE_LOW,
-    "Arido": RESOURCE_CHANCE_MEDIUM,
-    "Gaseoso": RESOURCE_CHANCE_NONE,
-}
-
-# Probabilidad de que un sector sea Inhóspito según bioma
-BIOME_INHOSPITABLE_CHANCE: Dict[str, float] = {
-    "Templado": 0.1,
-    "Desertico": 0.4,
-    "Oceanico": 0.3, # Mucho mar abierto
-    "Glacial": 0.5,
-    "Volcanico": 0.7,
-    "Toxico": 0.6,
-    "Arido": 0.3,
-    "Gaseoso": 1.0, # Todo inhóspito (salvo orbital)
-}
-
-# Control & Economía
-DISPUTED_PENALTY_MULTIPLIER = 0.3 # 70% penalización
-WRONG_SECTOR_EFFICIENCY = 0.5
-CORRECT_SECTOR_EFFICIENCY = 1.0
-
-# Base Slots
-SLOTS_BASE = 1
-SLOTS_OUTPOST = 0
 MAX_SLOTS_PER_SECTOR = 3

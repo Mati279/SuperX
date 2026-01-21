@@ -1,4 +1,9 @@
 # core/world_models.py
+"""
+Modelos de datos para el universo de SuperX.
+Define la jerarquía de cuerpos celestes, sectores y estructuras galácticas.
+Actualizado v4.3.0: Soporte para Planetología Avanzada (Anillos, Masa y Sectores).
+"""
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, Optional
 from datetime import datetime
@@ -17,6 +22,7 @@ class Sector:
     explored_by: List[int] = field(default_factory=list) # IDs de jugadores
     owner_id: Optional[int] = None # ID del jugador dueño de la base/puesto
     has_outpost: bool = False
+    is_known: bool = False # V4.3.0: Soporte para niebla de superficie
     
     def is_explored_by(self, player_id: int) -> bool:
         return player_id in self.explored_by
@@ -46,6 +52,12 @@ class Planet(CelestialBody):
     is_habitable: bool = False
     slots: int = 0
     resources: Dict[str, float] = field(default_factory=dict)
+    
+    # --- Actualización V4.3.0: Planetología Avanzada ---
+    orbital_ring: int = 3 # Posición en el sistema (1-6)
+    mass_class: str = "Estándar" # Enano, Estándar, Grande, Gigante
+    max_sectors: int = 4 # Capacidad física de subdivisiones
+    is_known: bool = False # Niebla de guerra a nivel planeta
     
     # --- Actualización V4.2.0: Sectores y Control ---
     sectors: List[Sector] = field(default_factory=list)
@@ -95,16 +107,13 @@ class System:
     y: float
     star: Star
     planets: List[Planet] = field(default_factory=list)
-    # Nuevo: Lista de IDs de sistemas conectados
     neighbors: List[int] = field(default_factory=list)
-    # Nuevos campos v2 (Esquema DB Actualizado)
     description: str = ""
     controlling_faction_id: Optional[int] = None
 
 @dataclass
 class Galaxy:
     systems: List[System] = field(default_factory=list)
-    # Nuevo: Lista de tuplas (id_origen, id_destino) representando las conexiones
     starlanes: List[Tuple[int, int]] = field(default_factory=list) 
     
     def get_system_by_id(self, system_id: int) -> Optional[System]:

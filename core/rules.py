@@ -1,10 +1,7 @@
 # core/rules.py
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 from core.constants import SKILL_MAPPING, ATTRIBUTE_COST_MULTIPLIER
 from core.models import KnowledgeLevel
-
-# ... (Mantener funciones calculate_skills, calculate_attribute_cost, get_color_for_level) ...
-# ... Asegúrate de que el archivo conserve su contenido original ...
 
 def calculate_skills(attributes: Dict[str, int]) -> Dict[str, int]:
     skills = {}
@@ -107,3 +104,41 @@ def calculate_passive_knowledge_progress(
 
         progress = (ticks_in_friend_phase / friend_phase_duration) * 100 if ticks_in_friend_phase > 0 else 0
         return KnowledgeLevel.KNOWN, max(0.0, min(100.0, progress))
+
+
+# --- REGLAS DE CONTROL GALÁCTICO (V4.3.0) ---
+
+def calculate_system_control(system_id: int):
+    """
+    Determina qué facción controla el sistema basándose en la mayoría de planetas (>50%).
+    Actualiza la tabla 'systems' mediante el world_repository.
+    """
+    # Importaciones locales para evitar ciclos de importación circular
+    from data.world_repository import get_planets_by_system_id, update_system_controller
+    from data.player_repository import get_player_by_id
+
+    planets = get_planets_by_system_id(system_id)
+    if not planets:
+        return
+
+    total_planets = len(planets)
+    faction_counts = {}
+
+    for planet in planets:
+        # Se asume que el control del sistema depende de quién domina la superficie
+        owner_id = planet.get("surface_owner_id")
+        if owner_id:
+            player = get_player_by_id(owner_id)
+            if player and player.get("faction_id"):
+                f_id = player["faction_id"]
+                faction_counts[f_id] = faction_counts.get(f_id, 0) + 1
+
+    # Determinar si alguna facción tiene mayoría absoluta (> 50%)
+    new_controller_id = None
+    for f_id, count in faction_counts.items():
+        if count > (total_planets / 2):
+            new_controller_id = f_id
+            break
+    
+    # Impactar el cambio en la base de datos
+    update_system_controller(system_id, new_controller_id)

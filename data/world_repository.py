@@ -270,3 +270,22 @@ def get_starlanes_from_db() -> List[Dict[str, Any]]:
     except Exception as e:
         log_event(f"Error obteniendo starlanes: {e}", is_error=True)
         return []
+
+# --- ACTUALIZACIÓN DE CONTROL (V4.3.0) ---
+
+def update_system_controller(system_id: int, faction_id: Optional[int]) -> bool:
+    """
+    Actualiza la facción que controla el sistema en la base de datos.
+    Se usa para marcar el dominio > 50% de los planetas.
+    """
+    try:
+        _get_db().table("systems").update({
+            "controlling_faction_id": faction_id
+        }).eq("id", system_id).execute()
+        
+        status = f"Facción {faction_id}" if faction_id else "Neutral/Disputado"
+        log_event(f"Control del Sistema {system_id} actualizado a: {status}", event_type="GALAXY_CONTROL")
+        return True
+    except Exception as e:
+        log_event(f"Error actualizando controlador de sistema {system_id}: {e}", is_error=True)
+        return False
