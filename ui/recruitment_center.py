@@ -1,22 +1,23 @@
 # ui/recruitment_center.py
 """
-Centro de Reclutamiento Galactico - Contratacion de nuevos operativos.
+Centro de Reclutamiento Galáctico - Contratación de nuevos operativos.
 
 Sistema de Reclutamiento v3 (Asíncrono):
 - Solicitud de búsqueda encolada.
 - Generación diferida al Tick.
 - Persistencia unificada.
+Debug v2.3: Validación de IA en cabecera y disparador manual de emergencia para pruebas.
 """
 
 import streamlit as st
 from typing import Dict, Any, Optional
 
 from ui.state import get_player
+from data.database import get_service_container
 from data.player_repository import get_player_credits, update_player_credits
 from data.character_repository import update_character, set_character_knowledge_level
 from data.recruitment_repository import (
     get_recruitment_candidates,
-    remove_candidate, # Usado para expiración manual/debug si necesario
     set_candidate_tracked,
     get_tracked_candidate,
     set_investigation_state
@@ -104,8 +105,7 @@ def _render_candidate_card(
     bio = stats.get("bio", {})
     atributos = stats.get("capacidades", {}).get("atributos", {})
     habilidades = stats.get("capacidades", {}).get("habilidades", {})
-    comportamiento = stats.get("comportamiento", {})
-    rasgos = comportamiento.get("rasgos_personalidad", [])
+    rasgos = stats.get("comportamiento", {}).get("rasgos_personalidad", [])
 
     # Extraer datos basicos
     nivel = stats.get("progresion", {}).get("nivel", 1)
@@ -204,22 +204,15 @@ def _render_candidate_card(
              _render_top_skills(habilidades, count=skill_count)
 
         # Rasgos de personalidad
-        if show_traits and rasgos:
+        if already_investigated and rasgos:
             traits_html = " ".join([f'<span style="display: inline-block; padding: 2px 8px; margin: 2px; border-radius: 10px; background: rgba(165,94,234,0.15); color: #a55eea; font-size: 0.75em; border: 1px solid #a55eea40;">{t}</span>' for t in rasgos])
             st.markdown(f"**Personalidad:** {traits_html}", unsafe_allow_html=True)
-        elif not show_traits:
+        elif not already_investigated:
             st.caption("*Rasgos de personalidad: Desconocidos*")
 
 
         # --- Visualizacion del Costo ---
         cost_color = "#26de81" if can_afford else "#ff6b6b"
-        
-        # Recuperar costo original si hubo descuento
-        original_cost = None
-        if discount_applied:
-             # Recalcular aproximado inverso o guardar en metadata si fuera necesario
-             # Por simplicidad visual, mostramos solo el actual rebajado
-             pass
         
         cost_display_html = ""
         if discount_applied:
@@ -285,21 +278,6 @@ def _render_candidate_card(
             ):
                 _handle_investigation(player_id, candidate, player_credits)
 
-            # --- DEBUG MENU ---
-            with st.popover("Debug"):
-                st.caption("Forzar resultado:")
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("Critico", key=f"d_cs_{candidate['id']}", help="Exito Critico"):
-                        _handle_investigation(player_id, candidate, player_credits, debug_outcome="CRIT_SUCCESS")
-                    if st.button("Fallo", key=f"d_f_{candidate['id']}", help="Fallo normal"):
-                        _handle_investigation(player_id, candidate, player_credits, debug_outcome="FAIL")
-                with c2:
-                    if st.button("Exito", key=f"d_s_{candidate['id']}", help="Exito normal"):
-                        _handle_investigation(player_id, candidate, player_credits, debug_outcome="SUCCESS")
-                    if st.button("Pifia", key=f"d_cf_{candidate['id']}", help="El candidato huye"):
-                        _handle_investigation(player_id, candidate, player_credits, debug_outcome="CRIT_FAIL")
-
         # 3. Boton Contratar (Azul / Primary)
         with col_recruit:
             if can_afford:
@@ -343,20 +321,16 @@ def _process_recruitment_ui(player_id: int, candidate: Dict[str, Any], player_cr
     Procesa el reclutamiento final (Actualizacion de Estado).
     """
     try:
-        # Usamos la logica core para calcular balances y payload
         new_credits, update_data = process_recruitment(player_id, player_credits, candidate)
         initial_knowledge = update_data.pop("initial_knowledge_level", None)
 
-        # 1. Cobrar
         if not update_player_credits(player_id, new_credits):
             st.error("Error en transaccion financiera.")
             return
 
-        # 2. Actualizar Personaje (De Candidato a Activo)
         updated_char = update_character(candidate["id"], update_data)
 
         if updated_char:
-            # 3. Establecer Conocimiento (si corresponde)
             if initial_knowledge:
                 set_character_knowledge_level(candidate["id"], player_id, initial_knowledge)
 
@@ -375,19 +349,15 @@ def _process_recruitment_ui(player_id: int, candidate: Dict[str, Any], player_cr
 def _handle_search_request_async(player_id: int, player_credits: int):
     """
     Maneja la solicitud de buscar nuevos candidatos de forma ASÍNCRONA.
-    Encola la orden '[INTERNAL_SEARCH_CANDIDATES]' y cobra por adelantado.
     """
-
     if player_credits < SEARCH_COST:
         st.error("Créditos insuficientes para iniciar búsqueda.")
         return
 
-    # 1. Cobrar por adelantado
     if not update_player_credits(player_id, player_credits - SEARCH_COST):
         st.error("Error en transacción financiera.")
         return
 
-    # 2. Encolar acción interna
     cmd = "[INTERNAL_SEARCH_CANDIDATES]"
     
     if queue_player_action(player_id, cmd):
@@ -395,24 +365,28 @@ def _handle_search_request_async(player_id: int, player_credits: int):
         st.toast(f"Solicitud enviada. -{SEARCH_COST} C.", icon="📡")
         st.rerun()
     else:
-        # Rollback si falla el encolado
         update_player_credits(player_id, player_credits)
-        st.error("Error al conectar con la red de reclutamiento. Créditos devueltos.")
+        st.error("Error al conectar con la red de reclutamiento.")
 
 
 def show_recruitment_center():
     """Pagina principal del Centro de Reclutamiento."""
 
     st.title("Centro de Reclutamiento")
-    st.caption("Encuentra y contrata nuevos operativos para tu faccion")
-    st.markdown("---")
-
+    
     player = get_player()
     if not player:
         st.warning("Error de sesion.")
         return
-
     player_id = player.id
+
+    # 1. VALIDACIÓN DE CONECTIVIDAD IA (NUEVO)
+    container = get_service_container()
+    ai_status = container.is_ai_available()
+    if ai_status:
+        st.success("🛰️ Red de Inteligencia Gemini activa. Generación de perfiles de alta fidelidad disponible.", icon="✅")
+    else:
+        st.warning("📡 Red de Inteligencia en modo local. Los nuevos perfiles podrían ser genéricos hasta restablecer conexión.", icon="⚠️")
 
     # Estado del mundo
     world_state = get_world_state()
@@ -421,11 +395,8 @@ def show_recruitment_center():
     # Estados de bloqueo
     investigation_active = has_pending_investigation(player_id)
     search_pending = has_pending_search(player_id)
-
-    # Obtener info de investigacion en curso (para mostrar nombre del objetivo)
     investigating_target = get_investigating_target_info(player_id)
 
-    # Obtener candidatos de DB (Ahora tabla characters filtrada)
     candidates = get_recruitment_candidates(player_id)
     player_credits = get_player_credits(player_id)
 
@@ -433,112 +404,58 @@ def show_recruitment_center():
     col_credits, col_refresh = st.columns([3, 1])
 
     with col_credits:
-        st.markdown(f"""
-            <div style="
-                background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-                padding: 16px;
-                border-radius: 10px;
-                border: 1px solid #333;
-            ">
-                <span style="color: #888; font-size: 0.85em;">CREDITOS DISPONIBLES</span><br>
-                <span style="font-size: 2em; font-weight: bold; color: #ffd700;">{player_credits:,} C</span>
-            </div>
-        """, unsafe_allow_html=True)
+        st.metric("CRÉDITOS DISPONIBLES", f"{player_credits:,} C")
 
     with col_refresh:
         st.write("")
-        
-        # Lógica del botón de búsqueda (Bloqueado si hay pendiente)
         if search_pending:
             st.info("📡 Búsqueda en curso")
-            st.caption("Resultados: Próximo Tick")
-        
+            # 2. TRIGGER MANUAL DE EMERGENCIA (NUEVO)
+            if st.button("⚡ Forzar Generación (Test)", help="Solo para depuración: Genera candidatos inmediatamente sin esperar al Tick."):
+                from services.character_generation_service import generate_character_pool
+                try:
+                    with st.spinner("Generando pool de emergencia..."):
+                        generate_character_pool(player_id, pool_size=3)
+                    st.success("Pool generado manualmente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error en trigger manual: {e}")
         else:
             can_search = player_credits >= SEARCH_COST
-            button_label = f"Buscar Nuevos\n({SEARCH_COST} C)"
-            
-            if st.button(
-                button_label,
-                disabled=not can_search,
-                type="primary",
-                use_container_width=True
-            ):
+            if st.button(f"Buscar Nuevos\n({SEARCH_COST} C)", disabled=not can_search, type="primary", use_container_width=True):
                 _handle_search_request_async(player_id, player_credits)
 
-    # Mensajes de estado
     if investigation_active:
         target_name = investigating_target.get("target_name", "un objetivo") if investigating_target else "un objetivo"
-        st.info(f"🕵️ **Investigacion en curso** sobre **{target_name}**. Los canales de inteligencia estan ocupados hasta el proximo Tick.")
+        st.info(f"🕵️ **Investigación en curso** sobre **{target_name}**.")
 
     st.markdown("---")
 
-    # Contenido principal
     if not candidates:
-        # Roster vacio
-        
-        # Mensaje diferenciado si hay búsqueda pendiente o no
         if search_pending:
-            st.markdown(f"""
-                <div style="
-                    text-align: center;
-                    padding: 60px 20px;
-                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-                    border-radius: 15px;
-                    border: 2px dashed #45b7d1;
-                ">
+            st.markdown("""
+                <div style="text-align: center; padding: 60px 20px; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border-radius: 15px; border: 2px dashed #45b7d1;">
                     <div style="font-size: 4em; margin-bottom: 20px; animation: pulse 2s infinite;">📡</div>
                     <h3 style="color: #45b7d1; margin-bottom: 10px;">Enlace de Reclutamiento Activo</h3>
                     <p style="color: #ccc;">La red está procesando tu solicitud. Los perfiles de los candidatos llegarán en el próximo ciclo.</p>
                 </div>
             """, unsafe_allow_html=True)
-            
         else:
-            st.markdown(f"""
-                <div style="
-                    text-align: center;
-                    padding: 60px 20px;
-                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-                    border-radius: 15px;
-                    border: 2px dashed #333;
-                ">
-                    <div style="font-size: 4em; margin-bottom: 20px;">📭</div>
-                    <h3 style="color: #888; margin-bottom: 10px;">No hay candidatos disponibles</h3>
-                    <p style="color: #666;">Utiliza el boton <b>Buscar Nuevos</b> para contactar potenciales reclutas.</p>
-                    <p style="color: #555; font-size: 0.85em;">La busqueda cuesta {SEARCH_COST} creditos y tarda <b>1 Tick</b>.</p>
-                </div>
-            """, unsafe_allow_html=True)
-
+            st.caption("No hay candidatos disponibles. Utiliza el botón de búsqueda.")
     else:
-        # --- ANALISIS SMART DE RECLUTAMIENTO ---
-        # Analizamos todos los candidatos de una sola vez
         recommendations = analyze_candidates_value(player_id, candidates)
-        
-        # Mostrar candidatos
         tracked = get_tracked_candidate(player_id)
-        tracked_msg = f" (Siguiendo: **{tracked['nombre']}**)" if tracked else ""
+        st.subheader(f"Candidatos Disponibles ({len(candidates)})")
+        if tracked: st.caption(f"(Siguiendo: **{tracked['nombre']}**)")
 
-        st.subheader(f"Candidatos Disponibles ({len(candidates)}){tracked_msg}")
-
-        # --- GRID SYSTEM 4 COLUMNAS ---
         cols = st.columns(4)
-        
         for i, candidate in enumerate(candidates):
             col_idx = i % 4
             if i > 0 and col_idx == 0:
                 cols = st.columns(4)
-            
-            # Recuperar recomendación para este candidato si existe
             cand_recommendation = recommendations.get(candidate['id'])
-                
             with cols[col_idx]:
-                _render_candidate_card(
-                    candidate,
-                    player_credits,
-                    player_id,
-                    investigation_active,
-                    current_tick,
-                    recommendation=cand_recommendation
-                )
+                _render_candidate_card(candidate, player_credits, player_id, investigation_active, current_tick, recommendation=cand_recommendation)
 
     st.markdown("---")
     st.caption(f"Los candidatos expiran despues de {CANDIDATE_LIFESPAN_TICKS} ciclos si no son reclutados o seguidos.")
