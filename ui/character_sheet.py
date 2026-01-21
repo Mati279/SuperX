@@ -1,4 +1,10 @@
 # ui/character_sheet.py
+"""
+Interfaz de Ficha de Personaje.
+Renderiza los datos hidratados del personaje con soporte para niveles de conocimiento.
+Actualizado v5.1.0: Biografía consolidada de 3 niveles y limpieza de campos legacy.
+"""
+
 import streamlit as st
 import pandas as pd
 from core.models import KnowledgeLevel, CharacterRole, CommanderData
@@ -26,10 +32,7 @@ ATTR_ABBREVIATIONS = {
 }
 
 def _get_attribute_color(value: int) -> str:
-    """
-    Retorna el color para ATRIBUTOS (Escala típica 1-20).
-    Mantenemos la escala de 4 niveles para atributos por ser un rango corto.
-    """
+    """Retorna el color para ATRIBUTOS (Escala típica 1-20)."""
     if value < 8:
         return COLOR_LEVEL_0
     elif value <= 12:
@@ -40,9 +43,7 @@ def _get_attribute_color(value: int) -> str:
         return COLOR_LEVEL_6 # Oro
 
 def _get_skill_color(value: int) -> str:
-    """
-    Retorna el color para HABILIDADES (Escala extendida de 7 niveles para 1-100).
-    """
+    """Retorna el color para HABILIDADES (Escala extendida 1-100)."""
     if value < 20:
         return COLOR_LEVEL_0
     elif value <= 35:
@@ -59,9 +60,7 @@ def _get_skill_color(value: int) -> str:
         return COLOR_LEVEL_6
 
 def _safe_get_data(stats, keys_v2, keys_v1_fallback, default_val=None):
-    """
-    Intenta recuperar datos buscando primero en la estructura V2 y luego en fallbacks V1.
-    """
+    """Recupera datos buscando en estructura V2 y fallbacks."""
     data = stats
     found_v2 = True
     for k in keys_v2:
@@ -84,20 +83,16 @@ def _safe_get_data(stats, keys_v2, keys_v1_fallback, default_val=None):
 def render_character_sheet(character_data, player_id):
     """
     Renderiza la ficha de personaje con estética unificada.
-    Refactorizado MMFR: Usa CommanderData para hidratar datos desde columnas SQL.
+    Refactorizado v5.1.0: Usa biografía de 3 niveles y datos rehidratados.
     """
     from data.character_repository import get_character_knowledge_level
     
-    # 1. Hidratación MMFR: Convertir dict DB -> Objeto Negocio -> Schema completo
+    # 1. Hidratación MMFR
     try:
-        # CommanderData.from_dict filtra claves extra y mapea columnas a propiedades
         char_obj = CommanderData.from_dict(character_data)
-        # .sheet reconstruye el JSON completo inyectando level, xp, loyalty desde columnas
         sheet = char_obj.sheet
-        # Convertimos a dict para compatibilidad con el resto del código de UI
         stats = sheet.model_dump()
     except Exception as e:
-        # Fallback de seguridad por si el schema falla
         st.warning(f"Error visualizando ficha (Fallback Mode): {e}")
         stats = character_data.get('stats_json', {})
         char_obj = None
@@ -105,7 +100,7 @@ def render_character_sheet(character_data, player_id):
     char_id = character_data['id']
     knowledge_level = get_character_knowledge_level(char_id, player_id)
 
-    # --- DATOS BÁSICOS (Leídos del Schema Hidratado) ---
+    # --- DATOS BÁSICOS ---
     bio_data = stats.get('bio', {})
     tax = stats.get('taxonomia', {})
     prog = stats.get('progresion', {})
@@ -119,19 +114,13 @@ def render_character_sheet(character_data, player_id):
     edad = bio_data.get('edad', '??')
     rango = prog.get('rango', 'Agente') 
     
-    # Nuevos campos MMFR
     lealtad = comp.get('lealtad', 50)
-    # Ubicación: el modelo ya inyectó 'ubicacion_local' texto en el objeto de ubicación
     ubicacion_obj = estado_data.get('ubicacion', {})
     ubicacion_txt = ubicacion_obj.get('ubicacion_local', 'Desconocida')
 
-    # --- CORRECCIÓN CRÍTICA DE RETRATO ---
-    # Se usa prioritariamente la columna portrait_url de la base de datos.
-    # Se ELIMINA el fallback a apariencia_visual ya que es texto descriptivo, no una URL.
+    # Retrato: Prioridad absoluta a la URL de la base de datos
     portrait_url = character_data.get('portrait_url')
-    
     if not portrait_url:
-        # Si no hay imagen, usamos un avatar generado por nombre
         portrait_url = f"https://ui-avatars.com/api/?name={nombre.replace(' ', '+')}&background=random"
 
     # --- HEADER ---
@@ -141,7 +130,6 @@ def render_character_sheet(character_data, player_id):
         st.image(portrait_url, caption=rango)
 
     with col_basic:
-        # Color Lealtad
         loyalty_color = "#e74c3c" if lealtad < 30 else "#f1c40f" if lealtad < 70 else "#2ecc71"
         
         header_html = f"""
@@ -210,6 +198,7 @@ def render_character_sheet(character_data, player_id):
         if knowledge_level == KnowledgeLevel.UNKNOWN:
             st.caption("👁️ *Sólo rasgos visibles a simple vista.*")
         elif feats:
+            # Soporte para talentos estructurados u objetos simples
             feat_html = "".join([f'<span style="display:inline-block; padding:4px 10px; margin:4px; border-radius:15px; background:#333; color:#eee; border:1px solid #555;">🔸 {f["nombre"] if isinstance(f, dict) else f}</span>' for f in feats])
             st.markdown(feat_html, unsafe_allow_html=True)
 
@@ -238,21 +227,25 @@ def render_character_sheet(character_data, player_id):
             st.info("No hay datos de habilidades.")
 
     with tab_bio:
-        bio_corta = bio_data.get('biografia_corta') or bio_data.get('bio_superficial') or "Sin datos."
+        # Perfil Público: biografia_corta
+        bio_corta = bio_data.get('biografia_corta', "Sin datos públicos disponibles.")
         st.markdown("### Expediente Personal")
         st.markdown("**Perfil Público:**")
         st.write(bio_corta)
         
+        # Perfil Profesional: bio_conocida (Nivel KNOWN o superior)
         if knowledge_level in [KnowledgeLevel.KNOWN, KnowledgeLevel.FRIEND]:
             st.divider()
             st.markdown("**Expediente de Servicio:**")
-            st.info(bio_data.get('bio_conocida', 'Investigación en curso...'))
+            st.info(bio_data.get('bio_conocida', 'Investigación profesional en curso...'))
+            
             st.markdown("---")
             st.markdown("**Perfil Psicológico:**")
             traits = _safe_get_data(stats, ['comportamiento', 'rasgos_personalidad'], ['rasgos', 'personalidad'])
             if traits:
                 st.markdown(" ".join([f'<span style="background:#2d3436; color:#a55eea; padding:3px 8px; border-radius:4px; margin-right:5px; border:1px solid #a55eea40;">{t}</span>' for t in traits]), unsafe_allow_html=True)
         
+        # Secretos/Vínculo: bio_profunda (Nivel FRIEND)
         if knowledge_level == KnowledgeLevel.FRIEND:
             st.divider()
             st.markdown("🔒 **Vínculo de Confianza:**")

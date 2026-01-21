@@ -1,9 +1,8 @@
 # services/character_generation_service.py
 """
 Servicio de Generación de Personajes con IA.
-Actualizado para Especialización de Personajes de Alto Nivel y Biografías Coherentes.
+Actualizado v5.1.0: Biografías de 3 capas (Corta, Conocida, Profunda) y ADN Visual.
 Implementa distribución ponderada de atributos y habilidades según la clase.
-Debug v2.4: Implementada reparación de JSON robusta y refuerzo de prompt para escape de comillas.
 """
 
 import random
@@ -51,7 +50,7 @@ AGE_MAX = 70
 PREDOMINANT_RACE_CHANCE = 0.5
 DEFAULT_RANK = "Iniciado"
 
-# Prompt actualizado para Gemini 2.0 Flash con refuerzo de seguridad JSON
+# Prompt actualizado v5.1.0 para biografía de 3 niveles
 IDENTITY_GENERATION_PROMPT = """
 Actúa como un Oficial de Inteligencia de una facción galáctica.
 Genera el dossier para un nuevo operativo altamente especializado.
@@ -66,25 +65,21 @@ DATOS TÉCNICOS:
 - Atributos clave: {top_attributes}
 - Especialidades técnicas (Habilidades): {top_skills}
 
-INSTRUCCIONES DE GENERACIÓN (4 NIVELES):
+INSTRUCCIONES DE GENERACIÓN (3 NIVELES DE BIO):
 1. NOMBRE y APELLIDO: Coherentes con la raza.
-2. BIO SUPERFICIAL (Público - 1 oración): Solo una descripción visual o impresión rápida.
-3. BIO CONOCIDA (Estándar - 40 palabras aprox): Resumen profesional. DEBE reflejar su clase y sus habilidades más altas.
-4. BIO PROFUNDA (Privado - 60-80 palabras): Secretos, traumas o motivaciones ocultas.
+2. BIOGRAFIA_CORTA (Nivel Público - 1 oración): Solo una descripción visual o impresión rápida del personaje.
+3. BIO_CONOCIDA (Nivel Estándar - 40 palabras aprox): Resumen profesional. DEBE reflejar su trayectoria en su clase y sus habilidades más altas.
+4. BIO_PROFUNDA (Nivel Privado - 60-80 palabras): Secretos, traumas, deudas o motivaciones ocultas que solo se revelan con confianza extrema.
 
 ⚠️ INSTRUCCIÓN ESPECIAL: 'apariencia_visual' (ADN VISUAL) ⚠️
-Genera una descripción técnica densa (NO narrativa) de sus rasgos físicos inmutables.
-Debe incluir:
-- ROSTRO: Estructura ósea, textura de piel, detalles exactos de ojos (color, implantes).
-- CABELLO: Estilo, textura (ej: wet-look), corte exacto.
-- CUERPO: Constitución, cibernética visible (materiales, luces), cicatrices.
-- ATUENDO: Tejidos específicos (ej: cuero de búfalo desgastado), marcas de uso, logotipos.
-DENSIDAD OBJETIVO: ~80-100 palabras. Estilo "Prompt de Stable Diffusion/Midjourney".
+Genera una descripción técnica densa (estilo prompt de Stable Diffusion) de sus rasgos físicos inmutables:
+- Rostro, ojos, cabello, constitución física, cibernética visible y vestimenta técnica característica.
+DENSIDAD: ~80 palabras.
 
 REGLAS TÉCNICAS:
 - Responde SOLO con JSON válido.
-- CRITICAL: Escape all double quotes inside text fields with backslashes (\\") and avoid newlines within strings.
-- Si necesitas usar comillas dentro de un texto, usa comillas simples (') obligatoriamente.
+- Escape all double quotes inside text fields with backslashes (\\").
+- No uses saltos de línea dentro de los strings.
 """
 
 
@@ -94,7 +89,7 @@ REGLAS TÉCNICAS:
 
 @dataclass
 class RecruitmentContext:
-    player_id: Optional[int] # Puede ser None para pools globales/locales
+    player_id: Optional[int] 
     location_planet_id: Optional[int] = None
     predominant_race: Optional[str] = None
     min_level: int = 1
@@ -107,7 +102,7 @@ class RecruitmentContext:
 class GeneratedIdentity:
     nombre: str
     apellido: str
-    bio_superficial: str
+    biografia_corta: str
     bio_conocida: str
     bio_profunda: str
     apariencia_visual: str 
@@ -200,7 +195,7 @@ def _calculate_recruitment_cost(stats_json: Dict[str, Any]) -> int:
 
 
 def _generate_fallback_identity(race: str, sex: BiologicalSex) -> GeneratedIdentity:
-    """Genera identidades con las 3 capas si la IA falla. ADN Visual incluido."""
+    """Genera identidades de respaldo v5.1.0."""
     names_by_race = {
         "Humano": {
             BiologicalSex.MALE: ["Marcus", "Adrian", "Victor", "Leon", "Dante"],
@@ -209,18 +204,6 @@ def _generate_fallback_identity(race: str, sex: BiologicalSex) -> GeneratedIdent
         "Cyborg": {
             BiologicalSex.MALE: ["CX-7", "Neo-Kade", "Axl-9", "Vex", "Rho-Marcus"],
             BiologicalSex.FEMALE: ["CY-Nova", "Syn-7", "Ada-X", "Nyx-3", "Vera-2"]
-        },
-        "Marciano": {
-            BiologicalSex.MALE: ["Aurelio", "Valerio", "Ciro", "Marco", "Luca"],
-            BiologicalSex.FEMALE: ["Lucia", "Valentina", "Aurora", "Stella", "Mira"]
-        },
-        "Selenita": {
-            BiologicalSex.MALE: ["Selene", "Arian", "Cael", "Lior", "Elan"],
-            BiologicalSex.FEMALE: ["Luna", "Aria", "Seraphina", "Lyra", "Celeste"]
-        },
-        "Androide": {
-            BiologicalSex.MALE: ["UNIT-7", "ADAM-3", "NEXUS", "PRIME-1", "ECHO"],
-            BiologicalSex.FEMALE: ["EVE-2", "ARIA-7", "NOVA-X", "IRIS", "ATHENA-1"]
         }
     }
     surnames = ["Voss", "Riker", "Thorne", "Stark", "Chen", "Vale", "Kross", "Pike", "Sol"]
@@ -234,9 +217,9 @@ def _generate_fallback_identity(race: str, sex: BiologicalSex) -> GeneratedIdent
     return GeneratedIdentity(
         nombre=name,
         apellido=surname,
-        bio_superficial=f"{race} de aspecto estándar.",
-        bio_conocida=f"Operativo {race} reclutado recientemente. Su expediente indica habilidades básicas.",
-        bio_profunda=f"ARCHIVOS CORRUPTOS. Hay menciones a una operación fallida.",
+        biografia_corta=f"{race} de aspecto estándar.",
+        bio_conocida=f"Operativo {race} reclutado recientemente con historial militar básico.",
+        bio_profunda=f"Mantiene una deuda pendiente con un sindicato minero de los anillos exteriores.",
         apariencia_visual=f"{race} estándar con uniforme táctico básico. Complexión atlética, mirada neutral." 
     )
 
@@ -255,10 +238,7 @@ def generate_identity_with_ai_sync(
     attributes: Dict[str, int],
     skills: Dict[str, int]
 ) -> GeneratedIdentity:
-    """
-    Versión síncrona con logging extendido y manejo de errores legible.
-    Utiliza try_repair_json para robustecer el parsing ante respuestas truncadas.
-    """
+    """Versión síncrona v5.1.0: Biografías de 3 capas."""
     container = get_service_container()
 
     if not container.is_ai_available():
@@ -283,12 +263,12 @@ def generate_identity_with_ai_sync(
         properties={
             "nombre": types.Schema(type=types.Type.STRING),
             "apellido": types.Schema(type=types.Type.STRING),
-            "bio_superficial": types.Schema(type=types.Type.STRING),
+            "biografia_corta": types.Schema(type=types.Type.STRING),
             "bio_conocida": types.Schema(type=types.Type.STRING),
             "bio_profunda": types.Schema(type=types.Type.STRING),
             "apariencia_visual": types.Schema(type=types.Type.STRING),
         },
-        required=["nombre", "apellido", "bio_superficial", "bio_conocida", "bio_profunda", "apariencia_visual"]
+        required=["nombre", "apellido", "biografia_corta", "bio_conocida", "bio_profunda", "apariencia_visual"]
     )
 
     generation_config = types.GenerateContentConfig(
@@ -301,7 +281,7 @@ def generate_identity_with_ai_sync(
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            log_event(f"AI_DEBUG: Llamando a Gemini (Intento {attempt+1})...")
+            log_event(f"AI_DEBUG: Llamando a Gemini v5.1.0 (Intento {attempt+1})...")
             response = ai_client.models.generate_content(
                 model=TEXT_MODEL_NAME,
                 contents=prompt,
@@ -309,27 +289,24 @@ def generate_identity_with_ai_sync(
             )
 
             if response and response.text:
-                # Intentamos reparación inteligente de JSON antes de desistir
                 data = try_repair_json(response.text)
                 
                 if data:
-                    log_event(f"AI_DEBUG: Identidad generada para {data.get('nombre')}.")
                     return GeneratedIdentity(
                         nombre=data.get("nombre", "SinNombre"),
                         apellido=data.get("apellido", ""),
-                        bio_superficial=data.get("bio_superficial", f"{race} con aspecto preparado."),
+                        biografia_corta=data.get("biografia_corta", f"{race} con aspecto preparado."),
                         bio_conocida=data.get("bio_conocida", f"Historial estándar de {char_class}."),
                         bio_profunda=data.get("bio_profunda", "Sin secretos registrados."),
                         apariencia_visual=data.get("apariencia_visual", "") 
                     )
                 else:
-                    log_event(f"AI_ERROR: Fallo crítico de parseo/reparación (Intento {attempt+1}). Raw: {response.text[:100]}...", is_error=True)
+                    log_event(f"AI_ERROR: Fallo crítico de parseo (Intento {attempt+1}).", is_error=True)
                     continue
         except Exception as e:
             log_event(f"AI_CRITICAL: Error en generate_content: {str(e)}", is_error=True)
             time.sleep(1)
 
-    log_event("AI_DEBUG: Falló generación IA tras reintentos. Usando fallback.", is_error=True)
     return _generate_fallback_identity(race, sex)
 
 
@@ -341,6 +318,7 @@ def generate_random_character_with_ai(
     context: RecruitmentContext,
     existing_names: Optional[List[str]] = None
 ) -> Dict[str, Any]:
+    """Genera un personaje completo mapeando la identidad v5.1.0."""
     existing_names = existing_names or []
     level = random.randint(context.min_level, context.max_level)
     xp = get_xp_for_level(level)
@@ -353,12 +331,10 @@ def generate_random_character_with_ai(
     
     attributes = _generate_base_attributes()
     
-    # Aplicar bonus de raza
     for attr, bonus in race_data.get("bonus", {}).items():
         if attr in attributes:
             attributes[attr] = min(attributes[attr] + bonus, MAX_ATTRIBUTE_VALUE)
     
-    # Bonus de clase primaria
     if class_name != "Novato" and primary_attr:
         if primary_attr in attributes:
             attributes[primary_attr] = min(attributes[primary_attr] + 1, MAX_ATTRIBUTE_VALUE)
@@ -374,6 +350,7 @@ def generate_random_character_with_ai(
     feats = random.sample(AVAILABLE_FEATS, min(num_feats, len(AVAILABLE_FEATS)))
     traits = random.sample(PERSONALITY_TRAITS, k=2)
 
+    # Generación de Identidad
     identity = generate_identity_with_ai_sync(
         race=race_name,
         char_class=class_name,
@@ -385,29 +362,11 @@ def generate_random_character_with_ai(
         skills=skills
     )
 
-    # --- LÓGICA DE RESOLUCIÓN DE COLISIONES ---
     full_name = f"{identity.nombre} {identity.apellido}"
-    attempts = 0
-    max_attempts = 10
-
-    while full_name in existing_names and attempts < max_attempts:
-        fallback_id = _generate_fallback_identity(race_name, sex)
-        suffix = f"-{random.randint(100, 999)}" if attempts > 3 else ""
-        identity = GeneratedIdentity(
-            fallback_id.nombre, fallback_id.apellido + suffix,
-            identity.bio_superficial, identity.bio_conocida, identity.bio_profunda, identity.apariencia_visual
-        )
-        full_name = f"{identity.nombre} {identity.apellido}"
-        attempts += 1
-
+    
+    # Manejo de colisiones simplificado
     if full_name in existing_names:
-        uuid_suffix = str(uuid.uuid4())[:4].upper()
-        identity = GeneratedIdentity(
-            identity.nombre, f"{identity.apellido}-{uuid_suffix}",
-            identity.bio_superficial, identity.bio_conocida, identity.bio_profunda, identity.apariencia_visual
-        )
-        full_name = f"{identity.nombre} {identity.apellido}"
-        log_event(f"Character name collision resolved with UUID: {full_name}", context.player_id)
+        full_name = f"{full_name}-{str(uuid.uuid4())[:4].upper()}"
 
     location = "Barracones"
     system = "Desconocido"
@@ -425,19 +384,15 @@ def generate_random_character_with_ai(
             "apellido": identity.apellido,
             "edad": age,
             "sexo": sex.value,
-            "biografia_corta": identity.bio_superficial,
-            "bio_superficial": identity.bio_superficial,
+            # MAPEO v5.1.0
+            "biografia_corta": identity.biografia_corta,
             "bio_conocida": identity.bio_conocida,
             "bio_profunda": identity.bio_profunda,
             "apariencia_visual": identity.apariencia_visual,
             "nivel_acceso": BIO_ACCESS_UNKNOWN,
             "ticks_reclutado": 0,
-            "ticks_como_conocido": 0,
         },
-        "taxonomia": {
-            "raza": race_name,
-            "transformaciones": []
-        },
+        "taxonomia": {"raza": race_name, "transformaciones": []},
         "progresion": {
             "nivel": level,
             "clase": class_name,
@@ -454,11 +409,7 @@ def generate_random_character_with_ai(
             "rasgos_personalidad": traits,
             "relaciones": []
         },
-        "logistica": {
-            "equipo": [],
-            "slots_ocupados": 0,
-            "slots_maximos": 10
-        },
+        "logistica": {"equipo": [], "slots_ocupados": 0, "slots_maximos": 10},
         "estado": {
             "estados_activos": ["Disponible"],
             "sistema_actual": system,
@@ -528,8 +479,6 @@ def generate_character_pool(
     candidates = []
     existing_names: List[str] = []
     
-    log_event(f"SISTEMA: Generando pool de {pool_size} candidatos.", player_id)
-
     for i in range(pool_size):
         try:
             char_data = generate_random_character_with_ai(context, existing_names)
@@ -543,10 +492,6 @@ def generate_character_pool(
             char_data["stats_json"]["recruitment_data"] = {
                 "costo": cost,
                 "tick_created": current_tick,
-                "is_tracked": False,
-                "is_being_investigated": False,
-                "investigation_outcome": None,
-                "discount_applied": False
             }
             
             char_data["estado"] = CharacterStatus.CANDIDATE.value
@@ -559,7 +504,7 @@ def generate_character_pool(
                 candidates.append(saved_candidate)
                 existing_names.append(saved_candidate["nombre"])
         except Exception as e:
-            log_event(f"Error crítico generando candidato {i+1}: {e}", player_id, is_error=True)
+            log_event(f"Error generando candidato: {e}", player_id, is_error=True)
             continue
             
     return candidates

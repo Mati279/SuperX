@@ -4,8 +4,7 @@ Modelos de Dominio Tipados.
 Define las estructuras de datos centrales del juego usando Pydantic
 para garantizar validación y serialización consistente.
 Refactorizado para cumplir con el esquema V2 Híbrido (SQL + JSON).
-Actualizado v4.1.4: Soporte para Mercado y Órdenes.
-Refactorizado v5.0.0: Fuente de Verdad SQL (MMFR).
+Actualizado v5.1.0: Biografía de 3 capas, Feats complejos y Rehidratación MMFR.
 """
 
 from typing import Dict, Any, Optional, List
@@ -53,7 +52,7 @@ class CharacterRole(str, Enum):
 
 class KnowledgeLevel(str, Enum):
     """Niveles de conocimiento sobre un personaje."""
-    UNKNOWN = "desconocido"     # Bio superficial, sin rasgos de personalidad
+    UNKNOWN = "desconocido"     # Bio superficial (biografia_corta), sin rasgos de personalidad
     KNOWN = "conocido"          # Bio conocida + rasgos de personalidad
     FRIEND = "amigo"            # Bio profunda + secreto revelado
 
@@ -73,14 +72,18 @@ class MarketOrderStatus(str, Enum):
 # --- SUB-MODELOS DE PERSONAJE (COMPOSICIÓN) ---
 
 class CharacterBio(BaseModel):
-    """Identificadores de Entidad."""
+    """Identificadores de Entidad y Biografía de 3 Niveles."""
     model_config = ConfigDict(extra='allow')
     nombre: str
     apellido: str
     edad: int
     sexo: BiologicalSex = BiologicalSex.UNKNOWN
+    
+    # Biografía de 3 Capas (Consolidada v5.1.0)
     biografia_corta: str = Field(default="Sin biografía registrada.")
-    # --- NUEVO CAMPO: ADN VISUAL ---
+    bio_conocida: str = Field(default="Sin información adicional disponible.")
+    bio_profunda: str = Field(default="Sin secretos registrados.")
+    
     apariencia_visual: Optional[str] = Field(
         default=None, 
         description="Descripción visual inmutable y de alta densidad (ADN Visual) para generación de imágenes consistente."
@@ -116,7 +119,7 @@ class CharacterCapabilities(BaseModel):
     """Núcleo de Capacidades."""
     atributos: CharacterAttributes = Field(default_factory=CharacterAttributes)
     habilidades: Dict[str, int] = Field(default_factory=dict)
-    feats: List[str] = Field(default_factory=list)
+    feats: List[Any] = Field(default_factory=list) # Cambiado a Any para soportar objetos complejos
 
 class CharacterBehavior(BaseModel):
     """Perfiles de Comportamiento y Capas Sociales."""
@@ -266,7 +269,7 @@ class CommanderData(BaseModel):
     """
     Datos del comandante o personaje recuperados de la DB.
     Wrapper sobre la tabla 'characters' en modelo Híbrido Relacional/JSON.
-    Ahora refleja la 'Fuente de Verdad' en columnas SQL.
+    Refleja la 'Fuente de Verdad' en columnas SQL.
     """
     model_config = ConfigDict(extra='allow')
 
@@ -279,14 +282,14 @@ class CommanderData(BaseModel):
     es_comandante: bool = True
     is_npc: bool = False
     
-    # Datos Relacionales Numéricos (Fuente de Verdad)
+    # Datos Relacionales Numéricos (Fuente de Verdad SQL)
     level: int = 1
     xp: int = 0
     class_id: int = 0
     loyalty: int = 50  # 0-100
     estado_id: int = 1  # 1=Disponible
     
-    # Jerarquía de Ubicación (Fuente de Verdad)
+    # Jerarquía de Ubicación (Fuente de Verdad SQL)
     location_system_id: Optional[int] = None
     location_planet_id: Optional[int] = None
     location_sector_id: Optional[int] = None
@@ -320,27 +323,23 @@ class CommanderData(BaseModel):
             if "comportamiento" not in full_stats: full_stats["comportamiento"] = {}
             if "taxonomia" not in full_stats: full_stats["taxonomia"] = {"raza": "Humano"}
             
-            # 1. REHIDRATACIÓN: Datos Bio
+            # 1. REHIDRATACIÓN: Datos Bio (Manteniendo Bio de 3 Capas)
             full_stats["bio"]["nombre"] = self.nombre
             full_stats["bio"]["apellido"] = self.apellido
-            
-            # NOTA DE SEGURIDAD: Ya NO sobreescribimos apariencia_visual con portrait_url.
-            # El ADN Visual (apariencia_visual) debe preservarse tal cual viene del JSON original.
             
             # 2. REHIDRATACIÓN: Progresión (Desde Columnas SQL)
             full_stats["progresion"]["nivel"] = self.level
             full_stats["progresion"]["xp"] = self.xp
             full_stats["progresion"]["rango"] = self.rango
-            # Nota: class_id podría mapearse a nombre de clase si tuviéramos la tabla de clases cargada.
-            # Por ahora confiamos en el string en JSON o "Desconocida".
+            
             if "clase" not in full_stats["progresion"]:
                 full_stats["progresion"]["clase"] = "Desconocida"
 
-            # 3. REHIDRATACIÓN: Comportamiento (Lealtad)
+            # 3. REHIDRATACIÓN: Comportamiento (Lealtad SQL)
             full_stats["comportamiento"]["lealtad"] = self.loyalty
 
             # 4. REHIDRATACIÓN: Estado y Ubicación (Desde Columnas SQL)
-            status_map = {1: "Disponible", 2: "En Misión", 3: "Herido", 4: "Fallecido", 5: "Entrenando", 6: "En Tránsito", 99: "Retirado"}
+            status_map = {1: "Disponible", 2: "En Misión", 3: "Herido", 4: "Fallecido", 5: "Entrenando", 6: "En Tránsito", 7: "Candidato", 99: "Retirado"}
             status_text = status_map.get(self.estado_id, "Disponible")
             
             full_stats["estado"]["rol_asignado"] = status_text
@@ -359,7 +358,7 @@ class CommanderData(BaseModel):
         except Exception:
             # Fallback robusto para datos corruptos
             return CharacterSchema(
-                bio=CharacterBio(nombre=self.nombre, apellido="", edad=30, biografia_corta="Datos migrados (Error Schema)"),
+                bio=CharacterBio(nombre=self.nombre, apellido=self.apellido, edad=30, biografia_corta="Datos migrados (Error Schema)"),
                 taxonomia=CharacterTaxonomy(raza="Humano"),
                 progresion=CharacterProgression(nivel=self.level, xp=self.xp),
                 capacidades=CharacterCapabilities(),
@@ -403,17 +402,13 @@ class CommanderData(BaseModel):
     def from_dict(cls, data: Dict[str, Any]) -> 'CommanderData':
         if not data:
             raise ValueError("No se puede crear CommanderData desde datos vacíos")
-        # Filtrar claves que no están en el modelo para evitar errores si la DB trae columnas extra
         return cls(**{k: v for k, v in data.items() if k in cls.model_fields})
 
 
 # --- MODELOS DE PLANETA Y EDIFICIOS ---
 
 class PlanetAsset(BaseModel):
-    """
-    Activo planetario (colonia del jugador).
-    Actualizado post-refactorización MMFR.
-    """
+    """Activo planetario (colonia del jugador)."""
     model_config = ConfigDict(extra='allow')
 
     id: int
@@ -424,15 +419,11 @@ class PlanetAsset(BaseModel):
     poblacion: float = 0.0  # Población en Billones
     pops_activos: int = 0
     pops_desempleados: int = 0
-    
-    # Nivel de Base (Fuente de Verdad SQL)
     base_tier: int = Field(default=1, ge=1)
-    
-    # Seguridad ahora es 0-100 (float)
     seguridad: float = Field(default=25.0, ge=0.0, le=100.0)
     infraestructura_defensiva: int = 0
 
-    # Infraestructura de Módulos (Sincronización UI)
+    # Infraestructura de Módulos
     module_sensor_ground: int = 0
     module_sensor_orbital: int = 0
     module_defense_aa: int = 0
@@ -456,7 +447,6 @@ class Building(BaseModel):
     building_tier: int = 1
     is_active: bool = True
     pops_required: int = 0
-    # energy_consumption deprecado a favor de 'maintenance' dinámico en constants
     energy_consumption: int = 0 
     built_at_tick: int = 0
 
