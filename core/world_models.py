@@ -1,5 +1,28 @@
+# core/world_models.py
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, Optional
+from datetime import datetime
+
+@dataclass
+class Sector:
+    """Modelo que representa un sector dentro de un planeta (V4.2.0)."""
+    id: int
+    planet_id: int
+    type: str  # 'Urbano', 'Llanura', 'Montañoso', 'Inhospito'
+    slots: int
+    
+    # Metadata opcional
+    resource_type: Optional[str] = None
+    buildings_count: int = 0
+    explored_by: List[int] = field(default_factory=list) # IDs de jugadores
+    owner_id: Optional[int] = None # ID del jugador dueño de la base/puesto
+    has_outpost: bool = False
+    
+    def is_explored_by(self, player_id: int) -> bool:
+        return player_id in self.explored_by
+
+    def available_slots(self) -> int:
+        return max(0, self.slots - self.buildings_count)
 
 @dataclass
 class CelestialBody:
@@ -23,6 +46,37 @@ class Planet(CelestialBody):
     is_habitable: bool = False
     slots: int = 0
     resources: Dict[str, float] = field(default_factory=dict)
+    
+    # --- Actualización V4.2.0: Sectores y Control ---
+    sectors: List[Sector] = field(default_factory=list)
+    orbital_owner_id: Optional[int] = None
+    surface_owner_id: Optional[int] = None
+    is_disputed: bool = False
+    
+    # Referencias auxiliares
+    base_defense: int = 0
+    population: int = 0
+
+    def get_urban_sector(self) -> Optional[Sector]:
+        """Retorna el primer sector urbano encontrado."""
+        for sector in self.sectors:
+            if sector.type == 'Urbano':
+                return sector
+        return None
+
+    def get_sectors_owned_by(self, player_id: int) -> List[Sector]:
+        """Retorna sectores donde el jugador tiene presencia (Base o Puesto)."""
+        return [s for s in self.sectors if s.owner_id == player_id]
+
+    @property
+    def total_sector_slots(self) -> int:
+        """Suma de slots de todos los sectores."""
+        return sum(s.slots for s in self.sectors)
+
+    @property
+    def used_sector_slots(self) -> int:
+        """Suma de slots usados en todos los sectores."""
+        return sum(s.buildings_count for s in self.sectors)
 
 @dataclass
 class Moon(CelestialBody):

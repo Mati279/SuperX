@@ -3,7 +3,9 @@
 Constantes universales y definiciones de juego.
 Incluye recursos, tipos de estrellas y definiciones de edificios/módulos.
 Actualizado v4.1.3: Recurso Datos y Categorías de Lujo.
+Actualizado v4.2.0: Arquitectura de Sectores y Matriz de Probabilidad.
 """
+from typing import Dict
 
 # Tipos de estrellas y sus colores para el mapa
 STAR_TYPES = {
@@ -255,3 +257,60 @@ LUXURY_DATA = {
         "nucleos_datos": {"base_price": 132, "name": "Núcleos de Datos Crípticos"},
     },
 }
+
+# ==========================================
+# SECTORES Y GENERACIÓN V4.2.0
+# ==========================================
+
+SECTOR_TYPE_URBAN = "Urbano"
+SECTOR_TYPE_PLAIN = "Llanura"
+SECTOR_TYPE_MOUNTAIN = "Montañoso"
+SECTOR_TYPE_INHOSPITABLE = "Inhospito"
+
+VALID_SECTOR_TYPES = [
+    SECTOR_TYPE_URBAN,
+    SECTOR_TYPE_PLAIN,
+    SECTOR_TYPE_MOUNTAIN,
+    SECTOR_TYPE_INHOSPITABLE
+]
+
+# Probabilidad de aparición de recursos (Alta, Media, Baja, Nula)
+RESOURCE_CHANCE_HIGH = 0.60
+RESOURCE_CHANCE_MEDIUM = 0.30
+RESOURCE_CHANCE_LOW = 0.10
+RESOURCE_CHANCE_NONE = 0.0
+
+# MATRIZ DE PROBABILIDAD (Biome -> Resource Chance)
+# Mapeado a las keys de PLANET_BIOMES
+BIOME_RESOURCE_MATRIX: Dict[str, float] = {
+    "Templado": RESOURCE_CHANCE_HIGH,
+    "Desertico": RESOURCE_CHANCE_MEDIUM,
+    "Oceanico": RESOURCE_CHANCE_MEDIUM,
+    "Glacial": RESOURCE_CHANCE_LOW,
+    "Volcanico": RESOURCE_CHANCE_HIGH,
+    "Toxico": RESOURCE_CHANCE_LOW,
+    "Arido": RESOURCE_CHANCE_MEDIUM,
+    "Gaseoso": RESOURCE_CHANCE_NONE,
+}
+
+# Probabilidad de que un sector sea Inhóspito según bioma
+BIOME_INHOSPITABLE_CHANCE: Dict[str, float] = {
+    "Templado": 0.1,
+    "Desertico": 0.4,
+    "Oceanico": 0.3, # Mucho mar abierto
+    "Glacial": 0.5,
+    "Volcanico": 0.7,
+    "Toxico": 0.6,
+    "Arido": 0.3,
+    "Gaseoso": 1.0, # Todo inhóspito (salvo orbital)
+}
+
+# Control & Economía
+DISPUTED_PENALTY_MULTIPLIER = 0.3 # 70% penalización
+WRONG_SECTOR_EFFICIENCY = 0.5
+CORRECT_SECTOR_EFFICIENCY = 1.0
+
+# Base Slots
+SLOTS_BASE = 1
+SLOTS_OUTPOST = 0
+MAX_SLOTS_PER_SECTOR = 3
