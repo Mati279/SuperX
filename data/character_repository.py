@@ -463,3 +463,51 @@ def set_character_knowledge_level(character_id: int, player_id: int, level: Know
     except Exception as e:
         log_event(f"Error actualizando conocimiento: {e}", player_id, is_error=True)
         return False
+
+# --- WRAPPERS DE RECLUTAMIENTO Y GESTIÓN (RESTAURADOS) ---
+
+def recruit_random_character_with_ai(player_id: int, **kwargs) -> Optional[Dict[str, Any]]:
+    """Wrapper para el servicio de generación."""
+    from services.character_generation_service import recruit_character_with_ai
+    return recruit_character_with_ai(player_id, **kwargs)
+
+def get_recruitment_candidates(player_id: int, **kwargs) -> List[Dict[str, Any]]:
+    """Wrapper para obtener pool de candidatos."""
+    from services.character_generation_service import generate_character_pool
+    return generate_character_pool(player_id, **kwargs)
+
+def dismiss_character(character_id: int, player_id: int) -> bool:
+    """
+    Despide a un personaje de la facción.
+    Lógica MMFR: Si es 'FRIEND', pasa a Retirado (99). Si no, vuelve a Disponible (1).
+    """
+    try:
+        char = get_character_by_id(character_id)
+        if not char or char.get("player_id") != player_id:
+            return False
+            
+        # Comprobar si es el comandante (no se puede despedir)
+        if char.get("es_comandante", False):
+            return False
+
+        kl = get_character_knowledge_level(character_id, player_id)
+        
+        # Determinar nuevo estado
+        # Si es amigo, se retira (estado 99). Si no, vuelve a la bolsa general (estado 1).
+        nuevo_estado = STATUS_ID_MAP["Retirado"] if kl == KnowledgeLevel.FRIEND else STATUS_ID_MAP["Disponible"]
+        
+        # Desvincular del jugador y cambiar estado
+        payload = {
+            "player_id": None,
+            "estado_id": nuevo_estado
+        }
+        
+        result = update_character(character_id, payload)
+        if result:
+            log_event(f"Personal ID {character_id} desvinculado de la facción.", player_id)
+            return True
+        return False
+
+    except Exception as e:
+        log_event(f"Error en dismiss_character: {e}", player_id, is_error=True)
+        return False
