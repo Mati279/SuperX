@@ -125,12 +125,14 @@ def render_character_sheet(character_data, player_id):
     ubicacion_obj = estado_data.get('ubicacion', {})
     ubicacion_txt = ubicacion_obj.get('ubicacion_local', 'Desconocida')
 
-    # Retrato (Prioridad: Columna SQL -> Generado)
-    # FIX: Se elimina bio_data.get('apariencia_visual') como fallback de portrait_url
-    # ya que apariencia_visual contiene texto descriptivo denso, no una URL.
+    # --- CORRECCIÓN CRÍTICA DE RETRATO ---
+    # Se usa prioritariamente la columna portrait_url de la base de datos.
+    # Se ELIMINA el fallback a apariencia_visual ya que es texto descriptivo, no una URL.
     portrait_url = character_data.get('portrait_url')
+    
     if not portrait_url:
-        portrait_url = f"[https://ui-avatars.com/api/?name=](https://ui-avatars.com/api/?name=){nombre.replace(' ', '+')}&background=random"
+        # Si no hay imagen, usamos un avatar generado por nombre
+        portrait_url = f"https://ui-avatars.com/api/?name={nombre.replace(' ', '+')}&background=random"
 
     # --- HEADER ---
     col_avatar, col_basic = st.columns([1, 3])

@@ -3,7 +3,7 @@
 Servicio de Generación de Personajes con IA.
 Actualizado para Especialización de Personajes de Alto Nivel y Biografías Coherentes.
 Implementa distribución ponderada de atributos y habilidades según la clase.
-Debug v2.3: Implementada limpieza de JSON robusta y escape de comillas en prompt.
+Debug v2.4: Implementada reparación de JSON robusta y refuerzo de prompt para escape de comillas.
 """
 
 import random
@@ -21,7 +21,7 @@ from data.log_repository import log_event
 from data.character_repository import create_character
 from data.planet_repository import get_planet_by_id
 from data.world_repository import get_world_state
-from utils.helpers import clean_json_string
+from utils.helpers import clean_json_string, try_repair_json
 
 from core.constants import RACES, CLASSES, SKILL_MAPPING
 from core.rules import calculate_skills
@@ -51,7 +51,7 @@ AGE_MAX = 70
 PREDOMINANT_RACE_CHANCE = 0.5
 DEFAULT_RANK = "Iniciado"
 
-# Prompt actualizado para Gemini 2.0 Flash
+# Prompt actualizado para Gemini 2.0 Flash con refuerzo de seguridad JSON
 IDENTITY_GENERATION_PROMPT = """
 Actúa como un Oficial de Inteligencia de una facción galáctica.
 Genera el dossier para un nuevo operativo altamente especializado.
@@ -83,8 +83,8 @@ DENSIDAD OBJETIVO: ~80-100 palabras. Estilo "Prompt de Stable Diffusion/Midjourn
 
 REGLAS TÉCNICAS:
 - Responde SOLO con JSON válido.
-- IMPORTANTE: Asegúrate de que todas las comillas dobles dentro de los textos estén escapadas con barra invertida (\\") o usa comillas simples en su lugar para evitar errores de parsing.
-- NO uses comillas dobles (") fuera de la estructura de claves/valores del JSON.
+- CRITICAL: Escape all double quotes inside text fields with backslashes (\\") and avoid newlines within strings.
+- Si necesitas usar comillas dentro de un texto, usa comillas simples (') obligatoriamente.
 """
 
 
@@ -257,7 +257,7 @@ def generate_identity_with_ai_sync(
 ) -> GeneratedIdentity:
     """
     Versión síncrona con logging extendido y manejo de errores legible.
-    Utiliza clean_json_string para robustecer el parsing.
+    Utiliza try_repair_json para robustecer el parsing ante respuestas truncadas.
     """
     container = get_service_container()
 
@@ -309,11 +309,10 @@ def generate_identity_with_ai_sync(
             )
 
             if response and response.text:
-                try:
-                    # Aplicamos limpieza de JSON antes del parsing
-                    cleaned_text = clean_json_string(response.text)
-                    data = json.loads(cleaned_text)
-                    
+                # Intentamos reparación inteligente de JSON antes de desistir
+                data = try_repair_json(response.text)
+                
+                if data:
                     log_event(f"AI_DEBUG: Identidad generada para {data.get('nombre')}.")
                     return GeneratedIdentity(
                         nombre=data.get("nombre", "SinNombre"),
@@ -323,8 +322,8 @@ def generate_identity_with_ai_sync(
                         bio_profunda=data.get("bio_profunda", "Sin secretos registrados."),
                         apariencia_visual=data.get("apariencia_visual", "") 
                     )
-                except json.JSONDecodeError as je:
-                    log_event(f"AI_ERROR: Error parseando JSON (Intento {attempt+1}): {je}. Raw: {response.text[:100]}...", is_error=True)
+                else:
+                    log_event(f"AI_ERROR: Fallo crítico de parseo/reparación (Intento {attempt+1}). Raw: {response.text[:100]}...", is_error=True)
                     continue
         except Exception as e:
             log_event(f"AI_CRITICAL: Error en generate_content: {str(e)}", is_error=True)
@@ -386,7 +385,7 @@ def generate_random_character_with_ai(
         skills=skills
     )
 
-    # --- LÓGICA DE RESOLUCIÓN DE COLISIONES (Restaurada) ---
+    # --- LÓGICA DE RESOLUCIÓN DE COLISIONES ---
     full_name = f"{identity.nombre} {identity.apellido}"
     attempts = 0
     max_attempts = 10
@@ -537,7 +536,6 @@ def generate_character_pool(
             char_data["ubicacion"] = "Centro de Reclutamiento"
 
             if force_max_skills:
-                # Debug logic
                 skills_dict = char_data.get("stats_json", {}).get("capacidades", {}).get("habilidades", {})
                 for s in skills_dict: skills_dict[s] = 99
             

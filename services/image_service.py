@@ -19,6 +19,7 @@ def _generate_visual_dna(character: CommanderData) -> str:
     Genera el ADN Visual (descripción física densa) usando Gemini Text Model.
     Se usa solo cuando el personaje no tiene uno predefinido.
     """
+    raw_response = ""
     try:
         # Construimos un contexto rico para que la IA deduzca la apariencia
         prompt = f"""
@@ -36,9 +37,6 @@ def _generate_visual_dna(character: CommanderData) -> str:
         Escribe un párrafo denso (80-100 palabras) describiendo SOLO su apariencia física inmutable.
         Usa un estilo descriptivo crudo, separado por comas o puntos. Enfócate en materiales, texturas, iluminación y rasgos anatómicos.
         NO incluyas personalidad. NO incluyas acciones. SOLO FÍSICO Y EQUIPAMIENTO BASE.
-        
-        EJEMPLO DE ESTILO REQUERIDO:
-        "Male, 30s, hyper-defined gaunt face, razor-sharp cheekbones. Eyes: Deep-set heterochromia; left eye icy cerulean, right eye recessed 32mm cybernetic aperture with rotating red rings. Hair: Silver-white slicked-back undercut, wet-look pomade. Body: Tall, lanky build, visible external titanium vertebrae. Outfit: Distressed black buffalo leather duster, matte carbon-fiber chest plate with scorch marks."
         """
 
         response = client.models.generate_content(
@@ -46,12 +44,15 @@ def _generate_visual_dna(character: CommanderData) -> str:
             contents=prompt
         )
         
-        if response.text:
+        if response and response.text:
+            raw_response = response.text
             return response.text.strip()
+        
         return "Soldado genérico con armadura estándar de facción, rostro oculto por casco táctico."
         
     except Exception as e:
-        print(f"❌ Error generando ADN Visual: {e}")
+        error_detail = f"❌ Error generando ADN Visual: {str(e)} | Raw: {raw_response[:200]}"
+        print(error_detail)
         return f"{character.sheet.taxonomia.raza} {character.sheet.progresion.clase} con equipamiento de combate estándar."
 
 def generate_and_upload_tactical_image(
@@ -89,11 +90,8 @@ def generate_and_upload_tactical_image(
             # B) Actualizar Objeto Local
             character.sheet.bio.apariencia_visual = visual_dna
             
-            # C) PERSISTENCIA CRÍTICA: Guardar en DB para el futuro
-            # Exportamos el modelo Pydantic completo a dict
+            # C) PERSISTENCIA: Guardar en stats_json
             updated_stats = character.sheet.model_dump()
-            
-            # Llamada al repositorio para guardar el cambio JSON
             update_character(character.id, {"stats_json": updated_stats}) 
             
             log_event(f"💾 ADN Visual guardado para {character.nombre}.", player_id)
@@ -118,7 +116,7 @@ def generate_and_upload_tactical_image(
             )
         )
 
-        if not response.generated_images:
+        if not response or not response.generated_images:
             return None
 
         image_bytes = response.generated_images[0].image.image_bytes
@@ -141,10 +139,11 @@ def generate_and_upload_tactical_image(
 
         public_url = supabase.storage.from_(bucket_name).get_public_url(file_name)
         
-        # 7. Persistencia de la URL en la columna portrait_url (MMFR compatible)
+        # 7. Persistencia Crítica: Actualizar portrait_url (Columna SQL)
         if public_url:
+            # Aseguramos la actualización de la columna específica además del JSON si fuera necesario
             update_character(character.id, {"portrait_url": public_url})
-            log_event(f"🖼️ Retrato actualizado para {character.nombre}.", player_id)
+            log_event(f"🖼️ Retrato actualizado exitosamente para {character.nombre}.", player_id)
 
         return public_url
 
