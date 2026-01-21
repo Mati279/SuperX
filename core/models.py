@@ -3,14 +3,14 @@
 Modelos de Dominio Tipados.
 Define las estructuras de datos centrales del juego usando Pydantic
 para garantizar validación y serialización consistente.
-Refactorizado para cumplir con el esquema V2 de Personajes.
+Refactorizado para cumplir con el esquema V2 Híbrido (SQL + JSON).
 Actualizado v4.1.4: Soporte para Mercado y Órdenes.
 """
 
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field, ConfigDict
 from enum import Enum
-
+import copy
 
 # --- ENUMS ---
 
@@ -129,9 +129,15 @@ class CharacterLogistics(BaseModel):
     slots_maximos: int = 10
 
 class CharacterLocation(BaseModel):
-    """Geolocalización."""
+    """Geolocalización Lógica."""
+    # IDs Relacionales (Prioridad)
+    system_id: Optional[int] = None
+    planet_id: Optional[int] = None
+    sector_id: Optional[int] = None
+    
+    # Textos descriptivos (Legacy/UI)
     sistema_actual: str = "Desconocido"
-    ubicacion_local: str = "Base Principal" # Planeta o Estación
+    ubicacion_local: str = "Base Principal"
     coordenadas: Optional[Dict[str, float]] = None
 
 class CharacterDynamicState(BaseModel):
@@ -252,36 +258,94 @@ class MarketOrder(BaseModel):
         return cls(**data)
 
 
-# --- MODELOS DE COMANDANTE / PERSONAJE (API) ---
+# --- MODELOS DE COMANDANTE / PERSONAJE (API V2 Híbrido) ---
 
 class CommanderData(BaseModel):
     """
     Datos del comandante o personaje recuperados de la DB.
-    Actúa como wrapper sobre la tabla 'characters'.
+    Wrapper sobre la tabla 'characters' en modelo Híbrido Relacional/JSON.
     """
     model_config = ConfigDict(extra='allow')
 
+    # Identificadores SQL
     id: int
-    player_id: int
+    player_id: Optional[int]
     nombre: str
+    apellido: str = ""
     rango: str = "Comandante"
     es_comandante: bool = True
-    ubicacion: str = "Base Principal" # Columna DB legacy/sync
-    estado: str = "Disponible" # Columna DB legacy/sync
-    stats_json: Dict[str, Any] = Field(default_factory=dict)
+    is_npc: bool = False
+    
+    # Datos Relacionales Numéricos
+    level: int = 1
+    xp: int = 0
+    class_id: int = 0
+    estado_id: int = 1  # 1=Disponible
+    
+    # Jerarquía de Ubicación
+    location_system_id: Optional[int] = None
+    location_planet_id: Optional[int] = None
+    location_sector_id: Optional[int] = None
+    
+    # Legacy/Fallback
+    ubicacion: str = "Base Principal"
+    estado: str = "Disponible" # Se mantiene para compatibilidad con código viejo que lee string
+    
+    # Metadata
+    portrait_url: Optional[str] = None
+    recruited_at_tick: int = 0
+    last_processed_tick: int = 0
     faccion_id: Optional[int] = None
-    recruited_at_tick: int = 0 
+
+    # JSON "lite" (sin datos redundantes)
+    stats_json: Dict[str, Any] = Field(default_factory=dict)
 
     @property
     def sheet(self) -> CharacterSchema:
         """
         Devuelve el esquema completo del personaje validado.
-        Si falla la validación (datos viejos), intenta migrar al vuelo o devuelve defecto.
+        REHIDRATA el JSON inyectando los valores de columnas SQL.
         """
         try:
-            return CharacterSchema(**self.stats_json)
+            full_stats = copy.deepcopy(self.stats_json)
+            
+            # Asegurar estructura mínima
+            if "bio" not in full_stats: full_stats["bio"] = {}
+            if "progresion" not in full_stats: full_stats["progresion"] = {}
+            if "estado" not in full_stats: full_stats["estado"] = {}
+            if "taxonomia" not in full_stats: full_stats["taxonomia"] = {"raza": "Humano"}
+            
+            # 1. REHIDRATACIÓN: Datos Bio
+            full_stats["bio"]["nombre"] = self.nombre
+            full_stats["bio"]["apellido"] = self.apellido
+            
+            # 2. REHIDRATACIÓN: Progresión
+            full_stats["progresion"]["nivel"] = self.level
+            full_stats["progresion"]["xp"] = self.xp
+            full_stats["progresion"]["rango"] = self.rango
+            if "clase" not in full_stats["progresion"]:
+                full_stats["progresion"]["clase"] = "Desconocida"
+
+            # 3. REHIDRATACIÓN: Estado y Ubicación
+            # Mapeo simple inverso para UI
+            status_map = {1: "Disponible", 2: "En Misión", 3: "Herido", 4: "Fallecido", 5: "Entrenando"}
+            status_text = status_map.get(self.estado_id, "Disponible")
+            
+            full_stats["estado"]["rol_asignado"] = status_text
+            full_stats["estado"]["estados_activos"] = [status_text]
+            
+            # Inyectar objeto de ubicación completo
+            full_stats["estado"]["ubicacion"] = {
+                "system_id": self.location_system_id,
+                "planet_id": self.location_planet_id,
+                "sector_id": self.location_sector_id,
+                "ubicacion_local": self.ubicacion # Fallback texto
+            }
+
+            return CharacterSchema(**full_stats)
+
         except Exception:
-            # Fallback para datos antiguos o corruptos, intenta reconstruir un mínimo viable
+            # Fallback para datos antiguos o corruptos
             return CharacterSchema(
                 bio=CharacterBio(nombre=self.nombre, apellido="", edad=30, biografia_corta="Datos migrados"),
                 taxonomia=CharacterTaxonomy(raza="Humano"),
@@ -295,25 +359,21 @@ class CommanderData(BaseModel):
     @property
     def attributes(self) -> CharacterAttributes:
         """Acceso directo a atributos."""
-        # Intenta obtener de la estructura nueva, fallback a la vieja si es necesario
         if "capacidades" in self.stats_json and "atributos" in self.stats_json["capacidades"]:
              return CharacterAttributes(**self.stats_json["capacidades"]["atributos"])
-        # Fallback estructura vieja (directamente en raiz o bajo stats)
         if "atributos" in self.stats_json:
             return CharacterAttributes(**self.stats_json["atributos"])
         return CharacterAttributes()
 
     @property
     def nivel(self) -> int:
-        if "progresion" in self.stats_json:
-            return self.stats_json["progresion"].get("nivel", 1)
-        return self.stats_json.get("nivel", 1)
+        return self.level
 
     @property
     def clase(self) -> str:
         if "progresion" in self.stats_json:
             return self.stats_json["progresion"].get("clase", "Novato")
-        return self.stats_json.get("clase", "Novato")
+        return "Novato"
 
     def get_merit_points(self) -> int:
         """Calculate total merit points from all six attributes."""

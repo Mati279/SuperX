@@ -1,5 +1,6 @@
 # data/character_repository.py
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
+import copy
 from data.database import get_supabase
 from data.log_repository import log_event
 
@@ -17,41 +18,113 @@ from config.app_constants import (
     COMMANDER_LOCATION
 )
 
-# Helper para migración/compatibilidad
+# --- CONSTANTES DE MAPEO ---
+CLASS_ID_MAP = {
+    "Novato": 0, "Soldado": 1, "Piloto": 2, "Ingeniero": 3, 
+    "Diplomático": 4, "Espía": 5, "Hacker": 6, "Comandante": 99,
+    "Desconocida": 0
+}
+
+STATUS_ID_MAP = {
+    "Disponible": 1,
+    "En Misión": 2,
+    "Herido": 3,
+    "Fallecido": 4,
+    "Entrenando": 5,
+    "En Tránsito": 6,
+    "Retirado": 99,
+    "Sin Asignar": 1
+}
+
+# --- HELPER: EXTRACT & CLEAN ---
+def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    EXTRACT & CLEAN PATTERN.
+    Separa los datos que van a columnas SQL de los que se quedan en JSON.
+    Maneja la jerarquía de ubicación de 3 niveles.
+    Retorna (column_data, cleaned_stats_json).
+    """
+    # 1. Copia para no destruir el objeto original en memoria
+    stats = copy.deepcopy(full_stats)
+    columns = {}
+
+    # 2. Extracción de Datos Biográficos
+    if "bio" in stats:
+        columns["nombre"] = stats["bio"].get("nombre", "Unknown")
+        columns["apellido"] = stats["bio"].get("apellido", "")
+        # Eliminamos del JSON
+        stats["bio"].pop("nombre", None)
+        stats["bio"].pop("apellido", None)
+
+    # 3. Extracción de Progresión
+    if "progresion" in stats:
+        columns["level"] = stats["progresion"].get("nivel", 1)
+        columns["xp"] = stats["progresion"].get("xp", 0)
+        columns["rango"] = stats["progresion"].get("rango", "Recluta")
+        
+        clase_str = stats["progresion"].get("clase", "Novato")
+        columns["class_id"] = CLASS_ID_MAP.get(clase_str, 0)
+        
+        # Limpieza
+        stats["progresion"].pop("nivel", None)
+        stats["progresion"].pop("xp", None)
+        stats["progresion"].pop("rango", None)
+        # Mantenemos 'clase' en JSON por UI display
+
+    # 4. Extracción de Estado y Ubicación
+    if "estado" in stats:
+        status_text = stats["estado"].get("rol_asignado", "Disponible")
+        columns["estado_id"] = STATUS_ID_MAP.get(status_text, 1)
+        # Columna legacy texto
+        columns["estado"] = status_text 
+        
+        # Extracción de Jerarquía de Ubicación
+        # Buscamos el objeto "ubicacion" con IDs
+        loc = stats["estado"].get("ubicacion", {})
+        if isinstance(loc, dict):
+            columns["location_system_id"] = loc.get("system_id")
+            columns["location_planet_id"] = loc.get("planet_id")
+            columns["location_sector_id"] = loc.get("sector_id")
+            # Borrar objeto ubicación del JSON
+            stats["estado"].pop("ubicacion", None)
+        
+        # Borrar rol asignado
+        stats["estado"].pop("rol_asignado", None)
+    
+    return columns, stats
+
+
+# Helper para migración/compatibilidad (Mantenido por seguridad)
 def _ensure_v2_structure(stats_json: Dict, name: str = "") -> Dict:
     """Asegura que el JSON tenga la estructura V2, migrando si es necesario."""
     if "bio" in stats_json:
-        return stats_json # Ya es V2
+        return stats_json 
     
-    # Migración básica de V1 -> V2
     return {
         "bio": {
             "nombre": name.split()[0],
             "apellido": name.split()[1] if len(name.split()) > 1 else "",
             "edad": 30,
             "sexo": "Desconocido",
-            "biografia_corta": f"{stats_json.get('bio', {}).get('raza', 'Humano')} {stats_json.get('bio', {}).get('clase', 'Soldado')}"
+            "biografia_corta": "Migrado Auto"
         },
-        "taxonomia": {"raza": stats_json.get("bio", {}).get("raza", "Humano"), "transformaciones": []},
+        "taxonomia": {"raza": "Humano", "transformaciones": []},
         "progresion": {
-            "nivel": stats_json.get("nivel", 1),
-            "clase": stats_json.get("bio", {}).get("clase", "Novato"),
-            "xp": stats_json.get("xp", 0),
-            "rango": "Comandante"
+            "nivel": 1,
+            "clase": "Novato",
+            "xp": 0,
+            "rango": "Recluta"
         },
         "capacidades": {
             "atributos": stats_json.get("atributos", {}),
             "habilidades": stats_json.get("habilidades", {}),
-            "feats": stats_json.get("feats", [])
+            "feats": []
         },
         "comportamiento": {"rasgos_personalidad": [], "relaciones": []},
         "logistica": {"equipo": [], "slots_ocupados": 0, "slots_maximos": 10},
         "estado": {
             "estados_activos": ["Disponible"],
-            "sistema_actual": "Base",
-            "ubicacion_local": "Mando",
-            "rol_asignado": "Comandante",
-            "accion_actual": "Idle"
+            "rol_asignado": "Sin Asignar"
         }
     }
 
@@ -69,24 +142,24 @@ def create_commander(
     attributes: Dict[str, int]
 ) -> Optional[Dict[str, Any]]:
     """
-    Crea un Comandante usando el esquema V2.
+    Crea un Comandante usando el esquema Híbrido V2.
     """
-    from data.game_config_repository import get_current_tick # Import local para evitar ciclo
+    from data.game_config_repository import get_current_tick
 
     try:
         habilidades = calculate_skills(attributes)
-        current_tick = get_current_tick() # Obtener tick actual
-        
-        # Construir estructura V2 manualmente ya que recibimos piezas sueltas del wizard
-        raza = bio_data.get("raza", "Humano")
-        clase = bio_data.get("clase", "Comandante")
+        current_tick = get_current_tick()
         
         # Descomponer nombre
         parts = name.split(" ", 1)
         nombre_p = parts[0]
         apellido_p = parts[1] if len(parts) > 1 else ""
+        
+        raza = bio_data.get("raza", "Humano")
+        clase = bio_data.get("clase", "Comandante")
 
-        stats_json = {
+        # Construir objeto completo primero
+        full_stats = {
             "bio": {
                 "nombre": nombre_p,
                 "apellido": apellido_p,
@@ -107,7 +180,7 @@ def create_commander(
             "capacidades": {
                 "atributos": attributes,
                 "habilidades": habilidades,
-                "feats": ["Liderazgo Táctico"] # Feat base de comandante
+                "feats": ["Liderazgo Táctico"]
             },
             "comportamiento": {
                 "rasgos_personalidad": ["Liderazgo"],
@@ -120,31 +193,41 @@ def create_commander(
             },
             "estado": {
                 "estados_activos": [COMMANDER_STATUS],
-                "sistema_actual": "Sistema Inicial",
-                "ubicacion_local": COMMANDER_LOCATION,
                 "rol_asignado": CharacterRole.COMMANDER.value,
-                "accion_actual": "Iniciando mandato"
+                "accion_actual": "Iniciando mandato",
+                # Inicialización de ubicación
+                "ubicacion": {
+                   "system_id": None, "planet_id": None, "sector_id": None 
+                }
             }
         }
 
+        # EXTRAER Y LIMPIAR
+        cols, cleaned_stats = _extract_and_clean_data(full_stats)
+
         new_char_data = {
             "player_id": player_id,
-            "nombre": name,
-            "rango": COMMANDER_RANK,
             "es_comandante": True,
-            "stats_json": stats_json,
-            "estado": COMMANDER_STATUS,
-            "ubicacion": COMMANDER_LOCATION,
-            "recruited_at_tick": current_tick # Persistencia del tick
+            "recruited_at_tick": current_tick,
+            "stats_json": cleaned_stats,
+            
+            # Columnas extraídas
+            "nombre": cols.get("nombre"),
+            "apellido": cols.get("apellido"),
+            "rango": cols.get("rango"),
+            "level": cols.get("level"),
+            "xp": cols.get("xp"),
+            "class_id": cols.get("class_id"),
+            "estado_id": cols.get("estado_id"),
+            "estado": cols.get("estado"), # Legacy
+            "ubicacion": COMMANDER_LOCATION # Legacy
         }
 
         response = _get_db().table("characters").insert(new_char_data).execute()
         if response.data:
-            # El comandante siempre es conocido por el jugador (es él mismo) -> FRIEND
             cmd_id = response.data[0]["id"]
             set_character_knowledge_level(cmd_id, player_id, KnowledgeLevel.FRIEND)
-            
-            log_event(f"Nuevo comandante V2 '{name}' creado en tick {current_tick}.", player_id)
+            log_event(f"Nuevo comandante V2 Híbrido '{name}' creado.", player_id)
             return response.data[0]
         return None
 
@@ -158,39 +241,44 @@ def update_commander_profile(
     attributes: Dict[str, int]
 ) -> Optional[Dict[str, Any]]:
     """
-    Actualiza perfil (Paso 3 Wizard) respetando V2.
+    Actualiza perfil respetando Híbrido V2.
     """
     try:
-        # Recuperar actual para preservar IDs o estructura si existiera
         current = get_commander_by_player_id(player_id)
-        if not current:
-            return None # No debería pasar en flujo normal
+        if not current: return None
             
-        # Reconstruir stats_json completo con los nuevos datos
-        current_stats = current.get("stats_json", {})
+        # Reconstruir stats completos para manipular
+        from core.models import CommanderData
+        cmd_obj = CommanderData(**current)
+        full_stats_model = cmd_obj.sheet
+        full_stats_dict = full_stats_model.model_dump()
         
+        # Modificar
         habilidades = calculate_skills(attributes)
-        name = current.get("nombre", "Comandante")
         
-        # Update deep merge
-        new_stats = _ensure_v2_structure(current_stats, name)
-        
-        # Update especifico
-        new_stats["bio"]["biografia_corta"] = bio_data.get("biografia", new_stats["bio"]["biografia_corta"])
-        new_stats["taxonomia"]["raza"] = bio_data.get("raza", new_stats["taxonomia"]["raza"])
-        new_stats["progresion"]["clase"] = bio_data.get("clase", new_stats["progresion"]["clase"])
-        new_stats["capacidades"]["atributos"] = attributes
-        new_stats["capacidades"]["habilidades"] = habilidades
+        full_stats_dict["bio"]["biografia_corta"] = bio_data.get("biografia", full_stats_dict["bio"]["biografia_corta"])
+        full_stats_dict["taxonomia"]["raza"] = bio_data.get("raza", full_stats_dict["taxonomia"]["raza"])
+        full_stats_dict["progresion"]["clase"] = bio_data.get("clase", full_stats_dict["progresion"]["clase"])
+        full_stats_dict["capacidades"]["atributos"] = attributes
+        full_stats_dict["capacidades"]["habilidades"] = habilidades
+
+        # Extraer y Limpiar
+        cols, cleaned_stats = _extract_and_clean_data(full_stats_dict)
+
+        update_payload = {
+            "stats_json": cleaned_stats,
+            "class_id": cols.get("class_id"),
+            "nombre": cols.get("nombre"),
+            "apellido": cols.get("apellido")
+        }
 
         response = _get_db().table("characters")\
-            .update({"stats_json": new_stats})\
+            .update(update_payload)\
             .eq("player_id", player_id)\
             .eq("es_comandante", True)\
             .execute()
 
-        if response.data:
-            return response.data[0]
-        return None
+        return response.data[0] if response.data else None
 
     except Exception as e:
         log_event(f"Error update comandante: {e}", player_id, is_error=True)
@@ -198,38 +286,55 @@ def update_commander_profile(
 
 def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Persiste un personaje generado por character_engine (que ya viene en formato V2/DB ready).
-    Permite player_id=None para generar candidatos libres (Pool Global/Local sin dueño).
+    Persiste un personaje generado. Acepta full stats dictionary.
     """
-    from data.game_config_repository import get_current_tick # Import local
+    from data.game_config_repository import get_current_tick
 
     try:
-        character_data["player_id"] = player_id
-        
-        # Inyectar tick actual si no viene en data
-        if "recruited_at_tick" not in character_data:
-            character_data["recruited_at_tick"] = get_current_tick()
-
-        # Extraer nivel de conocimiento inicial si existe
+        # Metadatos
         initial_knowledge = character_data.pop("initial_knowledge_level", None)
+        tick = character_data.pop("recruited_at_tick", get_current_tick())
+        
+        # Limpiar campos root si existen
+        stats_input = copy.deepcopy(character_data)
+        stats_input.pop("player_id", None)
 
-        response = _get_db().table("characters").insert(character_data).execute()
+        # Extract & Clean
+        cols, cleaned_stats = _extract_and_clean_data(stats_input)
+
+        payload = {
+            "player_id": player_id,
+            "recruited_at_tick": tick,
+            "stats_json": cleaned_stats,
+            
+            # Columnas
+            "nombre": cols.get("nombre", "Unit"),
+            "apellido": cols.get("apellido", ""),
+            "level": cols.get("level", 1),
+            "xp": cols.get("xp", 0),
+            "rango": cols.get("rango", "Recluta"),
+            "class_id": cols.get("class_id", 0),
+            "estado_id": cols.get("estado_id", 1),
+            "estado": cols.get("estado", "Disponible"),
+            "is_npc": False,
+            
+            # Ubicación
+            "location_system_id": cols.get("location_system_id"),
+            "location_planet_id": cols.get("location_planet_id"),
+            "location_sector_id": cols.get("location_sector_id")
+        }
+
+        response = _get_db().table("characters").insert(payload).execute()
         
         if response.data:
             new_char = response.data[0]
             new_char_id = new_char["id"]
-            nombre = character_data.get('nombre', 'Unit')
             
-            # Persistir conocimiento inicial SOLO si hay un jugador asignado
             if player_id is not None:
-                if initial_knowledge:
-                    set_character_knowledge_level(new_char_id, player_id, initial_knowledge)
-                else:
-                    # REGLA DE ORO: Si no se especifica, por defecto es UNKNOWN.
-                    # Esto asegura que los generados por "Cuadrilla" empiecen en 0.
-                    set_character_knowledge_level(new_char_id, player_id, KnowledgeLevel.UNKNOWN)
+                kl = initial_knowledge if initial_knowledge else KnowledgeLevel.UNKNOWN
+                set_character_knowledge_level(new_char_id, player_id, kl)
 
-            log_event(f"Generado/Reclutado: {nombre}", player_id)
+            log_event(f"Generado/Reclutado: {payload['nombre']}", player_id)
             return new_char
         return None
 
@@ -244,7 +349,6 @@ def get_all_characters_by_player_id(player_id: int) -> list[Dict[str, Any]]:
     except Exception:
         return []
 
-# ALIAS para compatibilidad con event_service
 get_all_player_characters = get_all_characters_by_player_id
 
 def update_character(character_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -263,16 +367,10 @@ def get_character_by_id(character_id: int) -> Optional[Dict[str, Any]]:
         return None
 
 def update_character_xp(character_id: int, new_xp: int, player_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """Actualización directa a columna SQL."""
     try:
-        char = get_character_by_id(character_id)
-        if not char: return None
-
-        stats = _ensure_v2_structure(char.get("stats_json", {}), char.get("nombre", ""))
-        
-        # Update path seguro
-        stats["progresion"]["xp"] = new_xp
-        
-        return update_character(character_id, {"stats_json": stats})
+        response = _get_db().table("characters").update({"xp": new_xp}).eq("id", character_id).execute()
+        return response.data[0] if response.data else None
     except Exception as e:
         log_event(f"Error XP update: {e}", player_id, is_error=True)
         return None
@@ -282,28 +380,43 @@ def add_xp_to_character(character_id: int, xp_amount: int, player_id: Optional[i
         char = get_character_by_id(character_id)
         if not char: return None
         
-        stats = _ensure_v2_structure(char.get("stats_json", {}), char.get("nombre", ""))
-        current = stats["progresion"]["xp"]
-        
-        return update_character_xp(character_id, current + xp_amount, player_id)
+        current_xp = char.get("xp", 0)
+        # Fallback para datos viejos
+        if current_xp is None:
+             current_xp = char.get("stats_json", {}).get("progresion", {}).get("xp", 0)
+
+        return update_character_xp(character_id, current_xp + xp_amount, player_id)
     except Exception:
         return None
 
 def update_character_stats(character_id: int, new_stats_json: Dict[str, Any], player_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    return update_character(character_id, {"stats_json": new_stats_json})
+    # Limpiar JSON entrante antes de guardar
+    cols, cleaned_stats = _extract_and_clean_data(new_stats_json)
+    
+    payload = {"stats_json": cleaned_stats}
+    # Actualizar columnas relevantes si cambiaron
+    if "level" in cols: payload["level"] = cols["level"]
+    if "xp" in cols: payload["xp"] = cols["xp"]
+    if "estado_id" in cols: payload["estado_id"] = cols["estado_id"]
+    
+    # Ubicación también
+    if "location_system_id" in cols: payload["location_system_id"] = cols["location_system_id"]
+    if "location_planet_id" in cols: payload["location_planet_id"] = cols["location_planet_id"]
+    
+    return update_character(character_id, payload)
 
 def update_character_level(character_id: int, new_level: int, new_stats_json: Dict[str, Any], player_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     rango = new_stats_json.get("progresion", {}).get("rango", "Recluta")
+    cols, cleaned_stats = _extract_and_clean_data(new_stats_json)
     
     return update_character(character_id, {
-        "stats_json": new_stats_json,
-        "rango": rango
+        "stats_json": cleaned_stats,
+        "rango": rango,
+        "level": new_level
     })
 
 def recruit_character(player_id: int, character_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Recluta un personaje con datos ya generados."""
     return create_character(player_id, character_data)
-
 
 def recruit_random_character_with_ai(
     player_id: int,
@@ -312,11 +425,7 @@ def recruit_random_character_with_ai(
     min_level: int = 1,
     max_level: int = 1
 ) -> Optional[Dict[str, Any]]:
-    """
-    Genera y recluta un personaje aleatorio usando IA para nombre y biografía.
-    """
     from services.character_generation_service import recruit_character_with_ai
-
     return recruit_character_with_ai(
         player_id=player_id,
         location_planet_id=location_planet_id,
@@ -324,7 +433,6 @@ def recruit_random_character_with_ai(
         min_level=min_level,
         max_level=max_level
     )
-
 
 def get_recruitment_candidates(
     player_id: int,
@@ -334,11 +442,7 @@ def get_recruitment_candidates(
     min_level: int = 1,
     max_level: int = 1
 ) -> list[Dict[str, Any]]:
-    """
-    Genera un pool de candidatos para reclutamiento.
-    """
     from services.character_generation_service import generate_character_pool
-
     return generate_character_pool(
         player_id=player_id,
         pool_size=pool_size,
@@ -348,31 +452,22 @@ def get_recruitment_candidates(
         max_level=max_level
     )
 
-# --- GESTIÓN DE CONOCIMIENTO (V2: SQL TABLE) ---
+# --- GESTIÓN DE CONOCIMIENTO ---
 
 def set_character_knowledge_level(
     character_id: int,
     observer_player_id: int,
     knowledge_level: KnowledgeLevel
 ) -> bool:
-    """
-    Establece el nivel de conocimiento usando la tabla relacional 'character_knowledge'.
-    Realiza un UPSERT (Insertar o Actualizar).
-    """
     try:
-        # UPSERT en Supabase/Postgres
         data = {
             "character_id": character_id,
             "observer_player_id": observer_player_id,
             "knowledge_level": knowledge_level.value,
             "updated_at": "now()"
         }
-        
-        # Upsert basado en la constraint única (character_id, observer_player_id)
         response = _get_db().table("character_knowledge").upsert(data, on_conflict="character_id, observer_player_id").execute()
-        
         return bool(response.data)
-
     except Exception as e:
         log_event(f"Error setting knowledge level (SQL): {e}", observer_player_id, is_error=True)
         return False
@@ -381,12 +476,7 @@ def get_character_knowledge_level(
     character_id: int,
     observer_player_id: int
 ) -> KnowledgeLevel:
-    """
-    Recupera el nivel de conocimiento desde la tabla SQL.
-    Por defecto UNKNOWN si no existe registro.
-    """
     try:
-        # 1. Consulta Directa a DB
         response = _get_db().table("character_knowledge")\
             .select("knowledge_level")\
             .eq("character_id", character_id)\
@@ -397,99 +487,69 @@ def get_character_knowledge_level(
         if response.data:
             return KnowledgeLevel(response.data["knowledge_level"])
             
-        # 2. Fallback: CORREGIDO. 
-        # Si no hay registro en la tabla knowledge, asumimos UNKNOWN.
-        # Anteriormente se asumía KNOWN si eras el dueño, pero eso causaba que
-        # los reclutas nuevos (cuyo registro SQL puede tardar ms) aparecieran con 
-        # nivel más alto del debido (Gold).
-        
-        # Excepción lógica: Si el personaje es Comandante y es del jugador, es FRIEND.
-        # (Aunque esto debería estar cubierto por el insert en create_commander, es un seguro)
         char = get_character_by_id(character_id)
         if char and char.get("es_comandante") and char.get("player_id") == observer_player_id:
             return KnowledgeLevel.FRIEND
 
         return KnowledgeLevel.UNKNOWN
-
     except Exception:
         return KnowledgeLevel.UNKNOWN
 
 def get_known_characters_by_player(player_id: int) -> List[Dict[str, Any]]:
-    """
-    Retorna todos los personajes que el jugador conoce (KNOWN o FRIEND),
-    uniendo con la tabla de characters.
-    """
     try:
-        # Supabase permite joins si están configurados las Foreign Keys
-        # Sintaxis: characters!inner(...) hace un INNER JOIN
         response = _get_db().table("character_knowledge")\
             .select("knowledge_level, characters!inner(*)")\
             .eq("observer_player_id", player_id)\
             .execute()
-            
-        # Formatear salida plana si es necesario, o devolver estructura anidada
         return response.data if response.data else []
     except Exception as e:
         log_event(f"Error fetching known characters: {e}", player_id, is_error=True)
         return []
 
 def dismiss_character(character_id: int, current_player_id: int) -> bool:
-    """
-    Procesa el despido de un personaje.
-    - Si es FRIEND: Se retira permanentemente (retired=True, player_id=NULL).
-    - Si NO es FRIEND: Vuelve al pool de reclutamiento (player_id=NULL, rol=Sin Asignar).
-    """
     try:
-        # 1. Validar propiedad
         char = get_character_by_id(character_id)
-        if not char:
-            return False
+        if not char: return False
         
         if char.get("player_id") != current_player_id:
-            log_event(f"Intento de despido no autorizado para char {character_id}", current_player_id, is_error=True)
+            log_event(f"Intento de despido no autorizado", current_player_id, is_error=True)
             return False
 
-        # 2. Verificar Nivel de Conocimiento (Amistad)
         knowledge_level = get_character_knowledge_level(character_id, current_player_id)
-        
-        # 3. Preparar actualización de stats
         stats = char.get("stats_json", {})
-        if "estado" not in stats:
-            stats["estado"] = {}
-
+        
         update_payload = {}
+        action_msg = ""
 
         if knowledge_level == KnowledgeLevel.FRIEND:
-            # Retiro Permanente
-            stats["estado"]["rol_asignado"] = "Retirado"
-            stats["estado"]["estados_activos"] = ["Retirado"]
-            stats["estado"]["retired"] = True # Flag lógico
+            # RETIRADO
+            stats["estado"] = stats.get("estado", {})
+            stats["estado"]["retired"] = True
+            
             update_payload = {
-                "player_id": None, # Desvincular
-                "stats_json": stats
+                "player_id": None,
+                "stats_json": stats,
+                "estado_id": 99, # Retirado ID
+                "estado": "Retirado"
             }
             action_msg = "jubilado/retirado"
         else:
-            # Devolver al Pool
-            stats["estado"]["rol_asignado"] = "Sin Asignar"
-            # Limpiar estados activos para que esté disponible
-            stats["estado"]["estados_activos"] = ["Disponible"]
-            
+            # DEVUELTO AL POOL
             update_payload = {
-                "player_id": None, # Desvincular (vuelve a ser reclutable si el sistema busca player_id IS NULL)
-                "stats_json": stats
+                "player_id": None,
+                "stats_json": stats,
+                "estado_id": 1, # Disponible ID
+                "estado": "Disponible"
             }
             action_msg = "devuelto al pool"
 
-        # 4. Ejecutar Update
         response = _get_db().table("characters").update(update_payload).eq("id", character_id).execute()
         
         if response.data:
             log_event(f"Personaje {char.get('nombre')} ha sido {action_msg}.", current_player_id)
             return True
-            
         return False
 
     except Exception as e:
-        log_event(f"Error al despedir personaje {character_id}: {e}", current_player_id, is_error=True)
+        log_event(f"Error al despedir personaje: {e}", current_player_id, is_error=True)
         return False

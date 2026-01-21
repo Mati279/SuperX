@@ -2,7 +2,7 @@ import sys
 import os
 
 # Ajuste de path para que encuentre los módulos 'core' y 'data'
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from core.galaxy_generator import GalaxyGenerator
 from data.database import get_supabase
@@ -37,10 +37,11 @@ def populate_galaxy():
         systems_data.append({
             "id": sys_obj.id,
             "name": sys_obj.name,
-            "coord_x": sys_obj.x,
-            "coord_y": sys_obj.y,
-            "star_class": sys_obj.star.class_type,
-            # Otros campos según tu esquema DB
+            "x": sys_obj.x,         # Actualizado de coord_x a x
+            "y": sys_obj.y,         # Actualizado de coord_y a y
+            "star_type": sys_obj.star.class_type, # Actualizado de star_class a star_type
+            "description": sys_obj.description,   # Nuevo campo
+            "controlling_faction_id": sys_obj.controlling_faction_id # Nuevo campo
         })
     
     # Ejecutar upsert/insert masivo

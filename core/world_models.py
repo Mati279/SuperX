@@ -42,7 +42,10 @@ class System:
     star: Star
     planets: List[Planet] = field(default_factory=list)
     # Nuevo: Lista de IDs de sistemas conectados
-    neighbors: List[int] = field(default_factory=list) 
+    neighbors: List[int] = field(default_factory=list)
+    # Nuevos campos v2 (Esquema DB Actualizado)
+    description: str = ""
+    controlling_faction_id: Optional[int] = None
 
 @dataclass
 class Galaxy:
