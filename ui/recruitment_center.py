@@ -9,6 +9,7 @@ Sistema de Reclutamiento v3 (Asíncrono):
 Debug v2.3: Validación de IA en cabecera y disparador manual de emergencia para pruebas.
 Debug v2.4: Fix error en actualización de columnas SQL al reclutar.
 Debug v2.5: Herramientas de investigación determinista implementadas.
+Actualizado v5.1.8: Fuente de Verdad Unificada (SQL Knowledge System).
 """
 
 import streamlit as st
@@ -18,7 +19,12 @@ from ui.state import get_player
 from data.database import get_service_container
 from data.player_repository import get_player_credits, update_player_credits
 # Importamos recruit_candidate_db para manejar la conversion de datos al DB
-from data.character_repository import update_character, set_character_knowledge_level, recruit_candidate_db
+from data.character_repository import (
+    update_character,
+    set_character_knowledge_level,
+    get_character_knowledge_level, # Nueva importación para Source of Truth
+    recruit_candidate_db
+)
 from data.recruitment_repository import (
     get_recruitment_candidates,
     set_candidate_tracked,
@@ -35,6 +41,7 @@ from data.world_repository import (
 from data.log_repository import log_event
 from config.app_constants import DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS, DEFAULT_RECRUIT_LOCATION
 from core.character_engine import BIO_ACCESS_UNKNOWN, BIO_ACCESS_KNOWN
+from core.models import KnowledgeLevel # Importación de Enum
 # Importamos la nueva función de análisis
 from core.recruitment_logic import process_recruitment, analyze_candidates_value
 
@@ -124,12 +131,14 @@ def _render_candidate_card(
     can_afford_investigation = player_credits >= INVESTIGATION_COST
     is_tracked = candidate.get("is_tracked", False)
     is_being_investigated = candidate.get("is_being_investigated", False)
+    
+    # FIX: Fuente de verdad SQL para el estado de conocimiento
+    current_knowledge_level = get_character_knowledge_level(candidate['id'], player_id)
+    already_investigated = current_knowledge_level >= KnowledgeLevel.KNOWN
+    
+    # Mantenemos esto para lógica de precios/descuentos interna del JSON
     investigation_outcome = candidate.get("investigation_outcome")
     discount_applied = candidate.get("discount_applied", False)
-
-    # Nivel de acceso (basado en resultado de investigacion)
-    already_investigated = investigation_outcome in ["SUCCESS", "CRIT_SUCCESS"]
-    show_traits = already_investigated
 
     # Info de expiracion
     tick_created = candidate.get("tick_created", current_tick)
@@ -346,6 +355,10 @@ def _process_recruitment_ui(player_id: int, candidate: Dict[str, Any], player_cr
     """
     try:
         new_credits, update_data = process_recruitment(player_id, player_credits, candidate)
+        
+        # Obtenemos el nivel inicial calculado (puede venir de reglas de contratación o default)
+        # Nota: En la versión unificada, el repositorio ya creó la entrada de conocimiento durante la investigación,
+        # pero esto sirve para asegurar que si no estaba investigado, se cree como UNKNOWN o base.
         initial_knowledge = update_data.pop("initial_knowledge_level", None)
 
         if not update_player_credits(player_id, new_credits):
@@ -357,6 +370,9 @@ def _process_recruitment_ui(player_id: int, candidate: Dict[str, Any], player_cr
         updated_char = recruit_candidate_db(candidate["id"], update_data)
 
         if updated_char:
+            # Si se definió un nivel inicial explícito (ej. reclutamiento VIP), se asegura aquí.
+            # En la mayoría de los casos de contratación estándar, esto ya está manejado, 
+            # pero recruit_candidate_db no toca character_knowledge por defecto, así que esto es seguro.
             if initial_knowledge:
                 set_character_knowledge_level(candidate["id"], player_id, initial_knowledge)
 

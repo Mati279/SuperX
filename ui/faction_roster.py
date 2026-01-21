@@ -1,9 +1,10 @@
-# ui/faction_roster.py
+# ui/faction_roster.py (Completo)
 """
 Gestión del Personal de la Facción.
 Muestra los miembros reclutados con sistema de conocimiento e investigación.
 Refactorizado MMFR: Fuente de Verdad SQL (Nivel, Lealtad, Ubicación).
 Debug v2.1: Captura de errores extendida en reclutamiento inicial.
+Actualizado v5.1.8: Unificación de Conocimiento en Creación (Sin parches manuales).
 """
 
 import streamlit as st
@@ -12,7 +13,6 @@ from data.character_repository import (
     get_all_player_characters,
     update_character_stats,
     get_character_knowledge_level,
-    set_character_knowledge_level,
     recruit_random_character_with_ai,
     dismiss_character
 )
@@ -128,27 +128,35 @@ def render_faction_roster():
     if non_commander_count == 0:
         st.info("Parece que tu facción recién se está estableciendo. Reúne a tu equipo inicial.")
 
-        # BOTÓN MODIFICADO: "Reunir al personal"
+        # BOTÓN MODIFICADO: "Reunir al personal" (Lógica unificada de conocimiento)
         if st.button("Reunir al personal", type="primary", help="Genera tu equipo inicial con ayuda de la IA"):
             try:
-                with st.spinner("Convocando personal y estableciendo enlaces neuronales..."):
-                    # 1. Veterano (Nvl 5)
-                    vet = recruit_random_character_with_ai(player_id, min_level=5, max_level=5)
-                    if vet:
-                        # Se asegura conocimiento KNOWN para el nivel alto
-                        set_character_knowledge_level(vet['id'], player_id, KnowledgeLevel.KNOWN)
+                with st.spinner("Convocando personal..."):
+                    # 1. Veterano (Nvl 5) - Se pasa KNOWN explícitamente
+                    recruit_random_character_with_ai(
+                        player_id, 
+                        min_level=5, 
+                        max_level=5,
+                        initial_knowledge_level=KnowledgeLevel.KNOWN
+                    )
 
-                    # 2. Oficiales (Nvl 3)
+                    # 2. Oficiales (Nvl 3) - Se pasa KNOWN explícitamente
                     for _ in range(2):
-                        off = recruit_random_character_with_ai(player_id, min_level=3, max_level=3)
-                        if off:
-                             # Se asegura conocimiento KNOWN para oficiales medios
-                            set_character_knowledge_level(off['id'], player_id, KnowledgeLevel.KNOWN)
+                        recruit_random_character_with_ai(
+                            player_id, 
+                            min_level=3, 
+                            max_level=3,
+                            initial_knowledge_level=KnowledgeLevel.KNOWN
+                        )
 
-                    # 3. Reclutas (Nvl 1)
-                    # No se establece nivel de conocimiento explícito, por lo que permanecen UNKNOWN
+                    # 3. Reclutas (Nvl 1) - Se pasa UNKNOWN explícitamente (o implícito por defecto)
                     for _ in range(3):
-                        recruit_random_character_with_ai(player_id, min_level=1, max_level=1)
+                        recruit_random_character_with_ai(
+                            player_id, 
+                            min_level=1, 
+                            max_level=1,
+                            initial_knowledge_level=KnowledgeLevel.UNKNOWN
+                        )
 
                 st.success("¡La tripulación se ha reportado en el puente!")
                 st.rerun()

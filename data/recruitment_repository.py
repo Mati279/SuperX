@@ -1,15 +1,16 @@
-# data/recruitment_repository.py
+# data/recruitment_repository.py (Completo)
 """
 Repositorio para gestion de candidatos de reclutamiento.
 REFACTORIZADO: Ahora actúa como una interfaz sobre la tabla 'characters'
 filtrando por estado 'Candidato'.
+Actualizado v5.1.8: Persistencia de Conocimiento (SQL) en Investigación.
 """
 
 from typing import Dict, Any, List, Optional
 from data.database import get_supabase
 from data.log_repository import log_event
-from core.models import CharacterStatus
-from data.character_repository import update_character, get_character_by_id
+from core.models import CharacterStatus, KnowledgeLevel
+from data.character_repository import update_character, get_character_by_id, set_character_knowledge_level
 
 
 def _get_db():
@@ -219,20 +220,30 @@ def set_investigation_state(candidate_id: int, is_investigating: bool) -> bool:
 def apply_investigation_result(candidate_id: int, outcome: str) -> bool:
     """
     Aplica resultado de investigación y posibles descuentos.
+    Persiste el conocimiento en SQL.
     """
     updates = {
         "is_being_investigated": False,
         "investigation_outcome": outcome
     }
     
+    char_obj = get_character_by_id(candidate_id)
+    if not char_obj:
+        return False
+
+    player_id = char_obj.get("player_id")
+
+    # Si la investigación fue exitosa, actualizamos la tabla de conocimiento SQL
+    if outcome in ["SUCCESS", "CRIT_SUCCESS"]:
+        if player_id:
+            set_character_knowledge_level(candidate_id, player_id, KnowledgeLevel.KNOWN)
+
     if outcome == "CRIT_SUCCESS":
         updates["discount_applied"] = True
         # Nota: El costo está en recruitment_data->costo. 
         # Debemos leerlo, calcular descuento y guardar.
-        char = get_character_by_id(candidate_id)
-        if char:
-            original = char.get("stats_json", {}).get("recruitment_data", {}).get("costo", 100)
-            updates["costo"] = int(original * 0.70)
+        original = char_obj.get("stats_json", {}).get("recruitment_data", {}).get("costo", 100)
+        updates["costo"] = int(original * 0.70)
 
     return _update_recruitment_metadata(candidate_id, updates)
 

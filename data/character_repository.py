@@ -7,6 +7,7 @@ Actualizado v5.1.4: Estandarización de IDs de Roles (Fix Error 22P02).
 Actualizado v5.1.5: Fix Error Reclutamiento (recruit_candidate_db).
 Actualizado v5.1.6: Garantía de KnowledgeLevel en creación.
 Actualizado v5.1.7: Corrección de mapeo SQL en sistema de conocimiento (observer_player_id).
+Actualizado v5.1.8: Persistencia robusta de KnowledgeLevel (Fix Source of Truth).
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -320,7 +321,10 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
     from data.game_config_repository import get_current_tick
 
     try:
-        initial_knowledge = character_data.pop("initial_knowledge_level", None)
+        # Extraemos el nivel inicial si viene en la data, si no, es UNKNOWN por defecto
+        # Se elimina del dict para no ensuciar el JSON de stats
+        initial_knowledge = character_data.pop("initial_knowledge_level", KnowledgeLevel.UNKNOWN)
+        
         tick = character_data.pop("recruited_at_tick", get_current_tick())
         
         stats_input = copy.deepcopy(character_data)
@@ -362,6 +366,7 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
             new_char_id = new_char["id"]
             
             # FIX CRÍTICO: Asegurar que se crea la entrada de conocimiento si hay player_id
+            # Esto es vital para la consistencia entre UI de Facción y Reclutamiento
             if player_id is not None:
                 kl = initial_knowledge if initial_knowledge else KnowledgeLevel.UNKNOWN
                 set_character_knowledge_level(new_char_id, player_id, kl)
@@ -446,6 +451,7 @@ def get_character_knowledge_level(character_id: int, player_id: int) -> Knowledg
 
 def set_character_knowledge_level(character_id: int, player_id: int, level: KnowledgeLevel) -> bool:
     try:
+        # Se asegura que on_conflict coincida con la definición de la restricción SQL UNIQUE(character_id, observer_player_id)
         _get_db().table("character_knowledge").upsert({
             "character_id": character_id,
             "observer_player_id": player_id,
@@ -453,7 +459,7 @@ def set_character_knowledge_level(character_id: int, player_id: int, level: Know
         }, on_conflict="character_id, observer_player_id").execute()
         return True
     except Exception as e:
-        log_event(f"Error actualizando conocimiento: {e}", player_id, is_error=True)
+        log_event(f"Error actualizando conocimiento (CharID: {character_id}): {e}", player_id, is_error=True)
         return False
 
 # --- WRAPPERS DE RECLUTAMIENTO ---
