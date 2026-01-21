@@ -267,25 +267,69 @@ def _phase_concurrency_resolution():
 
 
 def _process_candidate_search(player_id: int, current_tick: int):
-    """Procesa la búsqueda de nuevos candidatos de reclutamiento (ASÍNCRONO)."""
+    """
+    Procesa la búsqueda de nuevos candidatos de reclutamiento (ASÍNCRONO).
+    Corregido para asegurar estado_id=7 y manejo explícito de errores.
+    """
     from data.recruitment_repository import clear_untracked_candidates
     from services.character_generation_service import generate_character_pool
 
+    log_event("🔍 INICIANDO PROCESO DE BÚSQUEDA DE CANDIDATOS...", player_id)
+
     try:
-        clear_untracked_candidates(player_id)
+        # 1. Limpieza de candidatos previos no trackeados
+        cleared = clear_untracked_candidates(player_id)
+        if cleared > 0:
+            logger.info(f"Limpieza pre-búsqueda: {cleared} candidatos eliminados para player {player_id}")
+
+        # 2. Generación (Servicio Externo)
+        log_event("📡 Contactando red de reclutamiento (Generación de perfiles)...", player_id)
+        
         new_candidates = generate_character_pool(
             player_id=player_id,
             pool_size=3,
             location_planet_id=None
         )
 
-        count = len(new_candidates)
-        if count > 0:
-            log_event(f"RECLUTAMIENTO: Búsqueda completada. {count} nuevos candidatos disponibles.", player_id)
-        else:
-            log_event("RECLUTAMIENTO: La red no encontró candidatos viables.", player_id)
+        count = len(new_candidates) if new_candidates else 0
+        logger.info(f"generate_character_pool retornó {count} candidatos para player {player_id}")
+
+        if count == 0:
+            # Caso de fallo silencioso en el generador o lista vacía
+            log_event("⚠️ ADVERTENCIA: La red de reclutamiento no devolvió candidatos viables. Se han reembolsado los créditos (lógica pendiente) o intente más tarde.", player_id, is_error=True)
+            # Nota: No lanzamos excepción aquí para no marcar toda la acción como ERROR de sistema,
+            # pero informamos al usuario.
+            return
+
+        # 3. Validación y Corrección de IDs (FIX CRÍTICO)
+        # Aseguramos que los personajes generados tengan el estado correcto para la UI
+        candidates_fixed = 0
+        for char in new_candidates:
+            try:
+                char_id = char.get('id')
+                if not char_id:
+                    continue
+
+                # Forzamos estado CANDIDATO (7) y ubicación 'Centro de Reclutamiento'
+                update_payload = {
+                    "estado_id": STATUS_ID_MAP["Candidato"],
+                    "ubicacion": "Centro de Reclutamiento"
+                }
+                
+                # Actualizamos en DB para garantizar consistencia
+                update_character(char_id, update_payload)
+                candidates_fixed += 1
+            except Exception as inner_e:
+                logger.error(f"Error ajustando estado de candidato {char.get('id')}: {inner_e}")
+
+        log_event(f"✅ RECLUTAMIENTO COMPLETADO: {candidates_fixed} nuevos expedientes disponibles en el Centro.", player_id)
+
     except Exception as e:
-        logger.error(f"Error en búsqueda de candidatos: {e}")
+        # Captura explícita de errores para notificación al usuario
+        logger.error(f"Error CRÍTICO en búsqueda de candidatos para player {player_id}: {e}", exc_info=True)
+        log_event(f"❌ Error crítico en red de reclutamiento: {str(e)}", player_id, is_error=True)
+        # Relanzamos la excepción para que _phase_concurrency_resolution marque la acción como ERROR en DB
+        raise e
 
 
 def _process_investigation(player_id: int, action_text: str):
