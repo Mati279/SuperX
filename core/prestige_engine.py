@@ -9,6 +9,7 @@ Este módulo implementa todas las mecánicas del sistema de prestigio:
 - Recompensas PvE (Suma cero)
 - Verificación de condiciones de hegemonía
 - Validación de suma cero
+- Accessors de datos (NUEVO)
 """
 
 from typing import Dict, List, Tuple, Optional
@@ -374,3 +375,36 @@ def is_near_hegemony(prestige: float, threshold_distance: float = 3.0) -> bool:
         bool: True si está a menos de threshold_distance del 25%
     """
     return abs(prestige - HEGEMONY_THRESHOLD) < threshold_distance
+
+
+def get_player_prestige_level(player_id: int) -> float:
+    """
+    Obtiene el nivel de prestigio actual del jugador desde la base de datos.
+    Esta función actúa como un puente seguro entre el motor de prestigio y la capa de datos.
+
+    Args:
+        player_id: ID del jugador a consultar.
+
+    Returns:
+        float: El valor de prestigio (0.0 a 100.0). Retorna 0.0 si el jugador no existe.
+    
+    Nota:
+        Utiliza importación local para evitar dependencias circulares con `data.player_repository`,
+        ya que el repositorio suele importar constantes de `core`.
+    """
+    try:
+        # Importación local para prevenir ciclos (core <-> data)
+        from data.player_repository import get_player_by_id
+        
+        player = get_player_by_id(player_id)
+        if not player:
+            return 0.0
+            
+        # Obtenemos 'prestigio'. Si no existe la columna o es None, fallback a 0.0
+        return float(player.get("prestigio", 0.0) or 0.0)
+        
+    except Exception as e:
+        # En caso de error de DB o importación, fallamos seguro a 0 (prestigio neutral/bajo)
+        # Esto evita que el juego crashee si la DB está en mantenimiento
+        print(f"Error obteniendo prestigio para {player_id}: {e}")
+        return 0.0
