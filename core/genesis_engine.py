@@ -1,13 +1,13 @@
 # core/genesis_engine.py
 """
-Genesis Engine - Protocolo v2.0 "Asentamiento Seguro"
+Genesis Engine - Protocolo v4.2 "Fair Start"
 Maneja la lógica de inicialización de nuevas facciones.
-Actualizado: Soporte para Población Decimal (1.0 = 1B).
-Actualizado v2.1: Generación de Tripulación Inicial (Level 5 + 2x Level 3) con conocimiento KNOWN.
+Actualizado: Estandarización de Población Inicial (1.50B - 1.70B).
+Actualizado: Generación de Tripulación Inicial (Level 5 + 2x Level 3) con conocimiento KNOWN.
 """
 
 import random
-import traceback # Importado para debug detallado
+import traceback
 from typing import Dict, Any, List
 from data.database import get_supabase
 from data.log_repository import log_event
@@ -28,7 +28,7 @@ INITIAL_COMPONENTS = 200
 INITIAL_ENERGY = 100
 
 # Población Inicial Jugador (Decimal: Billones)
-# Rango: 1.50B a 1.70B
+# Rango Estricto V4.2: 1.50B a 1.70B
 GENESIS_POP_MIN = 1.50
 GENESIS_POP_MAX = 1.70
 
@@ -44,26 +44,24 @@ def _get_db():
 
 def genesis_protocol(player_id: int) -> bool:
     try:
-        log_event("Iniciando Protocolo Génesis...", player_id)
+        log_event("Iniciando Protocolo Génesis V4.2 (Fair Start)...", player_id)
         db = _get_db()
         
         # 1. Encontrar sistema seguro
         system_id = find_safe_starting_node()
         
         # 2. Seleccionar planeta aleatorio
-        response_planets = db.table("planets").select("id, name, biome").eq("system_id", system_id).execute()
+        response_planets = db.table("planets").select("id, name, biome, system_id").eq("system_id", system_id).execute()
         
         if not response_planets.data:
             log_event(f"⚠ Sistema {system_id} vacío. Buscando respaldo...", player_id, is_error=True)
             # Fallback: buscar cualquier planeta
-            # FIX: Usamos limit(1) en lugar de single() para evitar excepciones si la tabla está vacía
             fallback = db.table("planets").select("id, name, system_id").limit(1).execute()
             
             if not fallback.data: 
                 print("❌ CRITICAL: No existen planetas en la base de datos.")
                 return False
                 
-            # Al usar limit(1), data es una lista [planet], tomamos el primero
             target_planet = fallback.data[0]
             system_id = target_planet['system_id'] 
         else:
@@ -77,6 +75,7 @@ def genesis_protocol(player_id: int) -> bool:
         
         # Calcular Seguridad Inicial Dinámica (MMFR V2)
         # Fórmula: Base (25) + (Pop * 5)
+        # Nota: En Genesis ignoramos el anillo orbital ya que no tenemos el dato preciso aquí, se ajustará en el primer tick
         sec_base = ECONOMY_RATES.get("security_base", 25.0)
         sec_pop = ECONOMY_RATES.get("security_per_1b_pop", 5.0)
         initial_security = sec_base + (initial_pop * sec_pop)
@@ -94,7 +93,6 @@ def genesis_protocol(player_id: int) -> bool:
             "pops_desempleados": 0.0,
             "seguridad": initial_security, 
             "infraestructura_defensiva": 0
-            # "felicidad": 1.0  <-- ELIMINADO: Columna no existente en esquema actual
         }
 
         db.table("planet_assets").insert(asset_data).execute()
@@ -103,8 +101,8 @@ def genesis_protocol(player_id: int) -> bool:
         apply_genesis_inventory(player_id)
         initialize_fog_of_war(player_id, system_id)
 
-        # 5. Generación de Tripulación Inicial (FIX: Estado KNOWN)
-        # MODIFICADO: Se comenta para mover la generación al UI manual ("Reunir personal")
+        # 5. Generación de Tripulación Inicial
+        # Se comenta para mover la generación al UI manual ("Reunir personal")
         # _deploy_starting_crew(player_id, target_planet['id'])
         
         log_event(f"✅ Protocolo Génesis completado. Base: {base_name}. Pob: {initial_pop}B. Seg: {initial_security:.1f}", player_id)

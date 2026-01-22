@@ -2,9 +2,7 @@
 """
 Motor Económico MMFR (Materials, Metals, Fuel, Resources).
 Gestiona toda la lógica de cálculo económico del juego.
-Refactorizado: Seguridad (0-100) y Mantenimiento Estricto.
-Actualizado v4.1.4: Integración con Mercado y Logística.
-Actualizado v4.2.0: Lógica de Control Orbital y Bonos de Sector Urbano.
+Refactorizado V4.2: Modelo Logarítmico y Penalización Orbital.
 """
 
 from typing import Dict, List, Any, Tuple, Optional
@@ -25,8 +23,8 @@ from core.world_constants import (
     BUILDING_TYPES,
     BUILDING_SHUTDOWN_PRIORITY,
     ECONOMY_RATES,
-    DISPUTED_PENALTY_MULTIPLIER, # V4.2.0
-    SECTOR_TYPE_URBAN           # V4.2.0
+    DISPUTED_PENALTY_MULTIPLIER,
+    SECTOR_TYPE_URBAN
 )
 from core.models import ProductionSummary, EconomyTickResult
 from core.market_engine import process_pending_market_orders
@@ -36,35 +34,48 @@ from core.market_engine import process_pending_market_orders
 
 def calculate_planet_security(
     population: float,
-    infrastructure_defense: int
+    infrastructure_defense: int,
+    orbital_distance: int # Nuevo V4.2
 ) -> float:
     """
     Calcula el nivel de seguridad del planeta (0-100).
-    Formula: Base (25) + (Población * 5) + Infraestructura.
+    Formula V4.2: Base (25) + (Población * 5) + Infraestructura - (2 * Anillo Orbital).
     """
     base = ECONOMY_RATES.get("security_base", 25.0)
     per_pop = ECONOMY_RATES.get("security_per_1b_pop", 5.0)
     
     pop_bonus = population * per_pop
+    distance_penalty = 2.0 * orbital_distance
     
-    total = base + pop_bonus + infrastructure_defense
+    total = base + pop_bonus + infrastructure_defense - distance_penalty
     return max(1.0, min(total, 100.0))
 
 
 def calculate_income(
     population: float,
     security: float,
-    penalty_multiplier: float = 1.0 # V4.2.0: Soporte para penalizaciones
+    penalty_multiplier: float = 1.0
 ) -> int:
     """
     Calcula el ingreso de créditos.
-    Formula: (Pop * Tasa) * (Seguridad / 100) * Penalización.
+    Formula V4.2: (RateBase * log10(Población)) * (Seguridad / 100).
+    Se usa max(1.0, population) para evitar errores matemáticos, 
+    aunque el mínimo del juego es 1.5B.
     """
     rate = ECONOMY_RATES.get("income_per_pop", 150.0)
+    
+    # Crecimiento Logarítmico
+    # Si Población = 1.5, log10(1.5) ≈ 0.176
+    # Si Población = 10, log10(10) = 1.0
+    # Si Población = 100, log10(100) = 2.0
+    pop_factor = math.log10(max(1.001, population)) 
+    
     efficiency = security / 100.0
     
-    income = (population * rate) * efficiency * penalty_multiplier
-    return int(income)
+    income = (rate * pop_factor) * efficiency * penalty_multiplier
+    
+    # Garantizar que el ingreso no sea negativo
+    return max(0, int(income))
 
 
 @dataclass
@@ -214,10 +225,17 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
         
         # 2. Procesar cada planeta
         for planet in planets:
-            # A. Seguridad
+            # A. Seguridad (V4.2: Dependencia de Distancia Orbital)
             pop = float(planet.get("poblacion", 0.0))
             infra_def = planet.get("infraestructura_defensiva", 0)
-            security = calculate_planet_security(pop, infra_def)
+            
+            # Intentar obtener distancia orbital. Default 0 si no existe la columna en la vista actual.
+            orbital_dist = planet.get("orbital_distance", 0) 
+            # Fallback a 'ring_index' si la DB usa ese nombre
+            if orbital_dist == 0 and "ring_index" in planet:
+                orbital_dist = planet["ring_index"]
+
+            security = calculate_planet_security(pop, infra_def, orbital_dist)
             
             old_sec = planet.get("seguridad", 25.0)
             if abs(security - old_sec) > 0.1:
@@ -237,10 +255,8 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
                 
             if is_disputed or is_blockaded:
                 penalty = DISPUTED_PENALTY_MULTIPLIER # 0.3
-                status_msg = "Bloqueado" if is_blockaded else "En Disputa"
-                # Opcional: Loggear solo la primera vez o en eventos importantes, para no saturar
             
-            # C. Ingresos (Aplicando penalización)
+            # C. Ingresos (Aplicando penalización y Logaritmo)
             income = calculate_income(pop, security, penalty_multiplier=penalty)
             result.total_income += income
             
@@ -263,7 +279,7 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
                 building_status_updates.append((bid, True))
                 result.buildings_reactivated.append(bid)
                 
-            # E. Producción (Paid Buildings incluyen sector_type mapeado desde repository)
+            # E. Producción
             prod = calculate_planet_production(maint_res.paid_buildings)
             result.production = result.production.add(prod)
 
@@ -340,7 +356,12 @@ def get_player_projected_economy(player_id: int) -> Dict[str, int]:
 
             pop = float(planet.get("poblacion", 0.0))
             infra = planet.get("infraestructura_defensiva", 0)
-            sec = calculate_planet_security(pop, infra)
+            
+            orbital_dist = planet.get("orbital_distance", 0)
+            if orbital_dist == 0 and "ring_index" in planet:
+                orbital_dist = planet["ring_index"]
+
+            sec = calculate_planet_security(pop, infra, orbital_dist)
             
             # Ingresos proyectados con penalización
             income = calculate_income(pop, sec, penalty_multiplier=penalty)

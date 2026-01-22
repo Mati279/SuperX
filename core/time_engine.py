@@ -29,11 +29,12 @@ def _get_db():
 from data.player_repository import get_player_credits, update_player_credits
 from data.log_repository import log_event, clear_player_logs
 
-# FIX: Eliminado MalusType ya que no existe en MRG v2.1
 from core.mrg_engine import resolve_action, ResultType
-
 # IMPORT NUEVO: Servicio de Eventos Narrativos
 from services.event_service import generate_tick_event
+
+# IMPORT V4.2: Constantes de Prestigio
+from core.prestige_constants import FRICTION_RATE
 
 # Forzamos la zona horaria a Argentina (GMT-3)
 SAFE_TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
@@ -181,7 +182,6 @@ def _phase_decrement_and_persistence():
         db = _get_db()
 
         # 1. Decrement mission remaining days
-        # Refactor MMFR: Filtro por estado_id 2 (En Misión)
         missions_res = db.table("characters")\
             .select("id, player_id, nombre, stats_json")\
             .eq("estado_id", STATUS_ID_MAP["En Misión"])\
@@ -201,7 +201,6 @@ def _phase_decrement_and_persistence():
                     log_event(f"Mission ready for resolution: {char['nombre']}", char.get('player_id'))
 
         # 2. Heal wounded characters
-        # Refactor MMFR: Filtro por estado_id 3 (Herido)
         wounded_res = db.table("characters")\
             .select("id, player_id, nombre, stats_json")\
             .eq("estado_id", STATUS_ID_MAP["Herido"])\
@@ -217,9 +216,7 @@ def _phase_decrement_and_persistence():
             else:
                 stats.pop('wound_ticks_remaining', None)
                 
-                # FIX: Actualizar ubicación en JSON, no en columna SQL
                 if "estado" not in stats: stats["estado"] = {}
-                # Manejo robusto de ubicación local
                 loc_data = stats["estado"].get("ubicacion", {})
                 if isinstance(loc_data, dict):
                     loc_data["ubicacion_local"] = "Barracones"
@@ -227,7 +224,6 @@ def _phase_decrement_and_persistence():
                     loc_data = {"ubicacion_local": "Barracones"}
                 stats["estado"]["ubicacion"] = loc_data
 
-                # Refactor MMFR: Cambio a estado_id 1 (Disponible)
                 update_character(char['id'], {
                     "estado_id": STATUS_ID_MAP["Disponible"],
                     "stats_json": stats
@@ -280,22 +276,18 @@ def _phase_concurrency_resolution():
 def _process_candidate_search(player_id: int, current_tick: int):
     """
     Procesa la búsqueda de nuevos candidatos de reclutamiento (ASÍNCRONO).
-    Corregido para asegurar estado_id=7 y manejo explícito de errores sin romper esquema DB.
     """
     from data.recruitment_repository import clear_untracked_candidates
     from services.character_generation_service import generate_character_pool
 
     log_event("🔍 INICIANDO PROCESO DE BÚSQUEDA DE CANDIDATOS...", player_id)
-    # DEBUG: Confirmar versión del código cargada en logs
     logger.info(f"⚡ _process_candidate_search RUNNING (Player {player_id}) - v3 CLEAN FIX")
 
     try:
-        # 1. Limpieza de candidatos previos no trackeados
         cleared = clear_untracked_candidates(player_id)
         if cleared > 0:
             logger.info(f"Limpieza pre-búsqueda: {cleared} candidatos eliminados para player {player_id}")
 
-        # 2. Generación (Servicio Externo)
         log_event("📡 Contactando red de reclutamiento (Generación de perfiles)...", player_id)
         
         new_candidates = generate_character_pool(
@@ -308,11 +300,9 @@ def _process_candidate_search(player_id: int, current_tick: int):
         logger.info(f"generate_character_pool retornó {count} candidatos para player {player_id}")
 
         if count == 0:
-            # Caso de fallo silencioso en el generador o lista vacía
             log_event("⚠️ ADVERTENCIA: La red de reclutamiento no devolvió candidatos viables. Se han reembolsado los créditos (lógica pendiente) o intente más tarde.", player_id, is_error=True)
             return
 
-        # 3. Validación y Corrección de IDs (FIX CRÍTICO)
         candidates_fixed = 0
         for char in new_candidates:
             try:
@@ -320,11 +310,9 @@ def _process_candidate_search(player_id: int, current_tick: int):
                 if not char_id:
                     continue
 
-                # Preparar Stats con la ubicación correcta (dentro del JSON)
                 stats = char.get("stats_json", {})
                 if "estado" not in stats: stats["estado"] = {}
                 
-                # Actualizar o crear la estructura de ubicación en el JSON
                 current_loc = stats["estado"].get("ubicacion", {})
                 if isinstance(current_loc, dict):
                     current_loc["ubicacion_local"] = "Centro de Reclutamiento"
@@ -332,21 +320,17 @@ def _process_candidate_search(player_id: int, current_tick: int):
                 else:
                     stats["estado"]["ubicacion"] = {"ubicacion_local": "Centro de Reclutamiento"}
 
-                # Payload de actualización: LIMPIO DE CLAVES INVÁLIDAS
-                # Eliminada referencia a 'ubicacion' en la raíz
                 update_payload = {
                     "estado_id": STATUS_ID_MAP["Candidato"],
                     "stats_json": stats
                 }
                 
-                # DEBUG CRITICO: Verificar contenido exacto antes de llamar a la DB
                 logger.info(f"DEBUG: Updating char {char_id} payload keys: {list(update_payload.keys())}")
                 
                 update_character(char_id, update_payload)
                 candidates_fixed += 1
             except Exception as inner_e:
                 logger.error(f"Error ajustando estado de candidato {char.get('id')}: {inner_e}")
-                # No lanzamos excepción aquí para intentar salvar los otros candidatos
 
         log_event(f"✅ RECLUTAMIENTO COMPLETADO: {candidates_fixed} nuevos expedientes disponibles en el Centro.", player_id)
 
@@ -358,7 +342,6 @@ def _process_candidate_search(player_id: int, current_tick: int):
 
 def _process_investigation(player_id: int, action_text: str):
     """Procesa una investigación de personaje (candidato o miembro)."""
-    # Imports locales para evitar circular dependencies
     from data.character_repository import get_commander_by_player_id, get_character_by_id
     from data.recruitment_repository import get_candidate_by_id
 
@@ -367,14 +350,12 @@ def _process_investigation(player_id: int, action_text: str):
         target_id = None
         debug_outcome = None
 
-        # 1. Extracción de parámetros
         type_match = re.search(r"target_type=(\w+)", action_text)
         if type_match: target_type = type_match.group(1)
 
         id_match = re.search(r"(?:candidate_id|character_id)=(\d+)", action_text)
         if id_match: target_id = int(id_match.group(1))
 
-        # 2. Extracción de DEBUG outcome
         debug_match = re.search(r"debug_outcome=(\w+)", action_text)
         if debug_match: 
             debug_outcome = debug_match.group(1)
@@ -382,7 +363,6 @@ def _process_investigation(player_id: int, action_text: str):
         if not target_id:
             return
 
-        # 3. Preparación de datos (Comandante y Objetivo)
         commander = get_commander_by_player_id(player_id)
         if not commander: return
 
@@ -408,22 +388,18 @@ def _process_investigation(player_id: int, action_text: str):
             target_skills = target_stats.get("capacidades", {}).get("habilidades", {})
             target_merit = (target_skills.get("Sigilo físico", 5) + target_skills.get("Infiltración urbana", 5)) // 2 + 40
 
-        # 4. Resolución (Determinista si hay debug_outcome, sino Probabilística)
         outcome = "FAIL"
 
         if debug_outcome:
-            # Bypass de lógica de dados para debug
             outcome = debug_outcome
             log_event(f"🔧 DEBUG: Investigación forzada a resultado {outcome}.", player_id)
         else:
-            # Lógica estándar de dados
             result = resolve_action(merit_points=cmd_merit, difficulty=target_merit, action_description=f"Investigación sobre {target_name}")
             
             if result.result_type == ResultType.CRITICAL_SUCCESS: outcome = "CRIT_SUCCESS"
             elif result.result_type in [ResultType.TOTAL_SUCCESS, ResultType.PARTIAL_SUCCESS]: outcome = "SUCCESS"
             elif result.result_type == ResultType.CRITICAL_FAILURE: outcome = "CRIT_FAIL"
 
-        # 5. Aplicación de consecuencias
         if target_type == "CANDIDATE":
             _apply_candidate_investigation_result(player_id, target_id, target_name, outcome)
         else:
@@ -459,20 +435,29 @@ def _apply_member_investigation_result(player_id: int, character_id: int, name: 
         log_event(f"INTEL: Investigación sobre {name} sin resultados.", player_id)
 
 def _phase_prestige_calculation():
-    """Fase 3: Cálculo y transferencia de Prestigio."""
+    """Fase 3: Cálculo y transferencia de Prestigio (V4.2 Friction)."""
     log_event("running phase 3: Prestigio...")
     try:
         from data.faction_repository import get_all_factions, update_faction_prestige
         factions = get_all_factions()
         if not factions or len(factions) < 2: return
-        FRICTION_RATE = 0.005
-        high_factions = [f for f in factions if f.get('prestige', 0) > 0.20]
-        low_factions = [f for f in factions if f.get('prestige', 0) < 0.05]
+        
+        # Usamos la tasa importada (1.5) convertida a porcentaje
+        friction_pct = FRICTION_RATE / 100.0  # 1.5 -> 0.015
+        
+        high_factions = [f for f in factions if f.get('prestige', 0) > 20.0]
+        low_factions = [f for f in factions if f.get('prestige', 0) < 5.0]
+        
         if high_factions and low_factions:
-            total_friction = sum(f.get('prestige', 0) * FRICTION_RATE for f in high_factions)
+            total_friction = sum(f.get('prestige', 0) * friction_pct for f in high_factions)
             share_per_low = total_friction / len(low_factions)
-            for f in high_factions: update_faction_prestige(f['id'], f.get('prestige', 0) * (1 - FRICTION_RATE))
-            for f in low_factions: update_faction_prestige(f['id'], f.get('prestige', 0) + share_per_low)
+            
+            for f in high_factions: 
+                update_faction_prestige(f['id'], f.get('prestige', 0) * (1 - friction_pct))
+                
+            for f in low_factions: 
+                update_faction_prestige(f['id'], f.get('prestige', 0) + share_per_low)
+                
     except Exception as e:
         logger.error(f"Error en fase de prestigio: {e}")
 
@@ -508,7 +493,6 @@ def _phase_mission_resolution():
     """Fase 6: Resolución de Misiones (MRG v2.0)."""
     log_event("running phase 6: Resolución de Misiones (MRG 2d50)...")
     try:
-        # Refactor MMFR: Filtro por estado_id 2 (En Misión)
         response = _get_db().table("characters")\
             .select("*")\
             .eq("estado_id", STATUS_ID_MAP["En Misión"])\
@@ -523,8 +507,6 @@ def _phase_mission_resolution():
             result = resolve_action(merit_points=attr_value, difficulty=mission_data.get('difficulty', 50), action_description=f"Misión de {char['nombre']}")
             
             reward = 0
-            
-            # Determinar ubicación local según resultado
             status_id = STATUS_ID_MAP["Disponible"]
             loc_local = "Barracones"
             msg = ""
@@ -547,7 +529,6 @@ def _phase_mission_resolution():
             
             if 'active_mission' in stats: del stats['active_mission']
             
-            # FIX: Actualizar ubicación en JSON, no en columna inexistente
             if "estado" not in stats: stats["estado"] = {}
             loc_data = stats["estado"].get("ubicacion", {})
             if isinstance(loc_data, dict):

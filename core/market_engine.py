@@ -1,8 +1,8 @@
 # core/market_engine.py
 """
-Motor de Mercado y Logística.
+Motor de Mercado y Logística - V4.2
 Gestiona precios dinámicos, validación de órdenes y procesamiento diferido.
-Spec 4.1.4: Precios basados en Prestigio y Entrega en Tick +1.
+Spec 4.2: Influencia del Prestigio y Broker Dinámico.
 """
 
 from typing import Dict, List, Tuple, Any
@@ -23,45 +23,53 @@ from data.player_repository import get_player_resources, update_player_resources
 from data.planet_repository import get_all_player_planets
 from data.log_repository import log_event
 
-# Precios Base (Referencia estática)
-# Estos valores podrían moverse a world_constants si se desea centralización total
+# Precios Base V4.2 (Actualizados)
 BASE_PRICES = {
-    "materiales": 10,
-    "componentes": 25,
-    "celulas_energia": 15,
-    "influencia": 100,
-    "datos": 50
+    "materiales": 20,
+    "componentes": 30,
+    "celulas_energia": 30,
+    "influencia": 50,
+    "datos": 20
 }
 
 MARKET_FEE_PERCENT = 0.20 # Markup base del 20%
-PRESTIGE_BASELINE = 14    # Nivel de prestigio neutral
+PRESTIGE_BASELINE = 14    # Nivel de prestigio neutral (14%)
 
 def calculate_market_prices(player_id: int) -> Dict[str, Dict[str, int]]:
     """
     Calcula precios de compra y venta personalizados según el prestigio.
     Retorna: { "recurso": { "buy": int, "sell": int } }
+    
+    Lógica V4.2:
+    - Base Markup: 20%
+    - Ajuste: +/- 1% de markup por cada 1% de prestigio de diferencia con Baseline (14).
     """
     prestige = get_player_prestige_level(player_id)
     
-    # Delta: Positivo reduce precio compra / aumenta precio venta
-    # Cada nivel de prestigio reduce el markup en 1%
+    # Delta: Positivo (Prestigio > 14) mejora precios.
+    # Negativo (Prestigio < 14) empeora precios.
     prestige_delta = prestige - PRESTIGE_BASELINE
     
-    # Ajuste del markup: 
-    # Markup efectivo = Base (0.20) - (Delta / 100)
-    # Ej: Nivel 24 (+10 delta) -> Markup = 0.10 (10%)
-    # Ej: Nivel 4 (-10 delta) -> Markup = 0.30 (30%)
+    # Factor de ajuste: 1% (0.01) por punto de delta
+    adjustment = prestige_delta / 100.0
+    
+    # Cálculo de tasas dinámicas
+    # Compra: Base 20% - Ajuste. Si tienes mucho prestigio, el fee baja.
+    # Si tienes poco prestigio (negativo delta), el fee sube.
+    buy_fee = max(0.01, MARKET_FEE_PERCENT - adjustment)
+    
+    # Venta: Base 20% - Ajuste.
+    # El markdown reduce el precio de venta. Queremos que sea PEQUEÑO si hay prestigio.
+    # Si tienes mucho prestigio, el markdown baja (vendes más caro).
+    sell_markdown = max(0.01, MARKET_FEE_PERCENT - adjustment)
     
     prices = {}
     
     for resource, base_price in BASE_PRICES.items():
-        # Factor Compra: 1 + Markup
-        buy_markup = max(0.05, MARKET_FEE_PERCENT - (prestige_delta / 100.0))
-        buy_price = math.ceil(base_price * (1 + buy_markup))
+        # Precio Compra = Base * (1 + fee)
+        buy_price = math.ceil(base_price * (1 + buy_fee))
         
-        # Factor Venta: 1 - Markup
-        # El spread se reduce con prestigio, permitiendo vender más caro
-        sell_markdown = max(0.05, MARKET_FEE_PERCENT - (prestige_delta / 100.0))
+        # Precio Venta = Base * (1 - markdown)
         sell_price = math.floor(base_price * (1 - sell_markdown))
         
         # Seguridad mínima
@@ -70,7 +78,8 @@ def calculate_market_prices(player_id: int) -> Dict[str, Dict[str, int]]:
         prices[resource] = {
             "buy": buy_price,
             "sell": sell_price,
-            "base": base_price
+            "base": base_price,
+            "fee_rate": buy_fee # Debug info
         }
         
     return prices
@@ -150,8 +159,7 @@ def place_market_order(player_id: int, resource: str, amount: int, is_buy: bool)
     try:
         current_tick = get_current_tick()
         
-        # Cobrar primero (Atomicidad optimista: si falla DB, recursos podrían desincronizarse 
-        # pero player_repo maneja updates directos. Idealmente esto iría en transacción SQL)
+        # Cobrar primero (Atomicidad optimista)
         if not update_player_resources(player_id, updates):
             return False, "Error al actualizar recursos del jugador."
             
@@ -172,9 +180,6 @@ def place_market_order(player_id: int, resource: str, amount: int, is_buy: bool)
             log_event(f"📈 Mercado: Orden {action_str} {amount} {resource} @ {unit_price} Cr/u (Entrega: Tick {current_tick + 1})", player_id)
             return True, "Orden registrada. Entrega programada para el próximo ciclo."
         else:
-            # Rollback manual simple (devolver recursos) si falla creación de orden
-            # En producción esto requeriría transacciones serias
-            # Por ahora asumimos estabilidad de DB
             return False, "Error de base de datos al crear orden."
 
     except Exception as e:
