@@ -12,6 +12,7 @@ Refactorizado v5.3: Limpieza de redundancia 'slots' en Planeta.
 Corrección v5.4: Protecciones robustas contra respuestas 'NoneType' de Supabase.
 Corrección v5.5: Persistencia de 'poblacion' en tabla global 'planets'.
 Corrección v5.6: Join con tabla 'planets' para obtener seguridad real.
+Refactor v5.7: Estandarización de nomenclatura 'population' (Fix poblacion).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -74,10 +75,11 @@ def get_all_player_planets(player_id: int) -> List[Dict[str, Any]]:
     """
     Obtiene todos los activos planetarios del jugador.
     Fix V5.6: JOIN con 'planets' para obtener 'security' (Source of Truth).
+    Refactor V5.7: Actualizado a 'population'.
     """
     try:
         response = _get_db().table("planet_assets")\
-            .select("*, planets(security, poblacion, system_id, name)")\
+            .select("*, planets(security, population, system_id, name)")\
             .eq("player_id", player_id)\
             .execute()
         return response.data if response and response.data else []
@@ -89,11 +91,12 @@ def get_all_player_planets(player_id: int) -> List[Dict[str, Any]]:
 def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]]:
     """
     Obtiene planetas del jugador con edificios y datos de sectores precargados.
+    Refactor V5.7: Actualizado a 'population'.
     """
     try:
         db = _get_db()
         planets_response = db.table("planet_assets")\
-            .select("*, planets(orbital_owner_id, surface_owner_id, is_disputed, biome, security, poblacion)")\
+            .select("*, planets(orbital_owner_id, surface_owner_id, is_disputed, biome, security, population)")\
             .eq("player_id", player_id)\
             .execute()
 
@@ -181,7 +184,8 @@ def create_planet_asset(
             "system_id": system_id,
             "player_id": player_id,
             "nombre_asentamiento": settlement_name,
-            "poblacion": initial_population,
+            # Refactor V5.7: population en lugar de poblacion
+            "population": initial_population,
             "pops_activos": initial_population,
             "pops_desempleados": 0.0,
             "infraestructura_defensiva": 0,
@@ -192,11 +196,11 @@ def create_planet_asset(
         
         if response and response.data:
             # Sincronizar tabla PLANETS
-            # FIX V5.5: Se agrega 'poblacion' al update para mantener consistencia global
+            # FIX V5.5: Se agrega 'population' al update para mantener consistencia global
             _get_db().table("planets").update({
                 "surface_owner_id": player_id,
                 "security": initial_security,
-                "poblacion": initial_population
+                "population": initial_population
             }).eq("id", planet_id).execute()
             
             log_event(f"Planeta colonizado: {settlement_name} (Seguridad inicial: {initial_security:.1f})", player_id)

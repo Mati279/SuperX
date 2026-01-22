@@ -8,6 +8,7 @@ Actualizado v5.1.4: Estandarización de IDs de Roles (Fix Error 22P02).
 Actualizado V4.3: Enums de Conocimiento y Secretos.
 Corregido v5.1.5: Fix BiologicalSex Enum y defaults.
 Refactor v5.2: Seguridad movida a tabla 'planets'.
+Refactor v5.7: Estandarización de nomenclatura 'population' (Fix poblacion).
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -453,7 +454,8 @@ class PlanetAsset(BaseModel):
     system_id: int
     player_id: int
     nombre_asentamiento: str = "Colonia"
-    poblacion: float = 0.0  # Población en Billones
+    # Refactor V5.7: Nomenclatura estandarizada a population
+    population: float = 0.0  # Población en Billones (Renombrado de poblacion)
     pops_activos: int = 0
     pops_desempleados: int = 0
     base_tier: int = Field(default=1, ge=1)
@@ -470,6 +472,10 @@ class PlanetAsset(BaseModel):
     def from_dict(cls, data: Dict[str, Any]) -> 'PlanetAsset':
         if not data:
             raise ValueError("No se puede crear PlanetAsset desde datos vacíos")
+        # Aseguramos compatibilidad si llega 'poblacion' (legacy)
+        if "poblacion" in data and "population" not in data:
+             data["population"] = data.pop("poblacion")
+             
         return cls(**{k: v for k, v in data.items() if v is not None})
 
 
