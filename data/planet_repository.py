@@ -7,7 +7,7 @@ Actualizado v4.3.0: Integración completa de Planetología Avanzada (Sectores).
 Actualizado v4.4.0: Persistencia de Seguridad Galáctica.
 Corrección v4.4.1: Consultas seguras (maybe_single) para assets opcionales.
 Actualizado v4.7.0: Estandarización de Capitales (Población Inicial).
-Actualizado v4.8.1: Eliminación de columna obsoleta 'security_breakdown'.
+Actualizado v4.8.1: Eliminación definitiva de 'security_breakdown' para sincronización con DB.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -28,7 +28,7 @@ def _get_db():
 def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
     """Obtiene información de un planeta de la tabla mundial 'planets'."""
     try:
-        # V4.8.1: Eliminado 'security_breakdown' del select para evitar error 42703
+        # V4.8.1: Eliminado 'security_breakdown' del select
         response = _get_db().table("planets")\
             .select("id, name, system_id, biome, mass_class, orbital_ring, is_habitable, surface_owner_id, orbital_owner_id, is_disputed, security")\
             .eq("id", planet_id)\
@@ -87,6 +87,7 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
     """
     try:
         db = _get_db()
+        # Nota: Esto requiere que la FK planet_assets.planet_id -> planets.id exista en SQL
         planets_response = db.table("planet_assets")\
             .select("*, planets(orbital_owner_id, surface_owner_id, is_disputed, biome)")\
             .eq("player_id", player_id)\
@@ -107,10 +108,15 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
 
         # Obtener Sectores
         sectors_response = db.table("sectors")\
-            .select("id, type, planet_id, slots, buildings_count")\
+            .select("id, type, planet_id, max_slots, buildings_count, resource_category, is_known")\
             .in_("planet_id", planet_ids)\
             .execute()
         sectors_data = sectors_response.data if sectors_response.data else []
+        
+        # Corrección de campo legacy 'slots' -> 'max_slots'
+        for s in sectors_data:
+            if 'slots' not in s and 'max_slots' in s:
+                s['slots'] = s['max_slots']
         
         sector_map = {s["id"]: s for s in sectors_data}
 
@@ -208,8 +214,14 @@ def get_base_slots_info(planet_asset_id: int) -> Dict[str, int]:
         if not asset: return {"total": 0, "used": 0, "free": 0}
         
         planet_id = asset.get("planet_id")
-        sectors_res = db.table("sectors").select("slots").eq("planet_id", planet_id).execute()
-        total_slots = sum(s["slots"] for s in sectors_res.data) if sectors_res.data else 0
+        # Corrección V4.8.2: Usar max_slots si slots no existe en la consulta directa
+        try:
+            sectors_res = db.table("sectors").select("max_slots").eq("planet_id", planet_id).execute()
+            total_slots = sum(s["max_slots"] for s in sectors_res.data) if sectors_res.data else 0
+        except:
+            # Fallback legacy
+            sectors_res = db.table("sectors").select("slots").eq("planet_id", planet_id).execute()
+            total_slots = sum(s["slots"] for s in sectors_res.data) if sectors_res.data else 0
         
         buildings_res = db.table("planet_buildings").select("id", count="exact").eq("planet_asset_id", planet_asset_id).execute()
         used = buildings_res.count if buildings_res.count is not None else 0
@@ -223,11 +235,18 @@ def get_base_slots_info(planet_asset_id: int) -> Dict[str, int]:
 def get_planet_sectors_status(planet_id: int) -> List[Dict[str, Any]]:
     """Consulta el estado actual de los sectores de un planeta."""
     try:
+        # V4.8.2: Actualizado para usar max_slots y resource_category
         response = _get_db().table("sectors")\
-            .select("id, type, slots, buildings_count, resource_type, is_known")\
+            .select("id, type, max_slots, buildings_count, resource_category, is_known")\
             .eq("planet_id", planet_id)\
             .execute()
-        return response.data if response.data else []
+        
+        data = response.data if response.data else []
+        # Mapping de compatibilidad para UI antigua que espera 'slots'
+        for s in data:
+            s['slots'] = s.get('max_slots', 2)
+            
+        return data
     except Exception:
         return []
 
@@ -240,6 +259,10 @@ def get_sector_details(sector_id: int) -> Optional[Dict[str, Any]]:
         if not response.data: return None
         
         sector = response.data
+        # Compatibilidad
+        if 'max_slots' in sector:
+            sector['slots'] = sector['max_slots']
+
         buildings_res = db.table("planet_buildings")\
             .select("building_type, building_tier")\
             .eq("sector_id", sector_id)\
@@ -331,12 +354,18 @@ def build_structure(
         # 1. Selección de Sector
         target_sector = None
         if sector_id:
+            # V4.8.2: Usamos max_slots
             sec_res = db.table("sectors").select("*").eq("id", sector_id).single().execute()
             target_sector = sec_res.data
+            if target_sector and 'max_slots' in target_sector:
+                target_sector['slots'] = target_sector['max_slots']
         else:
             # Auto-asignación (Prioridad Urbano)
             sectors_res = db.table("sectors").select("*").eq("planet_id", planet_id).execute()
             sectors = sectors_res.data or []
+            for s in sectors:
+                if 'max_slots' in s: s['slots'] = s['max_slots']
+            
             urban = [s for s in sectors if s["type"] == 'Urbano' and s["buildings_count"] < s["slots"]]
             others = [s for s in sectors if s["buildings_count"] < s["slots"]]
             target_sector = urban[0] if urban else (others[0] if others else None)
@@ -410,7 +439,7 @@ def get_luxury_extraction_sites_for_player(player_id: int) -> List[Dict[str, Any
 def batch_update_planet_security(updates: List[Tuple[int, float]]) -> bool:
     """
     Actualiza la seguridad en lote.
-    V4.4: Redirigido a la tabla 'planets'. Se espera que 'updates' sea (planet_id, security).
+    V4.4: Redirigido a la tabla 'planets'.
     """
     if not updates: return True
     try:
@@ -447,8 +476,7 @@ def update_planet_asset(planet_asset_id: int, updates: Dict[str, Any]) -> bool:
 
 def check_system_majority_control(system_id: int, faction_id: int) -> bool:
     """
-    Verifica si una facción tiene 'Control de Sistema' según V4.3.
-    Regla: Poseer > 50% de los planetas habitados/habitables del sistema.
+    Verifica si una facción tiene 'Control de Sistema'.
     """
     try:
         db = _get_db()
@@ -489,10 +517,9 @@ def update_planet_security_value(planet_id: int, value: float) -> bool:
 def update_planet_security_data(planet_id: int, security: float, breakdown: Dict[str, Any]) -> bool:
     """
     Actualiza la seguridad en la tabla 'planets'.
-    Nota: El desglose (breakdown) ya no se persiste en DB V4.8 por limpieza de esquema.
     """
     try:
-        # V4.8.1: Eliminado 'security_breakdown' del update
+        # V4.8.1: Eliminado 'security_breakdown' del update para evitar error 42703
         _get_db().table("planets").update({
             "security": security
         }).eq("id", planet_id).execute()
@@ -502,7 +529,6 @@ def update_planet_security_data(planet_id: int, security: float, breakdown: Dict
         return False
 
 def get_all_colonized_system_ids() -> List[int]:
-    """Retorna una lista única de IDs de sistemas que tienen al menos un planeta colonizado."""
     try:
         response = _get_db().table("planets")\
             .select("system_id")\
