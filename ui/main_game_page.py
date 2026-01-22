@@ -477,80 +477,90 @@ def _render_war_room_page():
             if not has_items:
                 st.info("No hay recursos de lujo almacenados.")
 
-    # --- VISUALIZACIÓN DE TIRADAS MRG (Debug Mode) ---
-    # Mostramos el resultado solo si tiene datos reales (roll != None)
-    if "last_mrg_result" in st.session_state and st.session_state.last_mrg_result:
-        mrg_res = st.session_state.last_mrg_result
-        if hasattr(mrg_res, 'roll') and mrg_res.roll is not None:
-            render_full_mrg_resolution(mrg_res)
+    # --- NUEVA DISPOSICIÓN: CHAT (Izquierda) | MRG WIDGET (Derecha) ---
+    col_chat, col_side = st.columns([0.7, 0.3], gap="medium")
 
-    # --- Chat Container ---
-    chat_box = st.container(height=500, border=True)
-    logs = get_recent_logs(player.id, limit=30) 
-
-    with chat_box:
-        for log in reversed(logs):
-            mensaje = log.get('evento_texto', '')
-            if "[PLAYER]" in mensaje:
-                with st.chat_message("user"): st.write(mensaje.replace("[PLAYER] ", ""))
-            else:
-                with st.chat_message("assistant"): 
-                    # 1. Limpieza de prefijo del sistema
-                    clean_msg = mensaje.replace("🤖 [ASISTENTE] ", "").strip()
-                    
-                    # 2. Renderizado Híbrido (Texto + Imagen + Texto)
-                    if "IMAGE_URL:" in clean_msg:
-                        try:
-                            # Dividir en antes y después de la etiqueta
-                            parts = clean_msg.split("IMAGE_URL:", 1)
-                            pre_text = parts[0].strip()
-                            remainder = parts[1].strip()
-                            
-                            # Separar URL del posible texto posterior (asumiendo que la URL termina en espacio)
-                            # Si hay un espacio, hay texto después. Si no, es solo URL.
-                            if " " in remainder:
-                                url_part, post_text = remainder.split(" ", 1)
-                            else:
-                                url_part = remainder
-                                post_text = ""
-                            
-                            # Limpieza final de URL
-                            url_part = url_part.strip()
-                            
-                            # Renderizar componentes en orden secuencial (st.chat_message permite stacking)
-                            if pre_text:
-                                st.markdown(pre_text)
-                                
-                            if url_part:
-                                # FIX: width="stretch" para cumplir con deprecación de use_container_width
-                                st.image(url_part, width="stretch")
-                                
-                            if post_text:
-                                st.markdown(post_text)
-                                
-                        except Exception:
-                            # Fallback seguro: Si algo falla en el parsing, mostrar texto plano
-                            st.write(clean_msg)
-                    else:
-                        # Solo texto normal
-                        st.markdown(clean_msg)
-
-    action = st.chat_input("Escriba sus órdenes...")
-    if action:
-        log_event(f"[PLAYER] {action}", player.id)
-        
-        # 1. Resolvemos la acción obteniendo el objeto completo de respuesta
-        response_data = resolve_player_action(action, player.id)
-        
-        # 2. Capturamos el resultado MRG para mostrar la animación en el próximo render
-        # 'response_data' es un dict: {"narrative": str, "mrg_result": MRGResult, ...}
-        # Solo lo guardamos si hay un resultado válido, si es info (None) limpiamos el estado.
-        if response_data and "mrg_result" in response_data:
-            st.session_state.last_mrg_result = response_data["mrg_result"]
+    # --- COLUMNA DERECHA: Resultados MRG y Paneles Laterales ---
+    with col_side:
+        # Visualización de Tiradas MRG
+        if "last_mrg_result" in st.session_state and st.session_state.last_mrg_result:
+            mrg_res = st.session_state.last_mrg_result
+            if hasattr(mrg_res, 'roll') and mrg_res.roll is not None:
+                render_full_mrg_resolution(mrg_res)
         else:
-            st.session_state.last_mrg_result = None
+            # Placeholder o Historial breve (Opcional, vacío por defecto para aire)
+            st.empty()
 
-        st.rerun()
+    # --- COLUMNA IZQUIERDA: Chat Principal ---
+    with col_chat:
+        # Contenedor de Chat
+        chat_box = st.container(height=500, border=True)
+        logs = get_recent_logs(player.id, limit=30) 
+
+        with chat_box:
+            for log in reversed(logs):
+                mensaje = log.get('evento_texto', '')
+                if "[PLAYER]" in mensaje:
+                    with st.chat_message("user"): st.write(mensaje.replace("[PLAYER] ", ""))
+                else:
+                    with st.chat_message("assistant"): 
+                        # 1. Limpieza de prefijo del sistema
+                        clean_msg = mensaje.replace("🤖 [ASISTENTE] ", "").strip()
+                        
+                        # 2. Renderizado Híbrido (Texto + Imagen + Texto)
+                        if "IMAGE_URL:" in clean_msg:
+                            try:
+                                # Dividir en antes y después de la etiqueta
+                                parts = clean_msg.split("IMAGE_URL:", 1)
+                                pre_text = parts[0].strip()
+                                remainder = parts[1].strip()
+                                
+                                # Separar URL del posible texto posterior (asumiendo que la URL termina en espacio)
+                                # Si hay un espacio, hay texto después. Si no, es solo URL.
+                                if " " in remainder:
+                                    url_part, post_text = remainder.split(" ", 1)
+                                else:
+                                    url_part = remainder
+                                    post_text = ""
+                                
+                                # Limpieza final de URL
+                                url_part = url_part.strip()
+                                
+                                # Renderizar componentes en orden secuencial (st.chat_message permite stacking)
+                                if pre_text:
+                                    st.markdown(pre_text)
+                                    
+                                if url_part:
+                                    # FIX: width="stretch" para cumplir con deprecación de use_container_width
+                                    st.image(url_part, width="stretch")
+                                    
+                                if post_text:
+                                    st.markdown(post_text)
+                                    
+                            except Exception:
+                                # Fallback seguro: Si algo falla en el parsing, mostrar texto plano
+                                st.write(clean_msg)
+                        else:
+                            # Solo texto normal
+                            st.markdown(clean_msg)
+
+        # Input de Chat
+        action = st.chat_input("Escriba sus órdenes...")
+        if action:
+            log_event(f"[PLAYER] {action}", player.id)
+            
+            # 1. Resolvemos la acción obteniendo el objeto completo de respuesta
+            response_data = resolve_player_action(action, player.id)
+            
+            # 2. Capturamos el resultado MRG para mostrar la animación en el próximo render
+            # 'response_data' es un dict: {"narrative": str, "mrg_result": MRGResult, ...}
+            # Solo lo guardamos si hay un resultado válido, si es info (None) limpiamos el estado.
+            if response_data and "mrg_result" in response_data:
+                st.session_state.last_mrg_result = response_data["mrg_result"]
+            else:
+                st.session_state.last_mrg_result = None
+
+            st.rerun()
 
 
 def _render_market_ui(player):

@@ -8,51 +8,51 @@ from core.mrg_engine import MRGResult, ResultType
 RESULT_UI_CONFIG = {
     ResultType.CRITICAL_SUCCESS: {
         "title": "¡ÉXITO CRÍTICO!",
-        "description": "Una ejecución perfecta e impecable. El margen es irrelevante.",
+        "description": "Ejecución perfecta.",
         "color": "#FFD700"  # Dorado
     },
     ResultType.TOTAL_SUCCESS: {
         "title": "ÉXITO TOTAL",
-        "description": "El objetivo se ha cumplido sin contratiempos.",
+        "description": "Objetivo cumplido.",
         "color": "#28a745"  # Verde
     },
     ResultType.PARTIAL_SUCCESS: {
         "title": "ÉXITO PARCIAL",
-        "description": "Objetivo cumplido, pero con posibles complicaciones menores.",
+        "description": "Cumplido con complicaciones.",
         "color": "#17a2b8"  # Cyan
     },
     ResultType.PARTIAL_FAILURE: {
         "title": "FALLO PARCIAL",
-        "description": "No se logró el objetivo principal, pero se evitaron desastres mayores.",
+        "description": "Objetivo no logrado, sin desastre.",
         "color": "#fd7e14"  # Naranja
     },
     ResultType.TOTAL_FAILURE: {
         "title": "FALLO TOTAL",
-        "description": "La acción ha fracasado completamente.",
+        "description": "Fracaso completo.",
         "color": "#dc3545"  # Rojo
     },
     ResultType.CRITICAL_FAILURE: {
         "title": "¡PIFIA!",
-        "description": "Un desastre catastrófico. El margen es irrelevante.",
+        "description": "Desastre catastrófico.",
         "color": "#8b0000"  # Rojo oscuro
     }
 }
 
 
 def render_mrg_roll_animation(result: MRGResult):
-    """Renderiza la animación de dados y resultado."""
+    """Renderiza la animación de dados y resultado (Versión Compacta)."""
 
-    # Contenedor principal con estilo
+    # Contenedor principal con estilo reducido
     st.markdown("""
         <style>
         .dice-container {
             display: flex;
             justify-content: center;
-            gap: 20px;
-            margin: 20px 0;
+            gap: 10px;
+            margin: 10px 0;
         }
         .dice {
-            font-size: 4em;
+            font-size: 2.2em; /* Reducido de 4em */
             animation: roll 0.5s ease-out;
         }
         @keyframes roll {
@@ -64,69 +64,68 @@ def render_mrg_roll_animation(result: MRGResult):
     """, unsafe_allow_html=True)
 
     # Mostrar dados
-    col1, col2, col3 = st.columns([1, 2, 1])
+    col1, col2, col3 = st.columns([1, 3, 1])
     with col2:
         st.markdown(f"""
             <div class="dice-container">
                 <span class="dice">🎲</span>
-                <span style="font-size: 3em; line-height: 1.5;">+</span>
+                <span style="font-size: 1.5em; line-height: 2;">+</span>
                 <span class="dice">🎲</span>
             </div>
         """, unsafe_allow_html=True)
 
-        # Resultado numérico
+        # Resultado numérico compacto
         st.markdown(f"""
-            <div style="text-align: center; margin: 10px 0;">
-                <span style="font-size: 2em; font-family: monospace;">
+            <div style="text-align: center; margin: 5px 0;">
+                <span style="font-size: 1.2em; font-family: monospace;">
                     {result.roll.die_1} + {result.roll.die_2} =
-                    <strong style="font-size: 1.2em;">{result.roll.total}</strong>
+                    <strong style="font-size: 1.3em;">{result.roll.total}</strong>
                 </span>
             </div>
         """, unsafe_allow_html=True)
 
 
 def render_mrg_calculation(result: MRGResult):
-    """Muestra el desglose del cálculo."""
+    """Muestra el desglose del cálculo (Layout Compacto 2x2)."""
 
-    st.markdown("### 📊 Cálculo")
+    st.markdown("###### 📊 Cálculo")
 
-    col1, col2, col3, col4 = st.columns(4)
+    # Usamos 2 columnas para apilar verticalmente y ahorrar ancho
+    col_a, col_b = st.columns(2)
 
-    with col1:
+    with col_a:
         st.metric("Tirada", result.roll.total)
-    with col2:
-        st.metric("Bono", f"+{result.bonus_applied}",
-                  help=f"Mérito: {result.merit_points} → Bono asintótico: {result.bonus_applied}")
-    with col3:
         st.metric("Dificultad", result.difficulty)
-    with col4:
+        
+    with col_b:
+        st.metric("Bono", f"+{result.bonus_applied}", help=f"Mérito base: {result.merit_points}")
         margin_delta = "+" if result.margin >= 0 else ""
         st.metric("Margen", f"{margin_delta}{result.margin}")
 
-    # Fórmula
-    st.caption(f"**Fórmula:** {result.roll.total} (tirada) + {result.bonus_applied} (bono) - {result.difficulty} (dificultad) = **{result.margin}**")
+    # Fórmula simplificada
+    st.caption(f"**F:** {result.roll.total} + {result.bonus_applied} - {result.difficulty} = **{result.margin}**")
 
 
 def render_mrg_result(result: MRGResult):
-    """Muestra el resultado con estilo apropiado."""
+    """Muestra el resultado con estilo apropiado (Compacto)."""
 
     config = RESULT_UI_CONFIG.get(result.result_type, {
-        "title": "RESULTADO DESCONOCIDO",
-        "description": "",
+        "title": "DESCONOCIDO",
+        "description": "Error de estado",
         "color": "#808080"
     })
 
     st.markdown(f"""
         <div style="
             background: linear-gradient(135deg, {config['color']}22, {config['color']}11);
-            border: 2px solid {config['color']};
-            border-radius: 12px;
-            padding: 20px;
+            border: 1px solid {config['color']};
+            border-radius: 8px;
+            padding: 10px;
             text-align: center;
-            margin: 20px 0;
+            margin: 10px 0;
         ">
-            <h2 style="color: {config['color']}; margin: 0;">{config['title']}</h2>
-            <p style="margin: 10px 0 0 0; color: #ccc;">{config['description']}</p>
+            <h4 style="color: {config['color']}; margin: 0; font-size: 1.1em;">{config['title']}</h4>
+            <p style="margin: 5px 0 0 0; color: #ccc; font-size: 0.8em; line-height: 1.2;">{config['description']}</p>
         </div>
     """, unsafe_allow_html=True)
 
@@ -134,21 +133,21 @@ def render_mrg_result(result: MRGResult):
 def render_full_mrg_resolution(result: MRGResult):
     """
     Renderiza el flujo completo de resolución MRG.
-    Incluye animación, cálculo y resultado.
+    Versión compacta para Sidebar o Columna Lateral.
     """
 
     with st.container(border=True):
-        st.markdown(f"## 🎲 Resolución: {result.action_description or 'Acción'}")
+        st.markdown(f"**🎲 Acción:** {result.action_description or 'Resolución'}")
 
         st.divider()
 
         # 1. Animación de dados
         render_mrg_roll_animation(result)
 
-        # 2. Cálculo
-        render_mrg_calculation(result)
+        # 2. Resultado
+        render_mrg_result(result)
 
         st.divider()
 
-        # 3. Resultado
-        render_mrg_result(result)
+        # 3. Cálculo (al final para jerarquía visual)
+        render_mrg_calculation(result)
