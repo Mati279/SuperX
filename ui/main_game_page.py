@@ -1,7 +1,8 @@
 # ui/main_game_page.py (Completo)
 import streamlit as st
 import time
-from .state import logout_user, get_player, get_commander
+# CORRECCIÓN: Uso de importaciones absolutas para evitar KeyError en Streamlit
+from ui.state import logout_user, get_player, get_commander
 from data.log_repository import get_recent_logs, log_event
 from services.gemini_service import resolve_player_action
 # Importación del servicio de generación para herramientas de Debug
@@ -18,14 +19,14 @@ from core.economy_engine import get_player_projected_economy
 # --- IMPORTS NUEVOS: MERCADO ---
 from core.market_engine import calculate_market_prices, get_market_limits, place_market_order
 
-# --- Importar las vistas del juego ---
-from .faction_roster import render_faction_roster
-from .recruitment_center import show_recruitment_center
-from .galaxy_map_page import show_galaxy_map_page
-from .ship_status_page import show_ship_status_page
+# --- Importar las vistas del juego (Rutas Absolutas) ---
+from ui.faction_roster import render_faction_roster
+from ui.recruitment_center import show_recruitment_center
+from ui.galaxy_map_page import show_galaxy_map_page
+from ui.ship_status_page import show_ship_status_page
 
-# --- IMPORTACIÓN NUEVA: Widget de Resolución MRG ---
-from .mrg_resolution_widget import render_full_mrg_resolution
+# --- IMPORTACIÓN NUEVA: Widget de Resolución MRG (Ruta Absoluta) ---
+from ui.mrg_resolution_widget import render_full_mrg_resolution
 
 
 def render_main_game_page(cookie_manager):
