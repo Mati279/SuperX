@@ -1,4 +1,4 @@
-# data/world_repository.py
+# data/world_repository.py (Completo)
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from data.database import get_supabase
@@ -288,4 +288,15 @@ def update_system_controller(system_id: int, faction_id: Optional[int]) -> bool:
         return True
     except Exception as e:
         log_event(f"Error actualizando controlador de sistema {system_id}: {e}", is_error=True)
+        return False
+
+# --- V4.4: SEGURIDAD DE SISTEMAS ---
+
+def update_system_security(system_id: int, security: float) -> bool:
+    """Actualiza la seguridad promedio del sistema."""
+    try:
+        _get_db().table("systems").update({"security": security}).eq("id", system_id).execute()
+        return True
+    except Exception as e:
+        log_event(f"Error actualizando seguridad sistema {system_id}: {e}", is_error=True)
         return False

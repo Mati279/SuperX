@@ -4,6 +4,7 @@ Repositorio de Planetas y Edificios.
 Gestiona activos planetarios, edificios, recursos y mejoras de base.
 Refactorizado para MMFR V2: Seguridad dinámica (0-100) y Mantenimiento.
 Actualizado v4.3.0: Integración completa de Planetología Avanzada (Sectores).
+Actualizado v4.4.0: Persistencia de Seguridad Galáctica.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -24,7 +25,7 @@ def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
     """Obtiene información de un planeta de la tabla mundial 'planets'."""
     try:
         response = _get_db().table("planets")\
-            .select("id, name, system_id, biome, mass_class, orbital_ring, is_habitable, surface_owner_id, orbital_owner_id, is_disputed")\
+            .select("id, name, system_id, biome, mass_class, orbital_ring, is_habitable, surface_owner_id, orbital_owner_id, is_disputed, security")\
             .eq("id", planet_id)\
             .single()\
             .execute()
@@ -457,3 +458,33 @@ def check_system_majority_control(system_id: int, faction_id: int) -> bool:
     except Exception as e:
         print(f"Error checking system control: {e}")
         return False
+
+# --- V4.4: SEGURIDAD GALÁCTICA ---
+
+def update_planet_security_value(planet_id: int, value: float) -> bool:
+    """Actualiza la seguridad física del planeta en la tabla mundial."""
+    try:
+        _get_db().table("planets").update({"security": value}).eq("id", planet_id).execute()
+        return True
+    except Exception as e:
+        log_event(f"Error actualizando seguridad del planeta {planet_id}: {e}", is_error=True)
+        return False
+
+def get_all_colonized_system_ids() -> List[int]:
+    """Retorna una lista única de IDs de sistemas que tienen al menos un planeta colonizado."""
+    try:
+        # Buscamos planetas que tengan surface_owner_id definido
+        response = _get_db().table("planets")\
+            .select("system_id")\
+            .not_.is_("surface_owner_id", "null")\
+            .execute()
+            
+        if not response.data:
+            return []
+            
+        # Extraemos IDs únicos
+        system_ids = list(set([p["system_id"] for p in response.data if p.get("system_id")]))
+        return system_ids
+    except Exception as e:
+        log_event(f"Error obteniendo sistemas colonizados: {e}", is_error=True)
+        return []
