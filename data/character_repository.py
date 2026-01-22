@@ -10,6 +10,7 @@ Actualizado v5.1.7: Corrección de mapeo SQL en sistema de conocimiento (observe
 Actualizado v5.1.8: Persistencia robusta de KnowledgeLevel (Fix Source of Truth).
 Actualizado v5.1.9: Fix Critical Mismatch Column (observer_player_id -> player_id).
 Actualizado v5.2.0: Fix ImportError COMMANDER_LOCATION (Refactorización de Ubicaciones).
+Actualizado v5.2.1: Soporte para actualización de ubicacion_local en reclutamiento.
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -225,8 +226,9 @@ def create_commander(
                 "estados_activos": [COMMANDER_STATUS],
                 "rol_asignado": CharacterRole.COMMANDER.value,
                 "accion_actual": "Iniciando mandato",
+                # Modificado v5.2.1: Uso de literal en lugar de COMMANDER_LOCATION (Legacy)
                 "ubicacion": {
-                   "system_id": None, "planet_id": None, "sector_id": None, "ubicacion_local": "Base Principal"
+                   "system_id": None, "planet_id": None, "sector_id": None, "ubicacion_local": "Puente de Mando"
                 }
             }
         }
@@ -513,6 +515,7 @@ def recruit_candidate_db(character_id: int, update_dict: Dict[str, Any]) -> Opti
         # 1. Aplicar cambios al JSON
         new_rank = update_dict.get("rango", "Recluta")
         new_status_str = update_dict.get("estado", "Disponible")
+        new_location = update_dict.get("ubicacion_local") # Modificado v5.2.1
         
         if "progresion" not in stats: stats["progresion"] = {}
         stats["progresion"]["rango"] = new_rank
@@ -520,6 +523,12 @@ def recruit_candidate_db(character_id: int, update_dict: Dict[str, Any]) -> Opti
         if "estado" not in stats: stats["estado"] = {}
         stats["estado"]["estados_activos"] = [new_status_str]
         stats["estado"]["rol_asignado"] = "Sin Asignar" # Reset rol logic
+        
+        # Manejo de Ubicación (Fix v5.2.1)
+        if new_location:
+            if "ubicacion" not in stats["estado"]:
+                stats["estado"]["ubicacion"] = {}
+            stats["estado"]["ubicacion"]["ubicacion_local"] = new_location
         
         # 2. Preparar Payload SQL
         # Mapeo explicito de estado (texto -> ID)

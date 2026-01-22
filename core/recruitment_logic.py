@@ -1,10 +1,10 @@
-# core/recruitment_logic.py
+# core/recruitment_logic.py (Completo)
 from typing import Dict, Any, Tuple, Optional, List
 from config.app_constants import (
     DEFAULT_RECRUIT_RANK,
-    DEFAULT_RECRUIT_STATUS,
-    DEFAULT_RECRUIT_LOCATION
+    DEFAULT_RECRUIT_STATUS
 )
+# Eliminada importación fallida: DEFAULT_RECRUIT_LOCATION
 from core.models import KnowledgeLevel, CharacterStatus
 
 # Importamos el repositorio de personajes para el análisis del roster
@@ -71,7 +71,7 @@ def process_recruitment(
     update_data = {
         "rango": DEFAULT_RECRUIT_RANK,
         "estado": DEFAULT_RECRUIT_STATUS, # "Disponible"
-        "ubicacion": DEFAULT_RECRUIT_LOCATION,
+        "ubicacion_local": "Base Principal", # Reemplazo literal de constante eliminada
         # Señal para el controller/repo de que debe actualizar el conocimiento también
         "initial_knowledge_level": initial_knowledge 
     }
