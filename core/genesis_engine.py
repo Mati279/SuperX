@@ -5,6 +5,7 @@ Maneja la lógica de inicialización de nuevas facciones.
 Actualizado: Estandarización de Población Inicial (1.50B - 1.70B).
 Actualizado: Generación de Tripulación Inicial (Level 5 + 2x Level 3) con conocimiento KNOWN.
 Corrección V4.4: Escritura de seguridad en tabla 'planets' usando fórmula centralizada.
+Corrección V4.5: Persistencia de 'population' en tabla global 'planets'.
 """
 
 import random
@@ -111,10 +112,12 @@ def genesis_protocol(player_id: int) -> bool:
         # Insertar Asset
         db.table("planet_assets").insert(asset_data).execute()
         
-        # Actualizar Planeta (Source of Truth de Seguridad)
+        # Actualizar Planeta (Source of Truth de Seguridad y Población)
+        # FIX V4.5: Se agrega 'population' al update para mantener consistencia global
         db.table("planets").update({
             "surface_owner_id": player_id,
             "security": initial_security,
+            "population": initial_pop,
             "security_breakdown": security_breakdown
         }).eq("id", target_planet['id']).execute()
         

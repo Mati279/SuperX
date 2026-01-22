@@ -10,6 +10,7 @@ Actualizado v4.7.0: Estandarización de Capitales (Población Inicial).
 Actualizado v4.8.1: Eliminación definitiva de 'security_breakdown' para sincronización con DB.
 Refactorizado v5.3: Limpieza de redundancia 'slots' en Planeta.
 Corrección v5.4: Protecciones robustas contra respuestas 'NoneType' de Supabase.
+Corrección v5.5: Persistencia de 'population' en tabla global 'planets'.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -184,9 +185,11 @@ def create_planet_asset(
         
         if response and response.data:
             # Sincronizar tabla PLANETS
+            # FIX V5.5: Se agrega 'population' al update para mantener consistencia global
             _get_db().table("planets").update({
                 "surface_owner_id": player_id,
-                "security": initial_security
+                "security": initial_security,
+                "population": initial_population
             }).eq("id", planet_id).execute()
             
             log_event(f"Planeta colonizado: {settlement_name} (Seguridad inicial: {initial_security:.1f})", player_id)
