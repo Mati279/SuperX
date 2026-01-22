@@ -1,4 +1,4 @@
-# core/world_constants.py
+# core/world_constants.py (Completo)
 """
 Constantes universales y definiciones de juego.
 Incluye recursos, tipos de estrellas y definiciones de edificios/módulos.
@@ -7,6 +7,7 @@ Actualizado v4.2.0: Arquitectura de Sectores y Matriz de Probabilidad.
 Actualizado v4.3.0: Planetología Avanzada y Subdivisión de Sectores (Refactorización Completa).
 Actualizado v4.6.0: Refactorización de Capacidad de Sectores (Slots por Tipo).
 Actualizado v4.7.0: Alineación con Reglas Definitivas (Biomas y Nomenclatura).
+Actualizado v4.8.0: Correcciones de Reglas (Habitabilidad, Economía Logarítmica, Pesos).
 """
 from typing import Dict, List
 
@@ -270,7 +271,7 @@ BUILDING_SHUTDOWN_PRIORITY = {
 }
 
 ECONOMY_RATES = {
-    "income_per_pop": 150.0,
+    "income_per_pop": 150.0, # OBSOLETO: Reemplazado por modelo logarítmico en rules.py
     "security_base": 25.0,
     "security_per_1b_pop": 5.0,
     "security_bonus_sensor": 2.0,
@@ -327,4 +328,4 @@ RESOURCE_CHANCE_NONE = 0.0
 
 EMPTY_SYSTEMS_COUNT = 5 # Cantidad de nodos que deben permanecer con población cero
 WILD_POPULATION_CHANCE = 0.25 # Probabilidad de asignación de datos en nodos secundarios
-POP_RANGE = (1, 10) # Rango de magnitud para el atributo población en miles de millones
+POP_RANGE = (1.0, 10.0) # Rango de magnitud para el atributo población en miles de millones (Float)

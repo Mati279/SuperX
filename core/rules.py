@@ -1,4 +1,5 @@
 # core/rules.py (Completo)
+import math
 from typing import Dict, Any, Tuple, Optional
 from core.constants import SKILL_MAPPING, ATTRIBUTE_COST_MULTIPLIER
 from core.world_constants import PLANET_BIOMES, SECTOR_TYPE_INHOSPITABLE
@@ -111,6 +112,7 @@ def calculate_planet_habitability(planet_id: int) -> int:
     """
     Determina la habitabilidad final basándose en Bioma y Sectores (V4.3).
     Aplica penalización por Sectores Inhóspitos sin infraestructura de soporte.
+    Corrección V4.8: Acceso directo a habitability y escalado a 100.
     """
     from data.planet_repository import get_planet_by_id, get_planet_sectors_status
     
@@ -118,7 +120,8 @@ def calculate_planet_habitability(planet_id: int) -> int:
     if not planet: return 0
     
     biome_info = PLANET_BIOMES.get(planet["biome"], {})
-    # Corrección: Acceder directamente a 'habitability' y convertir a escala 0-100
+    
+    # Obtener float base (ej. 0.3) y escalar a entero (30)
     base_hab_float = biome_info.get("habitability", 0.0)
     base_hab = int(base_hab_float * 100)
     
@@ -132,6 +135,32 @@ def calculate_planet_habitability(planet_id: int) -> int:
             
     final_habitability = base_hab - penalty
     return max(-100, min(100, final_habitability))
+
+# --- REGLAS DE ECONOMÍA (V4.8) ---
+
+def calculate_fiscal_income(rate_base: float, population_billions: float, security_score: int) -> float:
+    """
+    Calcula ingresos fiscales usando modelo logarítmico (Regla 3).
+    Ingresos = (RateBase * log10(Población_Total)) * (Seguridad / 100)
+    
+    Args:
+        rate_base: Multiplicador base de impuestos.
+        population_billions: Población en miles de millones (ej. 1.5).
+        security_score: Puntuación de seguridad del planeta (0-100).
+    """
+    if population_billions <= 0:
+        return 0.0
+        
+    pop_total = population_billions * 1_000_000_000
+    if pop_total < 1: return 0.0
+    
+    # log10 de la población total
+    log_pop = math.log10(pop_total)
+    
+    # Factor de seguridad (0.0 a 1.0)
+    sec_factor = max(0, min(100, security_score)) / 100.0
+    
+    return (rate_base * log_pop) * sec_factor
 
 # --- REGLAS DE SEGURIDAD SISTÉMICA (V4.4) ---
 

@@ -99,7 +99,7 @@ class GalaxyGenerator:
             
             # V4.4: Determinar Base Stat (Defensa) para el planeta
             base_defense = random.randint(10, 30)
-            initial_population = 0 # Se calculará en Fase 2
+            initial_population = 0.0 # Se calculará en Fase 2 (Float)
             
             planet_id = (system.id * 100) + j
             new_planet = Planet(
@@ -146,17 +146,19 @@ class GalaxyGenerator:
             else:
                 primary_planet = random.choice(habitable_candidates)
 
-            # Asignación de Población
+            # Asignación de Población (Regla 2: Floats y Capitales)
             for p in planets:
-                pop = 0
+                pop = 0.0
                 if p == primary_planet:
                     # Planeta principal obtiene población garantizada
-                    pop = random.randint(*POP_RANGE)
+                    # Regla Génesis: Capitales entre 1.5 y 1.7B
+                    pop = round(random.uniform(1.5, 1.7), 2)
                 else:
                     # Distribución Estocástica para el resto
                     # Aplicamos WILD_POPULATION_CHANCE
                     if random.random() < WILD_POPULATION_CHANCE:
-                         pop = random.randint(*POP_RANGE)
+                         # Regla General: Rango flotante 1.0 - 10.0
+                         pop = round(random.uniform(1.0, 10.0), 2)
                 
                 p.population = pop
 
@@ -183,11 +185,11 @@ class GalaxyGenerator:
         for b in biomes:
             preferred = PLANET_BIOMES[b].get('preferred_rings', [])
             if ring in preferred:
-                weights.append(10)
+                weights.append(ORBITAL_ZONE_WEIGHTS["ALTA"]) # Antes 10
             elif (ring - 1) in preferred or (ring + 1) in preferred:
-                weights.append(3)
+                weights.append(ORBITAL_ZONE_WEIGHTS["MEDIA"]) # Antes 3
             else:
-                weights.append(1)
+                weights.append(ORBITAL_ZONE_WEIGHTS["BAJA"]) # Antes 1
 
         return random.choices(biomes, weights=weights, k=1)[0]
 
@@ -294,50 +296,19 @@ class GalaxyGenerator:
                 resource_category = None # Limpiamos recurso si se fuerza urbano
                 luxury_res = None
             
-            is_known = (sec_type == SECTOR_TYPE_URBAN)
-
+            is_known = sector_index == 1
+            
             new_sector = Sector(
                 id=sector_id,
                 planet_id=planet.id,
+                name=f"Sector {sector_index}",
                 type=sec_type,
-                slots=slots,
-                resource_type=resource_category,
+                resource_category=resource_category,
                 luxury_resource=luxury_res,
+                max_slots=slots,
+                buildings=[],
                 is_known=is_known
             )
             sectors.append(new_sector)
-
+            
         return sectors
-
-    def _generate_starlanes(self):
-        """Genera conexiones entre sistemas usando Gabriel Graph."""
-        systems = self.galaxy.systems
-        n = len(systems)
-        starlanes = []
-
-        for sys in systems: sys.neighbors = []
-
-        for i in range(n):
-            for j in range(i + 1, n):
-                sys_a, sys_b = systems[i], systems[j]
-                mid_x, mid_y = (sys_a.x + sys_b.x) / 2, (sys_a.y + sys_b.y) / 2
-                dist_ab_sq = (sys_a.x - sys_b.x)**2 + (sys_a.y - sys_b.y)**2
-                radius_sq = dist_ab_sq / 4.0
-
-                blocked = False
-                for k in range(n):
-                    if k == i or k == j: continue
-                    sys_c = systems[k]
-                    if (sys_c.x - mid_x)**2 + (sys_c.y - mid_y)**2 < radius_sq:
-                        blocked = True
-                        break
-                
-                if not blocked:
-                    sys_a.neighbors.append(sys_b.id)
-                    sys_b.neighbors.append(sys_a.id)
-                    starlanes.append((sys_a.id, sys_b.id))
-
-        self.galaxy.starlanes = starlanes
-
-def get_galaxy() -> Galaxy:
-    return GalaxyGenerator().generate_galaxy()
