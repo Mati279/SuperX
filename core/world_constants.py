@@ -6,6 +6,7 @@ Actualizado v4.1.3: Recurso Datos y Categorías de Lujo.
 Actualizado v4.2.0: Arquitectura de Sectores y Matriz de Probabilidad.
 Actualizado v4.3.0: Planetología Avanzada y Subdivisión de Sectores (Refactorización Completa).
 Actualizado v4.6.0: Refactorización de Capacidad de Sectores (Slots por Tipo).
+Actualizado v4.7.0: Alineación con Reglas Definitivas (Biomas y Nomenclatura).
 """
 from typing import Dict, List
 
@@ -66,6 +67,17 @@ SECTOR_NAMES_BY_CATEGORY = {
     "datos": "Cuenca de Ecos Magnéticos"
 }
 
+# Nombres dinámicos para sectores inhóspitos por bioma (V4.7.0)
+INHOSPITABLE_BIOME_NAMES = {
+    "Volcánico": "Flujos Piroclásticos",
+    "Tóxico": "Páramo Tóxico",
+    "Desértico": "Dunas Muertas",
+    "Templado": "Yermos Estériles",
+    "Oceánico": "Abismo Oceánico",
+    "Glacial": "Glaciar Perpetuo",
+    "Gaseoso": "Capa de Nubes Densa"
+}
+
 # Listas de Recursos de Lujo (V4.1.3)
 LUXURY_RESOURCES_BY_CATEGORY = {
     "materiales": ["Wolframio", "Neodimio", "Paladio", "Platino", "Iridio"],
@@ -81,23 +93,23 @@ RESOURCE_PROB_MEDIUM = 0.3
 RESOURCE_PROB_LOW = 0.1
 RESOURCE_PROB_NONE = 0.0
 
-# Tabla Maestra de Biomas Actualizada
+# Tabla Maestra de Biomas Actualizada (V4.7.0)
 PLANET_BIOMES = {
     "Volcánico": {
-        "habitability": 0.3, # Baja habitabilidad física
+        "habitability": 0.3,
         "common_resources": ["materiales", "energia"],
         "preferred_rings": [1, 2],
         "resource_matrix": {
-            "materiales": "ALTA", "energia": "ALTA", "componentes": "MEDIA", "datos": "BAJA", "influencia": "NULA"
+            "materiales": "ALTA", "energia": "ALTA", "componentes": "MEDIA", "influencia": "BAJA", "datos": "MEDIA"
         },
         "description": "Actividad tectónica extrema y ríos de lava."
     },
     "Tóxico": {
         "habitability": 0.2,
         "common_resources": ["datos", "energia"],
-        "preferred_rings": [2, 3],
+        "preferred_rings": [1, 2], # Ajustado V4.7
         "resource_matrix": {
-            "datos": "ALTA", "energia": "MEDIA", "materiales": "MEDIA", "componentes": "BAJA", "influencia": "NULA"
+            "datos": "ALTA", "energia": "MEDIA", "materiales": "BAJA", "componentes": "MEDIA", "influencia": "ALTA"
         },
         "description": "Atmósfera corrosiva rica en compuestos químicos raros."
     },
@@ -106,43 +118,43 @@ PLANET_BIOMES = {
         "common_resources": ["materiales", "componentes"],
         "preferred_rings": [2, 3, 4],
         "resource_matrix": {
-            "materiales": "ALTA", "componentes": "ALTA", "energia": "MEDIA", "datos": "BAJA", "influencia": "BAJA"
+            "materiales": "ALTA", "energia": "MEDIA", "componentes": "ALTA", "influencia": "MEDIA", "datos": "MEDIA"
         },
         "description": "Vastas extensiones de arena y formaciones rocosas. Escasez de agua."
     },
     "Templado": {
-        "habitability": 0.9,
+        "habitability": 1.0, # Ajustado V4.7
         "common_resources": ["influencia", "materiales"],
         "preferred_rings": [3, 4],
         "resource_matrix": {
-            "influencia": "ALTA", "materiales": "MEDIA", "datos": "MEDIA", "energia": "BAJA", "componentes": "BAJA"
+            "materiales": "MEDIA", "energia": "BAJA", "componentes": "BAJA", "influencia": "ALTA", "datos": "ALTA"
         },
         "description": "Clima estable y ecosistemas diversos. Ideal para la vida."
     },
     "Oceánico": {
         "habitability": 0.8,
         "common_resources": ["influencia", "componentes"],
-        "preferred_rings": [3, 4, 5],
+        "preferred_rings": [3, 4], # Ajustado V4.7
         "resource_matrix": {
-            "influencia": "ALTA", "componentes": "ALTA", "datos": "MEDIA", "materiales": "BAJA", "energia": "MEDIA"
+            "materiales": "BAJA", "energia": "ALTA", "componentes": "MEDIA", "influencia": "ALTA", "datos": "MEDIA"
         },
         "description": "Superficie cubierta casi totalmente por agua líquida."
     },
     "Glacial": {
-        "habitability": 0.4,
+        "habitability": 0.5, # Ajustado V4.7
         "common_resources": ["datos", "energia"],
         "preferred_rings": [5, 6],
         "resource_matrix": {
-            "energia": "ALTA", "datos": "ALTA", "materiales": "MEDIA", "componentes": "BAJA", "influencia": "BAJA"
+            "materiales": "MEDIA", "energia": "BAJA", "componentes": "ALTA", "influencia": "MEDIA", "datos": "ALTA"
         },
         "description": "Temperaturas bajo cero con depósitos minerales congelados."
     },
     "Gaseoso": {
-        "habitability": 0.0, # Imposible habitar superficie (requiere tecnología especial o es inhóspito)
+        "habitability": 0.0,
         "common_resources": ["energia", "datos"],
         "preferred_rings": [5, 6],
         "resource_matrix": {
-            "energia": "ALTA", "datos": "ALTA", "materiales": "BAJA", "componentes": "NULA", "influencia": "NULA"
+            "materiales": "NULA", "energia": "ALTA", "componentes": "MEDIA", "influencia": "BAJA", "datos": "MEDIA"
         },
         "description": "Gigante sin superficie sólida."
     }
@@ -300,7 +312,9 @@ SECTOR_SLOTS_CONFIG = {
     SECTOR_TYPE_URBAN: 2,        # Urbano: 2 slots
     SECTOR_TYPE_INHOSPITABLE: 0, # Inhóspito: 0 slots
     # Mapeo dinámico de yacimientos de recursos (Todos 2 slots)
-    **{name: 2 for name in SECTOR_NAMES_BY_CATEGORY.values()}
+    **{name: 2 for name in SECTOR_NAMES_BY_CATEGORY.values()},
+    # Mapeo dinámico de sectores inhóspitos por bioma (Todos 0 slots)
+    **{name: 0 for name in INHOSPITABLE_BIOME_NAMES.values()}
 }
 
 # Probabilidad de aparición de recursos (Alta, Media, Baja, Nula)
@@ -308,8 +322,6 @@ RESOURCE_CHANCE_HIGH = 0.60
 RESOURCE_CHANCE_MEDIUM = 0.30
 RESOURCE_CHANCE_LOW = 0.10
 RESOURCE_CHANCE_NONE = 0.0
-
-# MAX_SLOTS_PER_SECTOR = 3  <-- DEPRECATED: Usar SECTOR_SLOTS_CONFIG
 
 # --- GENERACIÓN DE POBLACIÓN (V4.5) ---
 

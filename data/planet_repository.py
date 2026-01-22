@@ -6,9 +6,11 @@ Refactorizado para MMFR V2: Seguridad dinámica (0-100) y Mantenimiento.
 Actualizado v4.3.0: Integración completa de Planetología Avanzada (Sectores).
 Actualizado v4.4.0: Persistencia de Seguridad Galáctica y Desgloses.
 Corrección v4.4.1: Consultas seguras (maybe_single) para assets opcionales.
+Actualizado v4.7.0: Estandarización de Capitales (Población Inicial).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
+import random # Importado para generación de población
 from .database import get_supabase
 from .log_repository import log_event
 from .world_repository import get_world_state
@@ -146,8 +148,18 @@ def create_planet_asset(
     settlement_name: str = "Colonia Principal",
     initial_population: float = 1.0 
 ) -> Optional[Dict[str, Any]]:
-    """Crea una colonia con seguridad inicial basada en población."""
+    """
+    Crea una colonia con seguridad inicial basada en población.
+    Actualizado V4.7: Estandarización de Capitales. Si es el primer planeta,
+    fuerza población aleatoria entre 1.5 y 1.7 B.
+    """
     try:
+        # Lógica de Estandarización de Capitales (V4.7)
+        # Verificar si es el primer activo del jugador (inicio de facción)
+        existing_assets = get_all_player_planets(player_id)
+        if not existing_assets:
+            initial_population = random.uniform(1.5, 1.7)
+
         base_sec = ECONOMY_RATES.get("security_base", 25.0)
         per_pop = ECONOMY_RATES.get("security_per_1b_pop", 5.0)
         

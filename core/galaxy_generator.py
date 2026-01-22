@@ -9,7 +9,8 @@ from .world_constants import (
     SECTOR_TYPE_URBAN, SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN, SECTOR_TYPE_INHOSPITABLE,
     SECTOR_SLOTS_CONFIG, SECTOR_NAMES_BY_CATEGORY, LUXURY_RESOURCES_BY_CATEGORY,
     RESOURCE_PROB_HIGH, RESOURCE_PROB_MEDIUM, RESOURCE_PROB_LOW, RESOURCE_PROB_NONE,
-    EMPTY_SYSTEMS_COUNT, WILD_POPULATION_CHANCE, POP_RANGE
+    EMPTY_SYSTEMS_COUNT, WILD_POPULATION_CHANCE, POP_RANGE,
+    INHOSPITABLE_BIOME_NAMES # Nuevo import
 )
 # V4.4: Importar lógica de seguridad para cálculo inicial
 from .rules import calculate_planet_security
@@ -194,6 +195,7 @@ class GalaxyGenerator:
         """
         Refactorización completa (V4.3.0) - Flujo de 4 Pasos.
         Actualización V4.6: Asignación dinámica de slots por tipo de sector.
+        Actualización V4.7: Garantía de habitabilidad y nombres dinámicos inhóspitos.
         """
         sectors = []
         biome_data = PLANET_BIOMES[planet.biome]
@@ -206,6 +208,9 @@ class GalaxyGenerator:
             "NULA": RESOURCE_PROB_NONE
         }
 
+        # Contador para verificar si se generó al menos un sector habitable
+        generated_habitable_count = 0
+
         for k in range(planet.max_sectors):
             sector_index = k + 1 # 1-based index
             sector_id = (planet.id * 1000) + sector_index
@@ -213,12 +218,18 @@ class GalaxyGenerator:
             # --- PASO 1: Determinación de Habitabilidad Física ---
             is_physically_habitable = random.random() < biome_habitability
             
+            # Garantía de habitabilidad (V4.7): 
+            # Si es el último sector, no se han generado habitables y el planeta NO es gaseoso, forzarlo.
+            if planet.biome != "Gaseoso" and k == (planet.max_sectors - 1) and generated_habitable_count == 0:
+                is_physically_habitable = True
+
             sec_type = SECTOR_TYPE_INHOSPITABLE
             slots = 0 # Valor por defecto para inhóspito
             resource_category = None
             luxury_res = None
             
             if is_physically_habitable:
+                generated_habitable_count += 1
                 
                 # --- PASO 2: Asignación de Recursos (Solo Habitable) ---
                 resource_found = False
@@ -263,6 +274,13 @@ class GalaxyGenerator:
                 # Asignación de slots basada en la configuración (Llanura 3, Montaña/Recursos 2)
                 # Fallback de seguridad es 2 para habitables desconocidos
                 slots = SECTOR_SLOTS_CONFIG.get(sec_type, 2)
+            
+            else:
+                # --- Nomenclatura Dinámica para Inhóspitos (V4.7) ---
+                # Asignar nombre temático según el bioma del planeta
+                sec_type = INHOSPITABLE_BIOME_NAMES.get(planet.biome, SECTOR_TYPE_INHOSPITABLE)
+                # Slots para inhóspitos (debería ser 0 según configuración)
+                slots = SECTOR_SLOTS_CONFIG.get(sec_type, 0)
 
             # --- PASO 4: Regla Forzada de Urbanismo ---
             # Si hay población inicial asignada al planeta (ojo: esto se evalúa al generar,
