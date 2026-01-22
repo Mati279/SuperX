@@ -93,12 +93,22 @@ def render_mrg_calculation(result: MRGResult):
     st.markdown("###### 📊 Cálculo")
     
     # Obtener detalles para tooltips, con defaults seguros.
-    # Usamos getattr para evitar crash si el objeto en session_state es una versión vieja sin 'details'.
     details = getattr(result, "details", {}) or {}
     
+    # Textos de ayuda enriquecidos
     tip_roll = details.get("roll", "Suma natural de 2d50")
-    tip_diff = details.get("difficulty", "Dificultad base establecida por el Director")
-    tip_bonus = details.get("bonus", "Bono derivado de habilidades y equipo")
+    
+    # Si viene el nombre de la dificultad, lo mostramos
+    diff_name = details.get("difficulty_name", "")
+    tip_diff = details.get("difficulty", "Dificultad base")
+    if diff_name:
+        tip_diff = f"Dificultad {diff_name}: {result.difficulty}"
+
+    # Si viene explicación del bono, la usamos
+    tip_bonus = details.get("bonus", "Bono derivado de habilidades")
+    if "bonus_explanation" in details:
+        tip_bonus = details["bonus_explanation"]
+        
     tip_margin = "Margen = (Tirada + Bono) - Dificultad"
 
     # Usamos 2 columnas para apilar verticalmente y ahorrar ancho

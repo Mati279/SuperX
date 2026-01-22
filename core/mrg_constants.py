@@ -1,4 +1,4 @@
-# core/mrg_constants.py
+# core/mrg_constants.py (Completo)
 """
 Constantes del Motor de Resolución Galáctico (MRG).
 Basado en Reglas SuperX v2.1.
@@ -34,9 +34,7 @@ DIFFICULTY_PRESETS = {
     "heroico": DIFFICULTY_HEROIC,
 }
 
-# Mapping de legacy para evitar rupturas inmediatas si algo externo llama a las keys viejas
-# (Opcional: se puede eliminar si se confirma que nada externo usa las keys viejas)
-# Por ahora, mapeamos las antiguas a las nuevas más cercanas
+# Mapping de legacy para evitar rupturas inmediatas
 DIFFICULTY_LEGACY_MAP = {
     "trivial": DIFFICULTY_ROUTINE,
     "fácil": DIFFICULTY_ROUTINE,
@@ -46,6 +44,14 @@ DIFFICULTY_LEGACY_MAP = {
     "legendario": DIFFICULTY_HEROIC
 }
 
+# --- HELPER DE ETIQUETAS (NUEVO) ---
+def get_difficulty_label(value: int) -> str:
+    """Devuelve la etiqueta legible para un valor de dificultad."""
+    for name, val in DIFFICULTY_PRESETS.items():
+        if val == value:
+            return name.capitalize()
+    return "Personalizada"
+
 # --- SATURACIÓN ASINTÓTICA (Regla 3.2 - Revisión v2.1) ---
 # Fórmula: Bono = Max * (Puntos / (Puntos + K))
 # Se reduce el Max Bonus a 50 para evitar trivializar dificultades altas.
@@ -54,8 +60,6 @@ ASYMPTOTIC_MAX_BONUS = 50
 ASYMPTOTIC_K_FACTOR = 150
 
 # --- ESTADOS DE ENTIDAD ---
-# Se alinean con los valores usados en CharacterStatus (core/models.py)
-# Mantenidos por consistencia de datos, aunque el MRG ya no aplica efectos directamente.
 ENTITY_STATUS_ACTIVE = "Disponible"
 ENTITY_STATUS_INCAPACITATED = "Herido"
 ENTITY_STATUS_EXPOSED = "Expuesto"

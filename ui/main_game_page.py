@@ -498,16 +498,26 @@ def _render_war_room_page():
                         else:
                             st.markdown(clean_msg)
 
-        # 4. Input de Chat
+        # 4. Input de Chat con Status (UX MEJORADA)
         action = st.chat_input("Escriba sus órdenes...")
         if action:
             log_event(f"[PLAYER] {action}", player.id)
-            response_data = resolve_player_action(action, player.id)
             
+            # --- FEEDBACK VISUAL MEJORADO ---
+            with st.status("🛰️ Enlace Neuronal Activo...", expanded=True) as status:
+                st.write("Analizando telemetría y protocolos...")
+                # Llamada principal al servicio
+                response_data = resolve_player_action(action, player.id)
+                status.update(label="✅ Órdenes procesadas", state="complete", expanded=False)
+            
+            # Actualizar estado MRG
             if response_data and "mrg_result" in response_data:
                 st.session_state.last_mrg_result = response_data["mrg_result"]
             else:
                 st.session_state.last_mrg_result = None
+            
+            # Pequeña pausa para permitir que el usuario vea el check verde antes de recargar
+            time.sleep(0.5)
             st.rerun()
 
     # --- COLUMNA DERECHA: MONITOR MRG ---

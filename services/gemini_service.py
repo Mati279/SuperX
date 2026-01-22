@@ -1,4 +1,4 @@
-# services/gemini_service.py
+# services/gemini_service.py (Completo)
 """
 Servicio de Asistente Táctico IA.
 Integración con Google Gemini para procesamiento de órdenes del comandante.
@@ -8,10 +8,12 @@ Características:
 - Protocolo de Niebla de Guerra (conocimiento limitado)
 - Integración con Motor de Resolución Galáctico (MRG)
 - Manejo robusto de Function Calling
+- Detección inteligente de habilidades (Business Intelligence)
 """
 
 import json
-from typing import Dict, Any, Optional, List
+import re
+from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass, field
 from google.genai import types
 
@@ -25,9 +27,8 @@ from data.world_repository import queue_player_action, get_world_state
 
 from core.time_engine import check_and_trigger_tick, is_lock_in_window
 from core.mrg_engine import resolve_action, ResultType
-# FIX: Actualizada constante a v2.1 (DIFFICULTY_NORMAL -> DIFFICULTY_STANDARD)
-from core.mrg_constants import DIFFICULTY_STANDARD
-# FIX: Eliminado import de módulo deprecado (core.mrg_effects)
+# FIX: Actualizada constante a v2.1 y añadida función helper
+from core.mrg_constants import DIFFICULTY_STANDARD, DIFFICULTY_ROUTINE, get_difficulty_label
 
 from services.ai_tools import TOOL_DECLARATIONS, execute_tool
 from config.app_constants import TEXT_MODEL_NAME
@@ -47,6 +48,22 @@ QUERY_KEYWORDS = [
     "ver", "info", "ayuda", "analisis", "análisis", "describir",
     "explicar", "mostrar"
 ]
+
+# Mapa sugerido de Skill -> Atributo para cálculos inteligentes
+SKILL_ATTRIBUTE_MAP = {
+    "pilotaje": "agilidad",
+    "artilleria": "tecnica",
+    "ingenieria": "tecnica",
+    "computacion": "intelecto",
+    "medicina": "intelecto",
+    "biologia": "intelecto",
+    "diplomacia": "presencia",
+    "liderazgo": "presencia",
+    "sigilo": "agilidad",
+    "combate": "fuerza",
+    "supervivencia": "fuerza",
+    "investigacion": "intelecto"
+}
 
 
 # --- SYSTEM PROMPT ---
@@ -168,7 +185,7 @@ class ActionResult:
 @dataclass
 class TacticalContext:
     """Contexto táctico del comandante para la IA."""
-    player_id: int # FIX: Añadido player_id explícito
+    player_id: int 
     commander_name: str
     commander_location: str
     attributes: Dict[str, int]
@@ -181,7 +198,7 @@ class TacticalContext:
         """Convierte el contexto a JSON para el prompt."""
         context = {
             "credenciales": {
-                "player_id": self.player_id, # FIX: Expuesto al LLM
+                "player_id": self.player_id,
                 "nivel_acceso": "COMANDANTE",
                 "identificador_sistema": f"CMD-{self.player_id}"
             },
@@ -207,13 +224,6 @@ class TacticalContext:
 def _build_tactical_context(player_id: int, commander_data: Dict) -> TacticalContext:
     """
     Construye el contexto táctico para la IA.
-
-    Args:
-        player_id: ID del jugador
-        commander_data: Datos del comandante
-
-    Returns:
-        TacticalContext con información del estado actual
     """
     try:
         finances = get_player_finances(player_id)
@@ -234,7 +244,7 @@ def _build_tactical_context(player_id: int, commander_data: Dict) -> TacticalCon
         location_details = get_commander_location_display(commander_data['id'])
 
         return TacticalContext(
-            player_id=player_id, # FIX
+            player_id=player_id, 
             commander_name=commander_data['nombre'],
             commander_location=commander_data.get('ubicacion', 'Desconocida'),
             attributes=attributes,
@@ -245,7 +255,7 @@ def _build_tactical_context(player_id: int, commander_data: Dict) -> TacticalCon
 
     except Exception as e:
         return TacticalContext(
-            player_id=player_id, # FIX
+            player_id=player_id, 
             commander_name=commander_data.get('nombre', 'Comandante'),
             commander_location='Error de Sensores',
             attributes={},
@@ -267,12 +277,6 @@ def _get_system_prompt(commander_name: str, faction_name: str) -> str:
 def _is_informational_query(action_text: str) -> bool:
     """
     Determina si una acción es una consulta informativa.
-
-    Args:
-        action_text: Texto de la acción
-
-    Returns:
-        True si es una consulta que no requiere tirada MRG
     """
     text_lower = action_text.lstrip().lower()
 
@@ -280,12 +284,88 @@ def _is_informational_query(action_text: str) -> bool:
     if "?" in action_text:
         return True
     
-    # Si es un comando interno de investigación, NO es consulta informativa (requiere tool)
+    # Si es un comando interno de investigación, NO es consulta informativa (requiere tirada)
     if "[INTERNAL_EXECUTE_INVESTIGATION]" in action_text:
         return False
 
     # Verificar palabras clave
     return any(text_lower.startswith(keyword) for keyword in QUERY_KEYWORDS)
+
+
+def _calculate_dynamic_merit(commander_data: Dict, action_text: str) -> Tuple[int, str]:
+    """
+    Business Intelligence: Detecta la habilidad más relevante en el texto de la acción.
+    
+    Retorna:
+        (puntos_totales, explicacion_bono)
+    """
+    # 1. Extraer stats
+    stats = commander_data.get('stats_json', {})
+    if 'capacidades' in stats:
+        skills = stats['capacidades'].get('habilidades', {})
+        attrs = stats['capacidades'].get('atributos', {})
+    else:
+        # Estructura legacy o simple
+        skills = stats.get('habilidades', {})
+        attrs = stats.get('atributos', {})
+
+    # Normalizar texto para búsqueda
+    text_lower = action_text.lower()
+    
+    # 2. Buscar coincidencias en Habilidades (Prioridad 1)
+    detected_skill = None
+    skill_val = 0
+    
+    for skill_name, val in skills.items():
+        if skill_name.lower() in text_lower:
+            detected_skill = skill_name
+            skill_val = int(val)
+            break
+            
+    # 3. Determinar Atributo Base
+    detected_attr = None
+    attr_val = 0
+    
+    if detected_skill:
+        # Si encontramos habilidad, buscamos su atributo asociado
+        attr_key = SKILL_ATTRIBUTE_MAP.get(detected_skill.lower())
+        if attr_key:
+            # Buscar el valor real del atributo (capitalizado correctamente en la DB)
+            for k, v in attrs.items():
+                if k.lower() == attr_key:
+                    detected_attr = k
+                    attr_val = int(v)
+                    break
+        
+        # Si no encontramos el atributo mapeado, usamos el más alto como fallback (talento natural)
+        if not detected_attr and attrs:
+             detected_attr = max(attrs, key=attrs.get)
+             attr_val = attrs[detected_attr]
+             
+    else:
+        # Si NO hay habilidad, buscar mención directa de atributo en el texto
+        for k, v in attrs.items():
+            if k.lower() in text_lower:
+                detected_attr = k
+                attr_val = int(v)
+                break
+        
+        # Fallback final: Usar el atributo más alto del comandante (asumimos que usa su punto fuerte)
+        if not detected_attr and attrs:
+            detected_attr = max(attrs, key=attrs.get)
+            attr_val = attrs[detected_attr]
+
+    # 4. Calcular Puntos Totales
+    total_merit = attr_val + skill_val
+    
+    # 5. Construir Explicación para Tooltip
+    explanation = ""
+    if detected_skill:
+        explanation = f"Bono: {detected_skill} ({skill_val}) + {detected_attr} ({attr_val})"
+    else:
+        explanation = f"Bono: Atributo {detected_attr} ({attr_val})"
+        
+    return total_merit, explanation
 
 
 def _process_function_calls(
@@ -295,14 +375,6 @@ def _process_function_calls(
 ) -> tuple[Any, List[Dict[str, Any]]]:
     """
     Procesa las llamadas a funciones del modelo de forma iterativa.
-
-    Args:
-        chat: Sesión de chat activa
-        response: Respuesta inicial del modelo
-        max_iterations: Máximo de iteraciones permitidas
-
-    Returns:
-        Tupla (respuesta_final, lista_de_llamadas_realizadas)
     """
     function_calls_made: List[Dict[str, Any]] = []
     current_response = response
@@ -359,12 +431,6 @@ def _process_function_calls(
 def _extract_narrative(response: Any) -> str:
     """
     Extrae el texto narrativo de la respuesta del modelo.
-
-    Args:
-        response: Respuesta del modelo
-
-    Returns:
-        Texto narrativo o mensaje por defecto
     """
     if not response or not response.candidates:
         return "Orden recibida, Comandante. Procesando datos tácticos..."
@@ -392,13 +458,6 @@ def _extract_narrative(response: Any) -> str:
 def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str, Any]]:
     """
     Resuelve una acción/orden del comandante usando el Asistente Táctico.
-
-    Args:
-        action_text: Texto de la orden del comandante
-        player_id: ID del jugador
-
-    Returns:
-        Diccionario con narrative, mrg_result, y function_calls_made
     """
     # 0. Verificación de Estado del Mundo
     check_and_trigger_tick()
@@ -451,30 +510,44 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
             roll: Optional[int] = None
 
         mrg_result = DummyResult()
-        mrg_info_block = ">>> TIPO: SOLICITUD DE INFORMACIÓN O EJECUCIÓN INTERNA. No requiere tirada de habilidad externa."
+        mrg_info_block = ">>> TIPO: SOLICITUD DE INFORMACIÓN. No requiere tirada de habilidad externa."
+    
     else:
-        # Calcular puntos de mérito y resolver acción
-        stats = commander.get('stats_json', {})
-        attributes = stats.get('atributos', {})
-        # Compatibilidad V2: Buscar en capacidades si no está en raíz
-        if not attributes and 'capacidades' in stats:
-             attributes = stats['capacidades'].get('atributos', {})
-             
-        merit_points = sum(attributes.values()) if attributes else 0
+        # --- LÓGICA DE RESOLUCIÓN INTELIGENTE ---
+        difficulty = DIFFICULTY_STANDARD
+        
+        # Caso especial: Investigación Interna (Faction Roster / Recruitment)
+        if is_internal_action:
+            # Forzamos una tirada "Rutinaria" pero real para que salga en el widget
+            difficulty = DIFFICULTY_ROUTINE
+            # Forzamos lógica de investigación
+            # Simular un texto que active la detección de "Investigación" + "Intelecto"
+            merit_points, bonus_explanation = _calculate_dynamic_merit(commander, "investigacion profunda")
+            # Override para asegurar que quede claro en el widget
+            bonus_explanation = f"Investigación Automática ({merit_points} pts)"
+        else:
+            # Caso normal: Detección inteligente basada en texto
+            merit_points, bonus_explanation = _calculate_dynamic_merit(commander, action_text)
 
+        # Ejecutar Tirada MRG Real
         mrg_result = resolve_action(
             merit_points=merit_points,
-            difficulty=DIFFICULTY_STANDARD, # FIX: Uso de nueva constante
+            difficulty=difficulty,
             action_description=action_text
         )
         
-        # FIX: Eliminada llamada a apply_partial_success_complication (módulo deprecado)
-        # La lógica de complicaciones será manejada por el narrador de IA o eventos futuros.
+        # Inyectar detalles enriquecidos para el Widget UI
+        mrg_result.details = {
+            "bonus_explanation": bonus_explanation,
+            "difficulty_name": get_difficulty_label(difficulty),
+            "difficulty": f"Valor base: {difficulty}"
+        }
 
         mrg_info_block = f"""
 >>> REPORTE DE EJECUCIÓN FÍSICA (MRG):
 - Resultado: {mrg_result.result_type.value}
 - Detalle Técnico: Tirada {mrg_result.roll}
+- Bono Aplicado: {bonus_explanation}
 Usa este resultado para narrar el éxito o fracaso de la acción.
 """
 
@@ -492,19 +565,13 @@ Usa este resultado para narrar el éxito o fracaso de la acción.
     try:
         # 6. Iniciar Chat con Gemini
         
-        # FIX: Preparar configuración de herramientas de forma segura
-        # La API espera una lista de objetos Tool, no una lista directa de FunctionDeclaration.
-        # Además, si TOOL_DECLARATIONS está vacío, no debemos enviar tool_config con modo AUTO.
-        
         gemini_tools = None
         gemini_tool_config = None
 
         if TOOL_DECLARATIONS:
-            # Envolvemos las declaraciones en un objeto Tool
             tool = types.Tool(function_declarations=TOOL_DECLARATIONS)
             gemini_tools = [tool]
             
-            # Solo configuramos el modo AUTO si hay herramientas
             gemini_tool_config = types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(
                     mode=types.FunctionCallingConfigMode.AUTO
@@ -556,9 +623,6 @@ Usa este resultado para narrar el éxito o fracaso de la acción.
 def check_ai_status() -> Dict[str, Any]:
     """
     Verifica el estado del servicio de IA.
-
-    Returns:
-        Diccionario con estado de conexión
     """
     container = get_service_container()
     return {
