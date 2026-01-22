@@ -432,3 +432,27 @@ def get_faction_statistics(faction_id: int) -> Dict[str, Any]:
             "transfers_as_attacker": 0,
             "transfers_as_defender": 0
         }
+
+
+# ============================================================
+# FUNCIONES GENÉRICAS (SOPORTE CORE)
+# ============================================================
+
+def update_faction(faction_id: int, data: Dict[str, Any]) -> bool:
+    """
+    Actualiza campos arbitrarios de una facción.
+    Requerido por core/prestige_engine.py para actualizar stats_json.
+
+    Args:
+        faction_id: ID de la facción
+        data: Diccionario con campos a actualizar
+
+    Returns:
+        bool: True si tuvo éxito
+    """
+    try:
+        _get_db().table("factions").update(data).eq("id", faction_id).execute()
+        return True
+    except Exception as e:
+        log_event(f"Error actualizando facción (genérico) {faction_id}: {e}", is_error=True)
+        return False

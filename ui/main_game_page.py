@@ -55,6 +55,15 @@ def render_main_game_page(cookie_manager):
     if 'current_page' not in st.session_state:
         st.session_state.current_page = "Puente de Mando"
         
+    # --- LÓGICA DE LIMPIEZA MRG POR CAMBIO DE PÁGINA ---
+    # Si cambiamos de página, limpiamos cualquier resultado MRG pendiente
+    if 'previous_page' not in st.session_state:
+        st.session_state.previous_page = st.session_state.current_page
+    
+    if st.session_state.current_page != st.session_state.previous_page:
+        st.session_state.last_mrg_result = None
+        st.session_state.previous_page = st.session_state.current_page
+
     _render_navigation_sidebar(player, commander, cookie_manager)
 
     # --- 3. Renderizar la página seleccionada ---
@@ -468,16 +477,12 @@ def _render_war_room_page():
             if not has_items:
                 st.info("No hay recursos de lujo almacenados.")
 
-    # --- VISUALIZACIÓN DE TIRADAS MRG (Visualización inmediata) ---
-    # Comprobamos si hay un resultado reciente en sesión para animarlo
+    # --- VISUALIZACIÓN DE TIRADAS MRG (Debug Mode) ---
+    # Mostramos el resultado solo si tiene datos reales (roll != None)
     if "last_mrg_result" in st.session_state and st.session_state.last_mrg_result:
         mrg_res = st.session_state.last_mrg_result
-        # IMPORTANTE: Solo renderizar si tiene dados reales (evita error en consultas 'DummyResult')
         if hasattr(mrg_res, 'roll') and mrg_res.roll is not None:
             render_full_mrg_resolution(mrg_res)
-        else:
-            # Si es una consulta informativa (roll=None), mostramos algo sutil o nada
-            pass
 
     # --- Chat Container ---
     chat_box = st.container(height=500, border=True)
@@ -539,6 +544,7 @@ def _render_war_room_page():
         
         # 2. Capturamos el resultado MRG para mostrar la animación en el próximo render
         # 'response_data' es un dict: {"narrative": str, "mrg_result": MRGResult, ...}
+        # Solo lo guardamos si hay un resultado válido, si es info (None) limpiamos el estado.
         if response_data and "mrg_result" in response_data:
             st.session_state.last_mrg_result = response_data["mrg_result"]
         else:
