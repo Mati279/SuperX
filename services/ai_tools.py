@@ -1,4 +1,4 @@
-# services/ai_tools.py
+# services/ai_tools.py (Completo)
 from typing import Dict, Any, List, Optional
 import json
 from google.genai import types
@@ -14,14 +14,13 @@ from data.character_repository import (
 from data.recruitment_repository import get_recruitment_candidates
 from data.log_repository import log_event
 
-from core.galaxy_generator import get_galaxy
+# SE ELIMINÓ: from core.galaxy_generator import get_galaxy (Causaba ImportError)
 from core.models import KnowledgeLevel
 from core.world_models import Planet, System
 from core.mrg_engine import resolve_action
 from core.mrg_constants import DIFFICULTY_STANDARD
 from core.character_engine import get_visible_biography, get_visible_skills, get_visible_feats
 
-# --- NUEVO IMPORT ---
 from services.image_service import generate_and_upload_tactical_image
 
 # --- HERRAMIENTAS DE CONOCIMIENTO Y GESTIÓN ---
