@@ -34,9 +34,7 @@ class CharacterStatus(str, Enum):
 class BiologicalSex(str, Enum):
     MALE = "Masculino"
     FEMALE = "Femenino"
-    ANDROGYNOUS = "Andrógino"
-    ASEXUAL = "Asexual"
-    UNKNOWN = "Desconocido"
+   
 
 class CharacterRole(str, Enum):
     """Roles operativos asignables."""
