@@ -422,18 +422,17 @@ def _render_war_room_page():
     if not player: return
 
     # --- Layout Principal: Operaciones (70%) | Monitor (30%) ---
-    # col_left contiene: Header, Botones y Chat
-    # col_right contiene: Monitor de resultados MRG
     col_left, col_right = st.columns([0.7, 0.3], gap="medium")
 
     # --- COLUMNA IZQUIERDA: ÁREA OPERATIVA ---
     with col_left:
-        # 1. Cabecera y Botones (Nidado para mantener alineación)
-        col_header, col_btn_market, col_btn_stock = st.columns([0.6, 0.2, 0.2])
+        # 1. Cabecera (Título)
+        st.markdown("### 📟 Enlace Neuronal de Mando")
         
-        with col_header:
-            st.markdown("### 📟 Enlace Neuronal de Mando")
-            
+        # 2. Botonera de Acción (Toolbar arriba del chat)
+        # Separamos en columnas para que no ocupen todo el ancho innecesariamente
+        col_btn_market, col_btn_stock, col_spacer = st.columns([0.25, 0.25, 0.5])
+        
         with col_btn_market:
             label_market = "📈 Mercado"
             if hasattr(st, "popover"):
@@ -445,15 +444,15 @@ def _render_war_room_page():
                     _render_market_ui(player)
         
         with col_btn_stock:
-            label = "💎 Stock"
+            label_stock = "💎 Stock"
             if hasattr(st, "popover"):
-                container = st.popover(label, use_container_width=True, help="Recursos de Lujo")
+                stock_pop = st.popover(label_stock, use_container_width=True, help="Recursos de Lujo")
                 is_popover = True
             else:
-                container = st.expander(label)
+                stock_pop = st.expander(label_stock)
                 is_popover = False
                 
-            with container:
+            with stock_pop:
                 if is_popover: st.markdown("##### 💎 Recursos de Lujo")
                 recursos_lujo = getattr(player, "recursos_lujo", {}) or {}
                 has_items = False
@@ -468,7 +467,7 @@ def _render_war_room_page():
                             st.divider()
                 if not has_items: st.info("No hay stock disponible.")
 
-        # 2. Chat Principal (Debajo de cabecera)
+        # 3. Chat Principal (Debajo de la botonera)
         chat_box = st.container(height=500, border=True)
         logs = get_recent_logs(player.id, limit=30) 
 
@@ -499,7 +498,7 @@ def _render_war_room_page():
                         else:
                             st.markdown(clean_msg)
 
-        # 3. Input de Chat
+        # 4. Input de Chat
         action = st.chat_input("Escriba sus órdenes...")
         if action:
             log_event(f"[PLAYER] {action}", player.id)
