@@ -6,7 +6,7 @@ Refactorizado v2.1: Función pura sin gestión de efectos secundarios.
 """
 import random
 from typing import Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from .mrg_constants import (
@@ -56,6 +56,7 @@ class MRGResult:
     margin: int
     result_type: ResultType
     action_description: str = ""
+    details: dict = field(default_factory=dict)
 
     @property
     def success(self) -> bool:
@@ -123,7 +124,8 @@ def resolve_action(
     merit_points: int,
     difficulty: int,
     action_description: str = "",
-    player_id: Optional[int] = None
+    player_id: Optional[int] = None,
+    details: Optional[dict] = None
 ) -> MRGResult:
     """
     Ejecuta una acción completa del MRG.
@@ -166,5 +168,6 @@ def resolve_action(
         difficulty=difficulty,
         margin=margin,
         result_type=result_type,
-        action_description=action_description
+        action_description=action_description,
+        details=details or {}
     )

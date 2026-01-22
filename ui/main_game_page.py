@@ -421,79 +421,54 @@ def _render_war_room_page():
     player = get_player()
     if not player: return
 
-    # --- Header con Botones de Acción ---
-    col_header, col_btn_market, col_btn_stock = st.columns([0.7, 0.15, 0.15])
-    
-    with col_header:
-        st.markdown("### 📟 Enlace Neuronal de Mando")
+    # --- Layout Principal: Operaciones (70%) | Monitor (30%) ---
+    # col_left contiene: Header, Botones y Chat
+    # col_right contiene: Monitor de resultados MRG
+    col_left, col_right = st.columns([0.7, 0.3], gap="medium")
+
+    # --- COLUMNA IZQUIERDA: ÁREA OPERATIVA ---
+    with col_left:
+        # 1. Cabecera y Botones (Nidado para mantener alineación)
+        col_header, col_btn_market, col_btn_stock = st.columns([0.6, 0.2, 0.2])
         
-    # --- 1. Botón de Mercado ---
-    with col_btn_market:
-        label_market = "📈 Mercado"
-        if hasattr(st, "popover"):
-            market_pop = st.popover(label_market, use_container_width=True, help="Mercado Galáctico de Recursos")
-            with market_pop:
-                _render_market_ui(player)
-        else:
-            # Fallback para versiones viejas
-            with st.expander(label_market):
-                _render_market_ui(player)
-    
-    # --- 2. Botón de Stock ---
-    with col_btn_stock:
-        # Botón discreto que abre una "ventanita" (popover) con los recursos de lujo
-        label = "💎 Stock"
-        help_txt = "Ver inventario de recursos de lujo y derivados."
+        with col_header:
+            st.markdown("### 📟 Enlace Neuronal de Mando")
+            
+        with col_btn_market:
+            label_market = "📈 Mercado"
+            if hasattr(st, "popover"):
+                market_pop = st.popover(label_market, use_container_width=True, help="Mercado Galáctico")
+                with market_pop:
+                    _render_market_ui(player)
+            else:
+                with st.expander(label_market):
+                    _render_market_ui(player)
         
-        # Usamos popover si está disponible (versiones recientes), sino expander
-        if hasattr(st, "popover"):
-            container = st.popover(label, use_container_width=True, help=help_txt)
-            is_popover = True
-        else:
-            container = st.expander(label)
-            is_popover = False
-            
-        with container:
-            if is_popover:
-                st.markdown("##### 💎 Recursos de Lujo")
-            
-            recursos_lujo = getattr(player, "recursos_lujo", {}) or {}
-            has_items = False
-            
-            # Intentar mostrar por categorías si existen
-            # Se muestran solo si tienen items
-            for cat, items in recursos_lujo.items():
-                if isinstance(items, dict):
-                    # Filtrar items con cantidad > 0
-                    active_items = {k: v for k, v in items.items() if v > 0}
-                    
-                    if active_items:
-                        has_items = True
-                        st.caption(f"**{cat}**")
-                        for nombre, cant in active_items.items():
-                            st.write(f"• {nombre}: `{cant:,}`")
-                        st.divider()
-            
-            if not has_items:
-                st.info("No hay recursos de lujo almacenados.")
+        with col_btn_stock:
+            label = "💎 Stock"
+            if hasattr(st, "popover"):
+                container = st.popover(label, use_container_width=True, help="Recursos de Lujo")
+                is_popover = True
+            else:
+                container = st.expander(label)
+                is_popover = False
+                
+            with container:
+                if is_popover: st.markdown("##### 💎 Recursos de Lujo")
+                recursos_lujo = getattr(player, "recursos_lujo", {}) or {}
+                has_items = False
+                for cat, items in recursos_lujo.items():
+                    if isinstance(items, dict):
+                        active_items = {k: v for k, v in items.items() if v > 0}
+                        if active_items:
+                            has_items = True
+                            st.caption(f"**{cat}**")
+                            for nombre, cant in active_items.items():
+                                st.write(f"• {nombre}: `{cant:,}`")
+                            st.divider()
+                if not has_items: st.info("No hay stock disponible.")
 
-    # --- NUEVA DISPOSICIÓN: CHAT (Izquierda) | MRG WIDGET (Derecha) ---
-    col_chat, col_side = st.columns([0.7, 0.3], gap="medium")
-
-    # --- COLUMNA DERECHA: Resultados MRG y Paneles Laterales ---
-    with col_side:
-        # Visualización de Tiradas MRG
-        if "last_mrg_result" in st.session_state and st.session_state.last_mrg_result:
-            mrg_res = st.session_state.last_mrg_result
-            if hasattr(mrg_res, 'roll') and mrg_res.roll is not None:
-                render_full_mrg_resolution(mrg_res)
-        else:
-            # Placeholder o Historial breve (Opcional, vacío por defecto para aire)
-            st.empty()
-
-    # --- COLUMNA IZQUIERDA: Chat Principal ---
-    with col_chat:
-        # Contenedor de Chat
+        # 2. Chat Principal (Debajo de cabecera)
         chat_box = st.container(height=500, border=True)
         logs = get_recent_logs(player.id, limit=30) 
 
@@ -504,63 +479,48 @@ def _render_war_room_page():
                     with st.chat_message("user"): st.write(mensaje.replace("[PLAYER] ", ""))
                 else:
                     with st.chat_message("assistant"): 
-                        # 1. Limpieza de prefijo del sistema
                         clean_msg = mensaje.replace("🤖 [ASISTENTE] ", "").strip()
-                        
-                        # 2. Renderizado Híbrido (Texto + Imagen + Texto)
                         if "IMAGE_URL:" in clean_msg:
                             try:
-                                # Dividir en antes y después de la etiqueta
                                 parts = clean_msg.split("IMAGE_URL:", 1)
                                 pre_text = parts[0].strip()
                                 remainder = parts[1].strip()
-                                
-                                # Separar URL del posible texto posterior (asumiendo que la URL termina en espacio)
-                                # Si hay un espacio, hay texto después. Si no, es solo URL.
                                 if " " in remainder:
                                     url_part, post_text = remainder.split(" ", 1)
                                 else:
                                     url_part = remainder
                                     post_text = ""
                                 
-                                # Limpieza final de URL
-                                url_part = url_part.strip()
-                                
-                                # Renderizar componentes en orden secuencial (st.chat_message permite stacking)
-                                if pre_text:
-                                    st.markdown(pre_text)
-                                    
-                                if url_part:
-                                    # FIX: width="stretch" para cumplir con deprecación de use_container_width
-                                    st.image(url_part, width="stretch")
-                                    
-                                if post_text:
-                                    st.markdown(post_text)
-                                    
+                                if pre_text: st.markdown(pre_text)
+                                if url_part: st.image(url_part.strip(), width="stretch")
+                                if post_text: st.markdown(post_text)
                             except Exception:
-                                # Fallback seguro: Si algo falla en el parsing, mostrar texto plano
                                 st.write(clean_msg)
                         else:
-                            # Solo texto normal
                             st.markdown(clean_msg)
 
-        # Input de Chat
+        # 3. Input de Chat
         action = st.chat_input("Escriba sus órdenes...")
         if action:
             log_event(f"[PLAYER] {action}", player.id)
-            
-            # 1. Resolvemos la acción obteniendo el objeto completo de respuesta
             response_data = resolve_player_action(action, player.id)
             
-            # 2. Capturamos el resultado MRG para mostrar la animación en el próximo render
-            # 'response_data' es un dict: {"narrative": str, "mrg_result": MRGResult, ...}
-            # Solo lo guardamos si hay un resultado válido, si es info (None) limpiamos el estado.
             if response_data and "mrg_result" in response_data:
                 st.session_state.last_mrg_result = response_data["mrg_result"]
             else:
                 st.session_state.last_mrg_result = None
-
             st.rerun()
+
+    # --- COLUMNA DERECHA: MONITOR MRG ---
+    with col_right:
+        st.caption("🎯 Monitor de Operaciones")
+        if "last_mrg_result" in st.session_state and st.session_state.last_mrg_result:
+            mrg_res = st.session_state.last_mrg_result
+            if hasattr(mrg_res, 'roll') and mrg_res.roll is not None:
+                render_full_mrg_resolution(mrg_res)
+        else:
+            # Espacio vacío o placeholder cuando no hay acción activa
+            st.empty()
 
 
 def _render_market_ui(player):

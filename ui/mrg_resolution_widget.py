@@ -4,7 +4,6 @@ import streamlit as st
 from core.mrg_engine import MRGResult, ResultType
 
 # Diccionario de configuración visual para los resultados (v2.1)
-# Desacoplado del motor para facilitar cambios de texto/color en la UI
 RESULT_UI_CONFIG = {
     ResultType.CRITICAL_SUCCESS: {
         "title": "¡ÉXITO CRÍTICO!",
@@ -52,7 +51,7 @@ def render_mrg_roll_animation(result: MRGResult):
             margin: 10px 0;
         }
         .dice {
-            font-size: 2.2em; /* Reducido de 4em */
+            font-size: 2.2em;
             animation: roll 0.5s ease-out;
         }
         @keyframes roll {
@@ -86,21 +85,32 @@ def render_mrg_roll_animation(result: MRGResult):
 
 
 def render_mrg_calculation(result: MRGResult):
-    """Muestra el desglose del cálculo (Layout Compacto 2x2)."""
+    """
+    Muestra el desglose del cálculo (Layout Compacto 2x2).
+    Incluye Tooltips (help) extraídos de result.details.
+    """
 
     st.markdown("###### 📊 Cálculo")
+    
+    # Obtener detalles para tooltips, con defaults seguros
+    details = result.details if result.details else {}
+    
+    tip_roll = details.get("roll", "Suma natural de 2d50")
+    tip_diff = details.get("difficulty", "Dificultad base establecida por el Director")
+    tip_bonus = details.get("bonus", "Bono derivado de habilidades y equipo")
+    tip_margin = "Margen = (Tirada + Bono) - Dificultad"
 
     # Usamos 2 columnas para apilar verticalmente y ahorrar ancho
     col_a, col_b = st.columns(2)
 
     with col_a:
-        st.metric("Tirada", result.roll.total)
-        st.metric("Dificultad", result.difficulty)
+        st.metric("Tirada", result.roll.total, help=tip_roll)
+        st.metric("Dificultad", result.difficulty, help=tip_diff)
         
     with col_b:
-        st.metric("Bono", f"+{result.bonus_applied}", help=f"Mérito base: {result.merit_points}")
+        st.metric("Bono", f"+{result.bonus_applied}", help=tip_bonus)
         margin_delta = "+" if result.margin >= 0 else ""
-        st.metric("Margen", f"{margin_delta}{result.margin}")
+        st.metric("Margen", f"{margin_delta}{result.margin}", help=tip_margin)
 
     # Fórmula simplificada
     st.caption(f"**F:** {result.roll.total} + {result.bonus_applied} - {result.difficulty} = **{result.margin}**")
