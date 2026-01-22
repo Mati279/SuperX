@@ -7,6 +7,7 @@ Debug v2.4: Implementada reparación de JSON robusta y refuerzo de prompt para e
 Actualizado v5.1.0: Biografía consolidada de 3 niveles y limpieza de campos legacy.
 Actualizado v5.1.6: Soporte para 'initial_knowledge_level' en reclutamiento directo.
 Actualizado v5.2.0: Restricción de Origen a Biomas Habitables y mejora de Lore.
+Corrección v5.2.1: Uso de cliente Supabase para consultas de planetas (Fix ImportError).
 """
 
 import random
@@ -19,7 +20,7 @@ from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from google.genai import types
 
-from data.database import get_service_container, get_db_connection
+from data.database import get_service_container, get_supabase
 from data.log_repository import log_event
 from data.character_repository import create_character
 from data.planet_repository import get_planet_by_id
@@ -191,53 +192,49 @@ def _select_class(level: int, force_class: Optional[str] = None) -> tuple[str, D
     return class_name, class_data
 
 
-def _select_birth_planet(preferred_system_id: Optional[str] = None) -> tuple[str, str]:
+def _select_birth_planet(preferred_system_id: Optional[int] = None) -> tuple[str, str]:
     """
     Selecciona un planeta de origen que cumpla con las condiciones de habitabilidad.
-    Intenta buscar primero en el sistema actual, luego hace un fallback global.
+    Utiliza el cliente Supabase para consultas seguras.
     """
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    db = get_supabase()
     
-    # Construir placeholder para la lista de biomas permitidos
-    placeholders = ', '.join(['?'] * len(HABITABLE_BIRTH_BIOMES))
-    
-    try:
-        # 1. Intentar encontrar planeta habitable en el sistema actual
-        if preferred_system_id:
-            query_local = f"""
-                SELECT name, biome 
-                FROM planets 
-                WHERE system_id = ? AND biome IN ({placeholders})
-                ORDER BY RANDOM() LIMIT 1
-            """
-            params = [preferred_system_id] + HABITABLE_BIRTH_BIOMES
-            cursor.execute(query_local, params)
-            result = cursor.fetchone()
-            if result:
-                return result['name'], result['biome']
-        
-        # 2. Fallback: Cualquier planeta habitable de la galaxia
-        query_global = f"""
-            SELECT name, biome 
-            FROM planets 
-            WHERE biome IN ({placeholders})
-            ORDER BY RANDOM() LIMIT 1
-        """
-        cursor.execute(query_global, HABITABLE_BIRTH_BIOMES)
-        result = cursor.fetchone()
-        
-        if result:
-            return result['name'], result['biome']
+    # 1. Intentar encontrar planeta habitable en el sistema actual
+    if preferred_system_id:
+        try:
+            response = db.table("planets")\
+                .select("name, biome")\
+                .eq("system_id", preferred_system_id)\
+                .in_("biome", HABITABLE_BIRTH_BIOMES)\
+                .limit(20)\
+                .execute()
             
-        # 3. Fallback Último Recurso (Si no hay planetas generados o solo gaseosos)
-        return "Estación Espacial Nómada", "Artificial"
+            candidates = response.data
+            if candidates:
+                choice = random.choice(candidates)
+                return choice["name"], choice["biome"]
+        except Exception as e:
+            # Fallback silencioso si falla la consulta local
+            pass
+    
+    # 2. Fallback: Cualquier planeta habitable de la galaxia (Sample random)
+    try:
+        response = db.table("planets")\
+            .select("name, biome")\
+            .in_("biome", HABITABLE_BIRTH_BIOMES)\
+            .limit(50)\
+            .execute()
         
+        candidates = response.data
+        if candidates:
+            choice = random.choice(candidates)
+            return choice["name"], choice["biome"]
+            
     except Exception as e:
-        log_event(f"Error seleccionando planeta de origen: {e}", is_error=True)
-        return "Origen Desconocido", "Misterioso"
-    finally:
-        conn.close()
+        log_event(f"Error seleccionando planeta de origen (Fallback): {e}", is_error=True)
+
+    # 3. Fallback Último Recurso
+    return "Estación Espacial Nómada", "Artificial"
 
 
 def _calculate_recruitment_cost(stats_json: Dict[str, Any]) -> int:
