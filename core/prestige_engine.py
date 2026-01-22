@@ -18,7 +18,8 @@ from enum import Enum
 from .prestige_constants import *
 from data.database import get_supabase
 from data.log_repository import log_event
-from data.faction_repository import get_all_factions, update_faction
+# Modificación: Importación eliminada para evitar ciclo. Se mueve a process_hegemony_tick.
+# from data.faction_repository import get_all_factions, update_faction
 
 def _get_db():
     return get_supabase()
@@ -386,6 +387,9 @@ def process_hegemony_tick(current_tick: int) -> bool:
     
     Retorna True si alguien ha ganado la partida.
     """
+    # IMPORTACIÓN LOCAL PARA ROMPER CICLO
+    from data.faction_repository import get_all_factions, update_faction
+
     factions_list = get_all_factions()
     game_over = False
     

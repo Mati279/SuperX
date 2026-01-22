@@ -1,4 +1,4 @@
-# data/faction_repository.py
+# data/faction_repository.py (Completo)
 """
 Repositorio de datos para facciones y prestigio.
 
@@ -13,7 +13,8 @@ Este módulo maneja todas las operaciones de base de datos relacionadas con:
 from typing import Dict, Any, List, Optional
 from data.database import get_supabase
 from data.log_repository import log_event
-from core.prestige_engine import calculate_pve_reward
+# Modificación: Importación eliminada para evitar ciclo. Se mueve a process_pve_prestige_hit.
+# from core.prestige_engine import calculate_pve_reward
 from core.prestige_constants import LOG_PREFIX_PVE
 import logging
 
@@ -354,6 +355,9 @@ def process_pve_prestige_hit(faction_id: int, tier_amount: float, reason: str) -
         bool: True si el proceso fue exitoso.
     """
     try:
+        # IMPORTACIÓN LOCAL PARA ROMPER CICLO
+        from core.prestige_engine import calculate_pve_reward
+
         # 1. Obtener estado actual
         current_map = get_prestige_map()
         if not current_map:
