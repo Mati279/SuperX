@@ -4,6 +4,7 @@ Motor Económico MMFR (Materials, Metals, Fuel, Resources).
 Gestiona toda la lógica de cálculo económico del juego.
 Refactorizado V4.2: Modelo Logarítmico y Penalización Orbital.
 Actualizado V4.4: Centralización de Seguridad y Transparencia (Breakdowns).
+Corrección V5.6: Estandarización de Modelos usando 'core.rules.calculate_planet_security'.
 """
 
 from typing import Dict, List, Any, Tuple, Optional
@@ -30,7 +31,8 @@ from core.world_constants import (
 )
 from core.models import ProductionSummary, EconomyTickResult
 from core.market_engine import process_pending_market_orders
-from core.rules import calculate_and_update_system_security
+# Importamos la lógica centralizada (V5.6)
+from core.rules import calculate_and_update_system_security, calculate_planet_security as rules_calculate_planet_security
 
 
 # --- FUNCIONES DE CÁLCULO ECONÓMICO (PURAS) ---
@@ -42,24 +44,29 @@ def calculate_planet_security(
 ) -> Tuple[float, Dict[str, Any]]:
     """
     Calcula el nivel de seguridad del planeta (0-100) y genera un desglose.
-    Formula V4.2: Base (25) + (Población * 5) + Infraestructura - (2 * Anillo Orbital).
-    
-    Returns:
-        Tuple[float, Dict]: (Valor Final, Objeto Breakdown)
+    Wrapper alrededor de core.rules.calculate_planet_security para mantener compatibilidad
+    con la firma que retorna (float, dict) y generar el breakdown visual.
     """
     if population <= 0:
         return 0.0, {"text": "Deshabitado (Población 0)", "total": 0.0}
 
-    base = ECONOMY_RATES.get("security_base", 25.0)
+    # Valores base para el desglose (deben coincidir con la lógica implícita o explicita de rules.py)
+    # En rules.py se espera 'base_stat'. Si no lo tenemos, usamos el default global.
+    base = ECONOMY_RATES.get("security_base", 25.0) 
+    
+    # Llamada a la lógica centralizada
+    final_val = rules_calculate_planet_security(
+        base_stat=int(base),
+        pop_count=population,
+        infrastructure_defense=infrastructure_defense,
+        orbital_ring=orbital_distance
+    )
+    
+    # Reconstrucción del Breakdown para UI (Transparencia)
     per_pop = ECONOMY_RATES.get("security_per_1b_pop", 5.0)
-    
     pop_bonus = population * per_pop
-    distance_penalty = 2.0 * orbital_distance
+    distance_penalty = 2.0 * orbital_distance # Hardcoded en rules.py como RING_PENALTY (2)
     
-    raw_total = base + pop_bonus + infrastructure_defense - distance_penalty
-    final_val = max(1.0, min(raw_total, 100.0)) # Clamp 1-100 si hay población
-    
-    # Generar Desglose
     breakdown = {
         "base": base,
         "pop_bonus": round(pop_bonus, 2),

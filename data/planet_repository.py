@@ -10,7 +10,8 @@ Actualizado v4.7.0: Estandarización de Capitales (Población Inicial).
 Actualizado v4.8.1: Eliminación definitiva de 'security_breakdown' para sincronización con DB.
 Refactorizado v5.3: Limpieza de redundancia 'slots' en Planeta.
 Corrección v5.4: Protecciones robustas contra respuestas 'NoneType' de Supabase.
-Corrección v5.5: Persistencia de 'population' en tabla global 'planets'.
+Corrección v5.5: Persistencia de 'poblacion' en tabla global 'planets'.
+Corrección v5.6: Join con tabla 'planets' para obtener seguridad real.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -70,9 +71,13 @@ def get_planet_asset_by_id(planet_asset_id: int) -> Optional[Dict[str, Any]]:
 
 
 def get_all_player_planets(player_id: int) -> List[Dict[str, Any]]:
+    """
+    Obtiene todos los activos planetarios del jugador.
+    Fix V5.6: JOIN con 'planets' para obtener 'security' (Source of Truth).
+    """
     try:
         response = _get_db().table("planet_assets")\
-            .select("*")\
+            .select("*, planets(security, poblacion, system_id, name)")\
             .eq("player_id", player_id)\
             .execute()
         return response.data if response and response.data else []
@@ -88,7 +93,7 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
     try:
         db = _get_db()
         planets_response = db.table("planet_assets")\
-            .select("*, planets(orbital_owner_id, surface_owner_id, is_disputed, biome)")\
+            .select("*, planets(orbital_owner_id, surface_owner_id, is_disputed, biome, security, poblacion)")\
             .eq("player_id", player_id)\
             .execute()
 
@@ -139,6 +144,8 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
             asset["surface_owner_id"] = planet_data.get("surface_owner_id")
             asset["is_disputed"] = planet_data.get("is_disputed", False)
             asset["biome"] = planet_data.get("biome", "Desconocido")
+            # Ensure planet data is accessible
+            if "security" in planet_data: asset["security_from_planet"] = planet_data["security"]
 
             asset["buildings"] = buildings_by_asset.get(asset["id"], [])
             asset["sectors"] = [s for s in sectors_data if s["planet_id"] == asset["planet_id"]]
@@ -185,11 +192,11 @@ def create_planet_asset(
         
         if response and response.data:
             # Sincronizar tabla PLANETS
-            # FIX V5.5: Se agrega 'population' al update para mantener consistencia global
+            # FIX V5.5: Se agrega 'poblacion' al update para mantener consistencia global
             _get_db().table("planets").update({
                 "surface_owner_id": player_id,
                 "security": initial_security,
-                "population": initial_population
+                "poblacion": initial_population
             }).eq("id", planet_id).execute()
             
             log_event(f"Planeta colonizado: {settlement_name} (Seguridad inicial: {initial_security:.1f})", player_id)

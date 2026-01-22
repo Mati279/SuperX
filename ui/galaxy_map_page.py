@@ -4,7 +4,6 @@ Mapa Galáctico - Usa datos directamente de la Base de Datos.
 Refactorizado MMFR V2: Indicadores de Seguridad (Ss/Sp), Mantenimiento y Tooltips.
 Actualizado V4.4: Uso de 'systems.security' pre-calculado y desglose.
 Corrección V4.4.1: Manejo seguro de 'maybe_single' para assets inexistentes.
-Corrección V4.4.2: Eliminada importación obsoleta de METAL_RESOURCES.
 Corrección V5.0: Fix Mismatch 'population' vs 'poblacion' y Cálculo Dinámico de Seguridad (Ss).
 Refactorizado V5.1: Protecciones 'NoneType' en respuestas de Supabase.
 """
@@ -76,6 +75,7 @@ def show_galaxy_map_page():
 def _render_player_domains_panel():
     player = get_player()
     if not player: return
+    # Ahora devuelve objeto joined con 'planets'
     player_assets = get_all_player_planets(player.id)
     if not player_assets: return
 
@@ -92,10 +92,18 @@ def _render_player_domains_panel():
         for asset in player_assets:
             planet_id = asset['planet_id']
             system_id = asset['system_id']
-            system_info = get_system_by_id(system_id)
-            system_name = system_info.get('name', '???') if system_info else "Desconocido"
             
-            sp = asset.get('seguridad', 0.0) 
+            # Info desde el join 'planets'
+            planet_info = asset.get('planets', {}) or {}
+            system_name = planet_info.get('name') or "Sistema" # Fallback si no viene nombre sistema
+            
+            # Si el join no trajo system_id/name, hacemos query extra (fallback)
+            if not system_name or system_name == "Sistema":
+                 sys_info = get_system_by_id(system_id)
+                 if sys_info: system_name = sys_info.get('name', '???')
+
+            # Seguridad desde la tabla planets (Source of Truth)
+            sp = planet_info.get('security', 0.0) 
             if sp is None: sp = 0.0
 
             c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
@@ -122,7 +130,8 @@ def _render_system_view():
     planets = get_planets_by_system_id(system_id)
     
     # 2. Calcular Métricas en vivo (Fix V5.0)
-    total_pop = sum(p.get('population', 0.0) or 0.0 for p in planets)
+    # Soporte dual para population (modelo) o poblacion (db raw)
+    total_pop = sum(p.get('poblacion') or p.get('population') or 0.0 for p in planets)
 
     # Seguridad (Ss): Si es nula en sistema, calculamos promedio de planetas
     ss = system.get('security')
@@ -178,7 +187,8 @@ def _render_system_view():
             color = BIOME_COLORS.get(biome, "#7ec7ff")
             c2.markdown(f"<span style='color: {color}; font-weight: 700'>{planet['name']}</span>", unsafe_allow_html=True)
             
-            p_pop = planet.get('population') or 0.0
+            # Soporte dual de keys
+            p_pop = planet.get('poblacion') or planet.get('population') or 0.0
             
             # --- INFO STRING BUILDER ---
             info_parts = []
@@ -250,7 +260,8 @@ def _render_planet_view():
     # DATOS MÉTRICOS (MMFR V2)
     m1, m2, m3 = st.columns(3)
     
-    real_pop = planet.get('population') or 0.0
+    # Soporte dual
+    real_pop = planet.get('poblacion') or planet.get('population') or 0.0
     security_val = planet.get('security', 0.0)
     if security_val is None: security_val = 0.0
 
@@ -423,7 +434,8 @@ def _render_interactive_galaxy_map():
 
     # --- PRE-CÁLCULO DE MÉTRICAS MASIVO (Fix V5.0 & V5.1) ---
     try:
-        all_planets_res = get_supabase().table("planets").select("id, system_id, population, security").execute()
+        # Traemos también 'poblacion' además de 'population' por seguridad
+        all_planets_res = get_supabase().table("planets").select("id, system_id, poblacion, population, security").execute()
         all_planets_data = all_planets_res.data if all_planets_res and all_planets_res.data else []
     except:
         all_planets_data = []
@@ -432,7 +444,8 @@ def _render_interactive_galaxy_map():
     
     for p in all_planets_data:
         sid = p['system_id']
-        pop = p.get('population') or 0.0
+        # Dual support
+        pop = p.get('poblacion') or p.get('population') or 0.0
         sec = p.get('security') or 0.0
         
         if sid not in system_stats: 
