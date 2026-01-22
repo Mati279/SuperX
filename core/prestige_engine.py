@@ -1,4 +1,4 @@
-# core/prestige_engine.py
+# core/prestige_engine.py (Completo)
 """
 Motor de cálculo de prestigio y hegemonía.
 
@@ -220,14 +220,15 @@ def calculate_friction(factions: Dict[int, float]) -> Dict[int, float]:
     """
     Calcula la fricción galáctica (redistribución automática por tick).
 
-    Mecánicas:
-    1. Impuesto Imperial: Facciones >20% pierden 0.5% por tick
+    Mecánicas V4.3:
+    1. Impuesto Imperial: Facciones >20% pierden un PORCENTAJE de su prestigio (1.5%)
+       Formula: drain = prestige * (FRICTION_RATE / 100.0)
     2. Subsidio de Supervivencia: El monto drenado se redistribuye equitativamente
-       entre facciones <5%
+       ESTRICTAMENTE entre facciones <5% (SUBSIDY_THRESHOLD).
 
     Esto implementa "rubber banding" para:
     - Prevenir snowball descontrolado
-    - Dar oportunidades de recuperación
+    - Dar oportunidades de recuperación a facciones irrelevantes
     - Mantener el juego dinámico
 
     Args:
@@ -237,22 +238,22 @@ def calculate_friction(factions: Dict[int, float]) -> Dict[int, float]:
         Dict de {faction_id: ajuste}
         - Positivo = gana prestigio (subsidio)
         - Negativo = pierde prestigio (fricción)
-
-    Examples:
-        >>> calculate_friction({1: 30.0, 2: 25.0, 3: 3.0})
-        {1: -0.5, 2: -0.5, 3: 1.0}  # Dos pagan, uno recibe
     """
     adjustments = {fid: 0.0 for fid in factions}
     total_drained = 0.0
 
-    # Fase 1: Drenar de facciones poderosas (Impuesto Imperial)
+    # Fase 1: Drenar de facciones poderosas (Impuesto Imperial Proporcional)
+    # Convertimos FRICTION_RATE (1.5) a multiplicador (0.015)
+    friction_multiplier = FRICTION_RATE / 100.0
+
     for fid, prestige in factions.items():
         if prestige > FRICTION_THRESHOLD:
-            drain = FRICTION_RATE
+            # V4.3.2: Drenaje porcentual, no fijo.
+            drain = prestige * friction_multiplier
             adjustments[fid] = -drain
             total_drained += drain
 
-    # Fase 2: Identificar receptores (facciones en problemas)
+    # Fase 2: Identificar receptores (facciones estrictamente en problemas)
     receivers = [fid for fid, p in factions.items() if p < SUBSIDY_THRESHOLD]
 
     # Fase 3: Distribuir equitativamente (Subsidio de Supervivencia)
@@ -260,6 +261,9 @@ def calculate_friction(factions: Dict[int, float]) -> Dict[int, float]:
         subsidy_per_faction = total_drained / len(receivers)
         for fid in receivers:
             adjustments[fid] += subsidy_per_faction
+    
+    # Si no hay receptores, el prestigio drenado se pierde (deflación temporal)
+    # pero será normalizado a 100% en apply_prestige_changes.
 
     return adjustments
 

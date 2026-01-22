@@ -31,9 +31,13 @@ from core.mrg_engine import resolve_action, ResultType
 # IMPORT NUEVO: Servicio de Eventos Narrativos
 from services.event_service import generate_tick_event
 
-# IMPORT V4.3: Constantes de Prestigio y Hegemonía
+# IMPORT V4.3.2: Constantes y Motor Unificado de Prestigio
 from core.prestige_constants import FRICTION_RATE
-from core.prestige_engine import process_hegemony_tick
+from core.prestige_engine import (
+    process_hegemony_tick,
+    calculate_friction,
+    apply_prestige_changes
+)
 
 # Forzamos la zona horaria a Argentina (GMT-3)
 SAFE_TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
@@ -110,6 +114,7 @@ def _execute_game_logic_tick(execution_time: datetime):
     """
     Lógica pesada del juego que ocurre cuando cambia el día.
     Refactorización V4.3.1: Ciclo de 8 Fases estricto.
+    Refactorización V4.3.2: Unificación de lógica de Prestigio.
     """
     global _IS_PROCESSING_TICK
     if _IS_PROCESSING_TICK:
@@ -210,9 +215,8 @@ def _phase_decrement_and_persistence():
             else:
                 stats.pop('wound_ticks_remaining', None)
                 
-                # V4.3.1: Eliminada lógica de "ubicacion_local": "Barracones".
-                # Se mantiene la actualización del estado y limpieza de stats.
-
+                # V4.3.1: Eliminada lógica de "ubicacion_local".
+                
                 update_character(char['id'], {
                     "estado_id": STATUS_ID_MAP["Disponible"],
                     "stats_json": stats
@@ -288,8 +292,7 @@ def _process_candidate_search(player_id: int, current_tick: int):
                     if "estado" not in stats: stats["estado"] = {}
                     
                     # V4.3.1: Eliminada lógica de "ubicacion_local".
-                    # La ubicación planetaria/sectorial se maneja en character_generation_service o por defecto.
-
+                    
                     update_character(char_id, {
                         "estado_id": STATUS_ID_MAP["Candidato"],
                         "stats_json": stats
@@ -396,13 +399,12 @@ def _apply_member_investigation_result(player_id: int, character_id: int, name: 
 
 def _phase_prestige_calculation(current_tick: int):
     """
-    Fase 3: Cálculo de Prestigio, Hegemonía y Subsidios (V4.3).
+    Fase 3: Cálculo de Prestigio, Hegemonía y Subsidios (V4.3.2).
+    Unificación con motor de prestigio seguro (Suma Cero).
     """
     log_event("running phase 3: Prestigio y Hegemonía...")
     try:
         from data.faction_repository import get_all_factions, update_faction_prestige
-        factions = get_all_factions()
-        if not factions or len(factions) < 2: return
         
         # 1. Hegemonía
         game_over = process_hegemony_tick(current_tick)
@@ -410,30 +412,23 @@ def _phase_prestige_calculation(current_tick: int):
             log_event("🏆 JUEGO TERMINADO POR HEGEMONÍA 🏆")
             # Lógica de fin de juego aquí
         
-        # 2. Fricción Galáctica V4.3: Subsidio de Supervivencia
-        friction_pct = FRICTION_RATE / 100.0  # 1.5% -> 0.015
-        
-        # Drenaje: Facciones > 20%
-        rich_factions = [f for f in factions if f.get('prestige', 0) > 20.0]
-        # Redistribución: TODAS las otras facciones (<= 20%)
-        # Corrección V4.3: Redistribuir entre TODAS las demás, no solo las <5%.
-        other_factions = [f for f in factions if f.get('prestige', 0) <= 20.0]
-        
-        if rich_factions and other_factions:
-            total_drained = 0.0
+        # 2. Fricción Galáctica V4.3.2: Lógica unificada en prestige_engine
+        factions = get_all_factions()
+        if not factions: 
+            return
             
-            # Aplicar Drenaje
-            for f in rich_factions:
-                amount = f.get('prestige', 0) * friction_pct
-                new_prestige = f.get('prestige', 0) - amount
-                update_faction_prestige(f['id'], new_prestige)
-                total_drained += amount
-                
-            # Aplicar Redistribución Equitativa
-            subsidy_per_faction = total_drained / len(other_factions)
-            for f in other_factions:
-                new_prestige = f.get('prestige', 0) + subsidy_per_faction
-                update_faction_prestige(f['id'], new_prestige)
+        # Crear mapa {id: prestige} asegurando float
+        factions_map = {f['id']: float(f.get('prestige', 0.0)) for f in factions}
+        
+        # Calcular ajustes (Drenaje porcentual y Subsidio estricto)
+        adjustments = calculate_friction(factions_map)
+        
+        # Aplicar cambios con normalización (Garantía Suma Cero)
+        new_prestige_map = apply_prestige_changes(factions_map, adjustments)
+        
+        # Persistir cambios
+        for fid, new_val in new_prestige_map.items():
+            update_faction_prestige(fid, new_val)
                 
     except Exception as e:
         logger.error(f"Error en fase de prestigio: {e}")
@@ -482,9 +477,8 @@ def _phase_mission_resolution():
             # Limpieza de datos de misión activa
             if 'active_mission' in stats: del stats['active_mission']
             
-            # V4.3.1: Eliminada lógica de inyección de "ubicacion_local" (Barracones/Enfermería).
-            # Solo actualizamos estado y stats generales.
-
+            # V4.3.1: Eliminada lógica de inyección de "ubicacion_local".
+            
             update_character(char['id'], {
                 "estado_id": status_id,
                 "stats_json": stats
