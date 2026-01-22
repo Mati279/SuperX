@@ -2,7 +2,7 @@
 """
 Modelos de datos para el universo de SuperX.
 Define la jerarquía de cuerpos celestes, sectores y estructuras galácticas.
-Actualizado v4.8.0: Soporte para Población Decimal y Planetología Avanzada.
+Actualizado v4.8.1: Eliminación de recursos planetarios (migrados a Sectores).
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, Optional
@@ -52,7 +52,7 @@ class Planet(CelestialBody):
     biome: str = "Desconocido"
     is_habitable: bool = False
     slots: int = 0
-    resources: Dict[str, float] = field(default_factory=dict)
+    # resources: Dict[str, float] eliminado en v4.8.1 - Ahora gestionado por Sector
     
     # --- Actualización V4.3.0: Planetología Avanzada ---
     orbital_ring: int = 3 # Posición en el sistema (1-6)
