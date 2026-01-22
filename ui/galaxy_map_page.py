@@ -4,12 +4,14 @@ Mapa Galáctico - Usa datos directamente de la Base de Datos.
 Refactorizado MMFR V2: Indicadores de Seguridad (Ss/Sp), Mantenimiento y Tooltips.
 Actualizado V4.4: Uso de 'systems.security' pre-calculado y desglose.
 Corrección V4.4.1: Manejo seguro de 'maybe_single' para assets inexistentes.
+Corrección V4.4.2: Eliminada importación obsoleta de METAL_RESOURCES.
 """
 import json
 import math
 import streamlit as st
 import streamlit.components.v1 as components
-from core.world_constants import METAL_RESOURCES, BUILDING_TYPES, INFRASTRUCTURE_MODULES, ECONOMY_RATES
+# SE ELIMINÓ METAL_RESOURCES DE ESTA LÍNEA
+from core.world_constants import BUILDING_TYPES, INFRASTRUCTURE_MODULES, ECONOMY_RATES
 from data.database import get_supabase
 from data.planet_repository import (
     get_all_player_planets, 
@@ -213,7 +215,7 @@ def _render_planet_view():
     # --- FIX V4.4.1: Consultas seguras ---
     try:
         # 1. Planeta (Debe existir, usamos single)
-        planet_res = get_supabase().table("planets").select("*").eq("id", planet_id).single().execute()
+        planet_res = get_supabase().table("planets").select("*, security, security_breakdown").eq("id", planet_id).single().execute()
         planet = planet_res.data
         
         # 2. Asset (Puede NO existir, usamos maybe_single)
