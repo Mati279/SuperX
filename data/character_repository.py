@@ -9,6 +9,7 @@ Actualizado v5.1.6: Garantía de KnowledgeLevel en creación.
 Actualizado v5.1.7: Corrección de mapeo SQL en sistema de conocimiento (observer_player_id).
 Actualizado v5.1.8: Persistencia robusta de KnowledgeLevel (Fix Source of Truth).
 Actualizado v5.1.9: Fix Critical Mismatch Column (observer_player_id -> player_id).
+Actualizado v5.2.0: Fix ImportError COMMANDER_LOCATION (Refactorización de Ubicaciones).
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -26,8 +27,7 @@ from core.models import BiologicalSex, CharacterRole, KnowledgeLevel, CommanderD
 from core.rules import calculate_skills
 from config.app_constants import (
     COMMANDER_RANK,
-    COMMANDER_STATUS,
-    COMMANDER_LOCATION
+    COMMANDER_STATUS
 )
 
 # --- CONSTANTES DE MAPEO ---
@@ -226,7 +226,7 @@ def create_commander(
                 "rol_asignado": CharacterRole.COMMANDER.value,
                 "accion_actual": "Iniciando mandato",
                 "ubicacion": {
-                   "system_id": None, "planet_id": None, "sector_id": None, "ubicacion_local": COMMANDER_LOCATION
+                   "system_id": None, "planet_id": None, "sector_id": None, "ubicacion_local": "Base Principal"
                 }
             }
         }
