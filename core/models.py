@@ -6,6 +6,7 @@ para garantizar validación y serialización consistente.
 Refactorizado para cumplir con el esquema V2 Híbrido (SQL + JSON).
 Actualizado v5.1.4: Estandarización de IDs de Roles (Fix Error 22P02).
 Actualizado V4.3: Enums de Conocimiento y Secretos.
+Corregido v5.1.5: Fix BiologicalSex Enum y defaults.
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -34,7 +35,7 @@ class CharacterStatus(str, Enum):
 class BiologicalSex(str, Enum):
     MALE = "Masculino"
     FEMALE = "Femenino"
-   
+    ASEXUAL = "Asexual"
 
 class CharacterRole(str, Enum):
     """Roles operativos asignables."""
@@ -76,7 +77,8 @@ class CharacterBio(BaseModel):
     nombre: str
     apellido: str
     edad: int = Field(default=30)
-    sexo: BiologicalSex = BiologicalSex.UNKNOWN
+    # Corregido: Default válido para evitar AttributeError
+    sexo: BiologicalSex = Field(default=BiologicalSex.MALE)
     
     # Biografía de 3 Capas (Consolidada v5.1.0)
     biografia_corta: str = Field(default="Sin biografía registrada.")
@@ -360,7 +362,8 @@ class CommanderData(BaseModel):
             if "edad" not in full_stats["bio"]:
                 full_stats["bio"]["edad"] = 30
             if "sexo" not in full_stats["bio"]:
-                full_stats["bio"]["sexo"] = "Desconocido"
+                # Fallback seguro en caso de hidratación incorrecta
+                full_stats["bio"]["sexo"] = "Masculino"
             
             full_stats["progresion"]["nivel"] = self.level
             full_stats["progresion"]["xp"] = self.xp
