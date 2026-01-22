@@ -2,7 +2,7 @@
 """
 Modelos de datos para el universo de SuperX.
 Define la jerarquía de cuerpos celestes, sectores y estructuras galácticas.
-Actualizado v4.3.0: Soporte para Planetología Avanzada (Anillos, Masa y Sectores).
+Actualizado v4.8.0: Soporte para Población Decimal y Planetología Avanzada.
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, Optional
@@ -13,7 +13,7 @@ class Sector:
     """Modelo que representa un sector dentro de un planeta (V4.2.0)."""
     id: int
     planet_id: int
-    type: str  # 'Urbano', 'Llanura', 'Montañoso', 'Inhospito'
+    type: str  # 'Urbano', 'Llanura', 'Montañoso', 'Inhospito' (Ahora dinámico en v4.8)
     slots: int
     
     # Metadata opcional
@@ -66,10 +66,10 @@ class Planet(CelestialBody):
     surface_owner_id: Optional[int] = None
     is_disputed: bool = False
     
-    # Referencias auxiliares y Stats (V4.4)
+    # Referencias auxiliares y Stats (V4.8 - Actualizado para precisión decimal)
     base_defense: int = 0
-    security: int = 0 # Valor calculado (0-100)
-    population: int = 0
+    security: float = 0.0 # Valor calculado (0.0-100.0) - Actualizado a float
+    population: float = 0.0 # Actualizado a float (Millones, ej: 1.50)
 
     def get_urban_sector(self) -> Optional[Sector]:
         """Retorna el primer sector urbano encontrado."""
