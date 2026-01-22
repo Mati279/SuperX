@@ -4,6 +4,10 @@ from core.constants import SKILL_MAPPING, ATTRIBUTE_COST_MULTIPLIER
 from core.world_constants import PLANET_BIOMES, SECTOR_TYPE_INHOSPITABLE
 from core.models import KnowledgeLevel
 
+# --- CONSTANTES DE BALANCEO (V4.4 SEGURIDAD) ---
+SECURITY_POP_MULT = 5
+RING_PENALTY = 2
+
 def calculate_skills(attributes: Dict[str, int]) -> Dict[str, int]:
     skills = {}
     for skill_name, (attr1, attr2) in SKILL_MAPPING.items():
@@ -128,6 +132,20 @@ def calculate_planet_habitability(planet_id: int) -> int:
     return max(-100, min(100, final_habitability))
 
 # --- REGLAS DE SEGURIDAD SISTÉMICA (V4.4) ---
+
+def calculate_planet_security(base_stat: int, pop_count: float, infrastructure_defense: int, orbital_ring: int) -> int:
+    """
+    Calcula el valor de seguridad (Sp) de un planeta.
+    Fórmula: Sp = Base + (Pop * 5) + Infra - (2 * Ring)
+    Regla: Si Pop == 0 -> Sp = 0.
+    """
+    if pop_count <= 0:
+        return 0
+        
+    raw_security = base_stat + (pop_count * SECURITY_POP_MULT) + infrastructure_defense - (orbital_ring * RING_PENALTY)
+    
+    # Clamping entre 0 y 100
+    return max(0, min(100, int(raw_security)))
 
 def calculate_and_update_system_security(system_id: int):
     """

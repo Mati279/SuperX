@@ -10,6 +10,8 @@ from .world_constants import (
     MAX_SLOTS_PER_SECTOR, SECTOR_NAMES_BY_CATEGORY, LUXURY_RESOURCES_BY_CATEGORY,
     RESOURCE_PROB_HIGH, RESOURCE_PROB_MEDIUM, RESOURCE_PROB_LOW, RESOURCE_PROB_NONE
 )
+# V4.4: Importar lógica de seguridad para cálculo inicial
+from .rules import calculate_planet_security
 
 class GalaxyGenerator:
     def __init__(self, seed: int = 42, num_systems: int = 40):
@@ -83,16 +85,34 @@ class GalaxyGenerator:
             # 2. Selección de Bioma (Tarea 3.2)
             biome = self._select_biome_by_ring(ring)
             
+            # V4.4: Determinar Base Stat (Defensa) para el planeta
+            # Asignamos un valor aleatorio entre 10 y 30. Podría refinarse según bioma.
+            base_defense = random.randint(10, 30)
+            initial_population = 0 # Planetas salvajes no tienen población jugable
+            
+            # V4.4: Cálculo Inicial de Seguridad
+            # Nota: Al ser population 0, el resultado será 0, pero seteamos el valor base_defense
+            initial_security = calculate_planet_security(
+                base_stat=base_defense,
+                pop_count=initial_population,
+                infrastructure_defense=0,
+                orbital_ring=ring
+            )
+
             planet_id = (system.id * 100) + j
             new_planet = Planet(
                 id=planet_id,
                 system_id=system.id,
                 name=f"{system.name}-{j+1}",
                 biome=biome,
-                is_habitable=PLANET_BIOMES[biome].get('habitability', 0) > 0.4, # Simple check para flag global
+                is_habitable=PLANET_BIOMES[biome].get('habitability', 0) > 0.4, 
                 orbital_ring=ring,
                 mass_class=chosen_mass,
-                max_sectors=max_sectors
+                max_sectors=max_sectors,
+                # V4.4 Fields
+                base_defense=base_defense,
+                population=initial_population,
+                security=initial_security
             )
             
             # 3. Generación de Sectores (Tarea 3.3)
@@ -105,10 +125,7 @@ class GalaxyGenerator:
         """Aplica Weighted Random Choice basado en la Zona Orbital."""
         # Se asume que PLANET_BIOMES ya no tiene 'allowed_zones' con mapeo directo
         # sino que usamos preferred_rings o lógica custom.
-        # Sin embargo, para mantener coherencia con el generador anterior y los nuevos datos:
         
-        # Mapeo simple basado en preferred_rings de los nuevos biomas
-        # Si el anillo está en preferred, peso alto. Si está adyacente, medio. Si no, bajo.
         biomes = list(PLANET_BIOMES.keys())
         weights = []
         
@@ -201,11 +218,6 @@ class GalaxyGenerator:
                 resource_category = None # Limpiamos recurso si se fuerza urbano
                 luxury_res = None
             
-            # Instanciar Sector
-            # Nota: is_known se deriva de si es Urbano (habitado) o lógica de exploración futura.
-            # Por defecto en generación, solo el urbano inicial suele ser conocido si es el home planet,
-            # pero aquí 'planet.population > 0' suele aplicar a la generación inicial de imperios.
-            # Si es un planeta virgen, is_known=False.
             is_known = (sec_type == SECTOR_TYPE_URBAN)
 
             new_sector = Sector(

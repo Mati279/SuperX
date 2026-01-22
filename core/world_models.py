@@ -1,4 +1,4 @@
-# core/world_models.py
+# core/world_models.py (Completo)
 """
 Modelos de datos para el universo de SuperX.
 Define la jerarquía de cuerpos celestes, sectores y estructuras galácticas.
@@ -66,8 +66,9 @@ class Planet(CelestialBody):
     surface_owner_id: Optional[int] = None
     is_disputed: bool = False
     
-    # Referencias auxiliares
+    # Referencias auxiliares y Stats (V4.4)
     base_defense: int = 0
+    security: int = 0 # Valor calculado (0-100)
     population: int = 0
 
     def get_urban_sector(self) -> Optional[Sector]:

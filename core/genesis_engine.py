@@ -4,7 +4,7 @@ Genesis Engine - Protocolo v4.2 "Fair Start"
 Maneja la lógica de inicialización de nuevas facciones.
 Actualizado: Estandarización de Población Inicial (1.50B - 1.70B).
 Actualizado: Generación de Tripulación Inicial (Level 5 + 2x Level 3) con conocimiento KNOWN.
-Corrección V4.4: Escritura de seguridad en tabla 'planets' en lugar de 'planet_assets'.
+Corrección V4.4: Escritura de seguridad en tabla 'planets' usando fórmula centralizada.
 """
 
 import random
@@ -16,6 +16,7 @@ from core.world_constants import STAR_TYPES, ECONOMY_RATES
 from core.constants import MIN_ATTRIBUTE_VALUE
 from core.models import KnowledgeLevel
 from services.character_generation_service import recruit_character_with_ai
+from core.rules import calculate_planet_security, SECURITY_POP_MULT, RING_PENALTY
 
 # --- CONSTANTES DEL PROTOCOLO ---
 GENESIS_XP = 3265
@@ -52,12 +53,12 @@ def genesis_protocol(player_id: int) -> bool:
         system_id = find_safe_starting_node()
         
         # 2. Seleccionar planeta aleatorio
-        response_planets = db.table("planets").select("id, name, biome, system_id, orbital_ring").eq("system_id", system_id).execute()
+        response_planets = db.table("planets").select("id, name, biome, system_id, orbital_ring, base_defense").eq("system_id", system_id).execute()
         
         if not response_planets.data:
             log_event(f"⚠ Sistema {system_id} vacío. Buscando respaldo...", player_id, is_error=True)
             # Fallback: buscar cualquier planeta
-            fallback = db.table("planets").select("id, name, system_id, orbital_ring").limit(1).execute()
+            fallback = db.table("planets").select("id, name, system_id, orbital_ring, base_defense").limit(1).execute()
             
             if not fallback.data: 
                 print("❌ CRITICAL: No existen planetas en la base de datos.")
@@ -74,20 +75,23 @@ def genesis_protocol(player_id: int) -> bool:
         # Asignar población inicial decimal (1.5 - 1.7 Billones)
         initial_pop = round(random.uniform(GENESIS_POP_MIN, GENESIS_POP_MAX), 2)
         
-        # Calcular Seguridad Inicial Dinámica (MMFR V4.4)
-        sec_base = ECONOMY_RATES.get("security_base", 25.0)
-        sec_pop = ECONOMY_RATES.get("security_per_1b_pop", 5.0)
+        # Obtener Base Stat (Defensa) del planeta o default si es data antigua
+        base_stat = target_planet.get('base_defense', 20)
+        if base_stat is None: base_stat = 20
         
-        # Obtenemos orbital_ring para cálculo más preciso si existe, sino default 3
         orbital_ring = target_planet.get('orbital_ring', 3)
-        dist_penalty = 2.0 * orbital_ring
         
-        raw_security = sec_base + (initial_pop * sec_pop) - dist_penalty
-        initial_security = max(1.0, min(raw_security, 100.0))
+        # Calcular Seguridad usando la fórmula centralizada (core/rules.py)
+        initial_security = calculate_planet_security(
+            base_stat=base_stat,
+            pop_count=initial_pop,
+            infrastructure_defense=0, # Génesis empieza sin edificios
+            orbital_ring=orbital_ring
+        )
         
-        # Generar breakdown inicial
+        # Generar breakdown inicial para UI
         security_breakdown = {
-            "text": f"Génesis: Base ({sec_base}) + Pop ({initial_pop:.1f}x{sec_pop}) - Dist ({dist_penalty})",
+            "text": f"Génesis: Base ({base_stat}) + Pop ({initial_pop:.1f}x{SECURITY_POP_MULT}) - Anillo ({orbital_ring}x{RING_PENALTY})",
             "total": initial_security
         }
 
@@ -121,7 +125,7 @@ def genesis_protocol(player_id: int) -> bool:
         # 5. Generación de Tripulación Inicial (Opcional/Manual en UI)
         # _deploy_starting_crew(player_id, target_planet['id'])
         
-        log_event(f"✅ Protocolo Génesis completado. Base: {base_name}. Pob: {initial_pop}B. Seg: {initial_security:.1f}", player_id)
+        log_event(f"✅ Protocolo Génesis completado. Base: {base_name}. Pob: {initial_pop}B. Seg: {initial_security}", player_id)
         return True
 
     except Exception as e:
