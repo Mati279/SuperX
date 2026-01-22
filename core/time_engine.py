@@ -109,6 +109,7 @@ def debug_force_tick() -> None:
 def _execute_game_logic_tick(execution_time: datetime):
     """
     Lógica pesada del juego que ocurre cuando cambia el día.
+    Refactorización V4.3.1: Ciclo de 8 Fases estricto.
     """
     global _IS_PROCESSING_TICK
     if _IS_PROCESSING_TICK:
@@ -144,8 +145,7 @@ def _execute_game_logic_tick(execution_time: datetime):
         # 4. Fase Macro económica (MMFR)
         _phase_macroeconomics()
 
-        # 5. Fase de Logística Social y Salud de POPs
-        _phase_social_logistics()
+        # NOTA V4.3.1: Fase 5 (Logística Social) eliminada del ciclo.
 
         # 6. Fase de Resolución de Misiones y Eventos de Personaje (MRG)
         _phase_mission_resolution()
@@ -210,13 +210,8 @@ def _phase_decrement_and_persistence():
             else:
                 stats.pop('wound_ticks_remaining', None)
                 
-                if "estado" not in stats: stats["estado"] = {}
-                loc_data = stats["estado"].get("ubicacion", {})
-                if isinstance(loc_data, dict):
-                    loc_data["ubicacion_local"] = "Barracones"
-                else:
-                    loc_data = {"ubicacion_local": "Barracones"}
-                stats["estado"]["ubicacion"] = loc_data
+                # V4.3.1: Eliminada lógica de "ubicacion_local": "Barracones".
+                # Se mantiene la actualización del estado y limpieza de stats.
 
                 update_character(char['id'], {
                     "estado_id": STATUS_ID_MAP["Disponible"],
@@ -292,13 +287,8 @@ def _process_candidate_search(player_id: int, current_tick: int):
                     stats = char.get("stats_json", {})
                     if "estado" not in stats: stats["estado"] = {}
                     
-                    # Ensure location structure
-                    current_loc = stats["estado"].get("ubicacion", {})
-                    if not isinstance(current_loc, dict):
-                        current_loc = {"ubicacion_local": "Centro de Reclutamiento"}
-                    else:
-                        current_loc["ubicacion_local"] = "Centro de Reclutamiento"
-                    stats["estado"]["ubicacion"] = current_loc
+                    # V4.3.1: Eliminada lógica de "ubicacion_local".
+                    # La ubicación planetaria/sectorial se maneja en character_generation_service o por defecto.
 
                     update_character(char_id, {
                         "estado_id": STATUS_ID_MAP["Candidato"],
@@ -457,25 +447,6 @@ def _phase_macroeconomics():
     except Exception as e:
         logger.error(f"Error crítico en fase macroeconómica: {e}")
 
-def _phase_social_logistics():
-    """Fase 5: Logística Social y POPs."""
-    log_event("running phase 5: Logística Social y POPs...")
-    try:
-        from data.planet_repository import get_all_player_planets, update_planet_asset
-        players = get_all_players()
-        for player in players:
-            planets = get_all_player_planets(player['id'])
-            for planet in planets:
-                pop = planet.get('poblacion', 0)
-                if pop <= 0: continue
-                happiness = planet.get('felicidad', 1.0)
-                growth_rate = 0.01 + (max(0, happiness - 1.0) * 0.02) if happiness >= 0.8 else -0.01
-                new_pop = max(10, int(pop * (1 + growth_rate)))
-                if new_pop != pop:
-                    update_planet_asset(planet['id'], {"poblacion": new_pop, "pops_activos": new_pop})
-    except Exception as e:
-        logger.error(f"Error en fase social: {e}")
-
 def _phase_mission_resolution():
     """Fase 6: Resolución de Misiones (MRG v2.0)."""
     log_event("running phase 6: Resolución de Misiones (MRG 2d50)...")
@@ -495,7 +466,6 @@ def _phase_mission_resolution():
             
             reward = 0
             status_id = STATUS_ID_MAP["Disponible"]
-            loc_local = "Barracones"
             msg = ""
 
             if result.result_type in [ResultType.CRITICAL_SUCCESS, ResultType.TOTAL_SUCCESS, ResultType.PARTIAL_SUCCESS]:
@@ -505,20 +475,15 @@ def _phase_mission_resolution():
             else:
                 if result.result_type == ResultType.CRITICAL_FAILURE:
                     status_id = STATUS_ID_MAP["Herido"]
-                    loc_local = "Enfermería"
                     msg = f"❌ FRACASO: {char['nombre']} falló la misión. Sufrió heridas graves."
                 else:
                     msg = f"❌ FRACASO: {char['nombre']} falló la misión."
             
+            # Limpieza de datos de misión activa
             if 'active_mission' in stats: del stats['active_mission']
             
-            if "estado" not in stats: stats["estado"] = {}
-            loc_data = stats["estado"].get("ubicacion", {})
-            if isinstance(loc_data, dict):
-                loc_data["ubicacion_local"] = loc_local
-            else:
-                loc_data = {"ubicacion_local": loc_local}
-            stats["estado"]["ubicacion"] = loc_data
+            # V4.3.1: Eliminada lógica de inyección de "ubicacion_local" (Barracones/Enfermería).
+            # Solo actualizamos estado y stats generales.
 
             update_character(char['id'], {
                 "estado_id": status_id,

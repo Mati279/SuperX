@@ -1,4 +1,4 @@
-# config/app_constants.py
+# config/app_constants.py (Completo)
 """
 Constantes globales de la aplicación para escalabilidad y mantenibilidad.
 Centraliza valores mágicos dispersos en el código.
@@ -47,10 +47,11 @@ WORLD_STATE_SINGLETON_ID = 1      # ID único de la fila world_state
 # --- Configuración de Personajes ---
 DEFAULT_RECRUIT_RANK = "Iniciado"
 DEFAULT_RECRUIT_STATUS = "Disponible"
-DEFAULT_RECRUIT_LOCATION = "Barracones"
+# DEFAULT_RECRUIT_LOCATION eliminado por refactorización de ubicaciones (v4.3.1)
+
 COMMANDER_RANK = "Comandante"
 COMMANDER_STATUS = "Activo"
-COMMANDER_LOCATION = "Puente de Mando"
+# COMMANDER_LOCATION eliminado por refactorización de ubicaciones (v4.3.1)
 
 # --- Configuración de Reclutamiento ---
 # Rango de edad para personajes generados (distribución aleatoria)
