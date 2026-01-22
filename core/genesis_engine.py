@@ -6,6 +6,7 @@ Actualizado: Estandarización de Población Inicial (1.50B - 1.70B).
 Actualizado: Generación de Tripulación Inicial (Level 5 + 2x Level 3) con conocimiento KNOWN.
 Corrección V4.4: Escritura de seguridad en tabla 'planets' usando fórmula centralizada.
 Corrección V4.5: Persistencia de 'population' en tabla global 'planets'.
+Corrección V5.9: Fix crítico de nomenclatura 'poblacion' a 'population' en planet_assets.
 """
 
 import random
@@ -102,7 +103,8 @@ def genesis_protocol(player_id: int) -> bool:
             "system_id": system_id,
             "planet_id": target_planet['id'],
             "nombre_asentamiento": base_name,
-            "poblacion": initial_pop,
+            # FIX V5.9: Corregido de 'poblacion' a 'population'
+            "population": initial_pop,
             "pops_activos": initial_pop,
             "pops_desempleados": 0.0,
             # "seguridad": initial_security,  <-- REMOVIDO: Columna eliminada de planet_assets
