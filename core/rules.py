@@ -118,7 +118,9 @@ def calculate_planet_habitability(planet_id: int) -> int:
     if not planet: return 0
     
     biome_info = PLANET_BIOMES.get(planet["biome"], {})
-    base_hab = biome_info.get("modifiers", {}).get("habitability", 0)
+    # Corrección: Acceder directamente a 'habitability' y convertir a escala 0-100
+    base_hab_float = biome_info.get("habitability", 0.0)
+    base_hab = int(base_hab_float * 100)
     
     sectors = get_planet_sectors_status(planet_id)
     penalty = 0
