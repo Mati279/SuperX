@@ -54,70 +54,102 @@ ORBITAL_ZONE_WEIGHTS = {
 SECURITY_MOD_INNER = {1: -5, 2: -3}
 SECURITY_MOD_OUTER = {5: -3, 6: -5}
 
-# Tabla Maestra de Biomas (Extraída de image_c5ef58.png)
+# --- DEFINICIONES DE RECURSOS Y SECTORES (NUEVO V4.3.0) ---
+
+# Nombres temáticos de sectores por categoría de recurso
+SECTOR_NAMES_BY_CATEGORY = {
+    "materiales": "Macizo de Estratos Densos",
+    "componentes": "Geoda de Elementos Cristalinos",
+    "energia": "Falla de Emanación Radiante",
+    "influencia": "Cuna de Identidad Primigenia",
+    "datos": "Cuenca de Ecos Magnéticos"
+}
+
+# Listas de Recursos de Lujo (V4.1.3)
+LUXURY_RESOURCES_BY_CATEGORY = {
+    "materiales": ["Wolframio", "Neodimio", "Paladio", "Platino", "Iridio"],
+    "componentes": ["Sensores de Precisión", "Nanobots", "Circuitos Cuánticos"],
+    "energia": ["Cristales de Foco", "Plasma Estable", "Materia Oscura"],
+    "influencia": ["Archivos Diplomáticos", "Reliquias Culturales"],
+    "datos": ["Códigos de Encriptación", "Matrices de IA", "Núcleos de Datos Crípticos"]
+}
+
+# Probabilidades base para la matriz de recursos
+RESOURCE_PROB_HIGH = 0.6
+RESOURCE_PROB_MEDIUM = 0.3
+RESOURCE_PROB_LOW = 0.1
+RESOURCE_PROB_NONE = 0.0
+
+# Tabla Maestra de Biomas Actualizada
 PLANET_BIOMES = {
     "Volcánico": {
-        "resources": ["Magnetita", "Cristales de Foco", "Azufre"],
-        "modifiers": {"habitability": -30, "industry": +20},
-        "description": "Actividad tectónica extrema y ríos de lava. Común en zona interna.",
-        "allowed_zones": {"INNER": "ALTA", "HABITABLE": "BAJA", "OUTER": None}
+        "habitability": 0.3, # Baja habitabilidad física
+        "common_resources": ["materiales", "energia"],
+        "preferred_rings": [1, 2],
+        "resource_matrix": {
+            "materiales": "ALTA", "energia": "ALTA", "componentes": "MEDIA", "datos": "BAJA", "influencia": "NULA"
+        },
+        "description": "Actividad tectónica extrema y ríos de lava."
     },
     "Tóxico": {
-        "resources": ["Gases Nobles", "Núcleos de Datos Crípticos"],
-        "modifiers": {"habitability": -50, "science": +15},
-        "description": "Atmósfera corrosiva rica en compuestos químicos raros.",
-        "allowed_zones": {"INNER": "ALTA", "HABITABLE": "MEDIA", "OUTER": "BAJA"}
+        "habitability": 0.2,
+        "common_resources": ["datos", "energia"],
+        "preferred_rings": [2, 3],
+        "resource_matrix": {
+            "datos": "ALTA", "energia": "MEDIA", "materiales": "MEDIA", "componentes": "BAJA", "influencia": "NULA"
+        },
+        "description": "Atmósfera corrosiva rica en compuestos químicos raros."
+    },
+    "Desértico": {
+        "habitability": 0.6,
+        "common_resources": ["materiales", "componentes"],
+        "preferred_rings": [2, 3, 4],
+        "resource_matrix": {
+            "materiales": "ALTA", "componentes": "ALTA", "energia": "MEDIA", "datos": "BAJA", "influencia": "BAJA"
+        },
+        "description": "Vastas extensiones de arena y formaciones rocosas. Escasez de agua."
     },
     "Templado": {
-        "resources": ["Agua", "Oxígeno", "Biomasa"],
-        "modifiers": {"habitability": +40, "growth": +10},
-        "description": "Clima estable y ecosistemas diversos. Ideal para la vida.",
-        "allowed_zones": {"INNER": None, "HABITABLE": "ALTA", "OUTER": None}
+        "habitability": 0.9,
+        "common_resources": ["influencia", "materiales"],
+        "preferred_rings": [3, 4],
+        "resource_matrix": {
+            "influencia": "ALTA", "materiales": "MEDIA", "datos": "MEDIA", "energia": "BAJA", "componentes": "BAJA"
+        },
+        "description": "Clima estable y ecosistemas diversos. Ideal para la vida."
     },
     "Oceánico": {
-        "resources": ["Agua", "Hielo Metano", "Perlas de Sílice"],
-        "modifiers": {"habitability": +20, "food": +25},
-        "description": "Superficie cubierta casi totalmente por agua líquida.",
-        "allowed_zones": {"INNER": None, "HABITABLE": "ALTA", "OUTER": "MEDIA"}
+        "habitability": 0.8,
+        "common_resources": ["influencia", "componentes"],
+        "preferred_rings": [3, 4, 5],
+        "resource_matrix": {
+            "influencia": "ALTA", "componentes": "ALTA", "datos": "MEDIA", "materiales": "BAJA", "energia": "MEDIA"
+        },
+        "description": "Superficie cubierta casi totalmente por agua líquida."
     },
     "Glacial": {
-        "resources": ["Hielo Creativo", "Isótopos Fríos"],
-        "modifiers": {"habitability": -20, "energy": +10},
-        "description": "Temperaturas bajo cero con depósitos minerales congelados.",
-        "allowed_zones": {"INNER": None, "HABITABLE": "BAJA", "OUTER": "ALTA"}
+        "habitability": 0.4,
+        "common_resources": ["datos", "energia"],
+        "preferred_rings": [5, 6],
+        "resource_matrix": {
+            "energia": "ALTA", "datos": "ALTA", "materiales": "MEDIA", "componentes": "BAJA", "influencia": "BAJA"
+        },
+        "description": "Temperaturas bajo cero con depósitos minerales congelados."
     },
     "Gaseoso": {
-        "resources": ["Helio-3", "Hidrógeno", "Núcleos de Datos Crípticos"],
-        "modifiers": {"habitability": -100, "extraction": +40},
-        "description": "Gigante sin superficie sólida, extracción mediante plataformas.",
-        "allowed_zones": {"INNER": None, "HABITABLE": None, "OUTER": "ALTA"}
+        "habitability": 0.0, # Imposible habitar superficie (requiere tecnología especial o es inhóspito)
+        "common_resources": ["energia", "datos"],
+        "preferred_rings": [5, 6],
+        "resource_matrix": {
+            "energia": "ALTA", "datos": "ALTA", "materiales": "BAJA", "componentes": "NULA", "influencia": "NULA"
+        },
+        "description": "Gigante sin superficie sólida."
     }
 }
 
 # --- RECURSOS Y PESOS ---
 
 ASTEROID_BELT_CHANCE = 0.15
-
-# Pesos de recursos por clase de estrella
-RESOURCE_STAR_WEIGHTS = {
-    "O": {"Platino": 3, "Uranio": 4, "Oro": 2, "Titanio": 1},
-    "B": {"Platino": 2, "Uranio": 3, "Oro": 2, "Titanio": 2},
-    "A": {"Oro": 3, "Platino": 1, "Titanio": 2, "Hierro": 2},
-    "F": {"Titanio": 3, "Oro": 2, "Hierro": 2, "Cobre": 2},
-    "G": {"Hierro": 4, "Titanio": 2, "Cobre": 3, "Aluminio": 3},
-    "K": {"Hierro": 3, "Cobre": 3, "Aluminio": 4, "Titanio": 1},
-    "M": {"Hierro": 2, "Aluminio": 3, "Cobre": 2},
-}
-
-METAL_RESOURCES = {
-    "Hierro": {"value": 1, "tier": 1},
-    "Titanio": {"value": 2, "tier": 1},
-    "Cobre": {"value": 1, "tier": 1},
-    "Aluminio": {"value": 1, "tier": 1},
-    "Oro": {"value": 5, "tier": 2},
-    "Platino": {"value": 10, "tier": 3},
-    "Uranio": {"value": 15, "tier": 3},
-}
 
 # --- REGLAS DE BASE (MÓDULO 20) ---
 
@@ -243,37 +275,6 @@ BROKER_PRICES = {
     "celulas_energia": 30,
     "influencia": 50,
     "datos": 20
-}
-
-# --- ECONOMÍA V4.1.3: CATEGORÍAS DE LUJO ---
-
-LUXURY_DATA = {
-    "metales": {
-        "wolframio": {"base_price": 65, "name": "Wolframio"},
-        "neodimio": {"base_price": 78, "name": "Neodimio"},
-        "paladio": {"base_price": 92, "name": "Paladio"},
-        "platino": {"base_price": 115, "name": "Platino"},
-        "iridio": {"base_price": 138, "name": "Iridio"},
-    },
-    "componentes_avanzados": {
-        "sensores_precision": {"base_price": 85, "name": "Sensores de Precisión"},
-        "nanobots": {"base_price": 110, "name": "Nanobots"},
-        "circuitos_cuanticos": {"base_price": 145, "name": "Circuitos Cuánticos"},
-    },
-    "energia_avanzada": {
-        "cristales_foco": {"base_price": 82, "name": "Cristales de Foco"},
-        "plasma_estable": {"base_price": 118, "name": "Plasma Estable"},
-        "materia_oscura": {"base_price": 165, "name": "Materia Oscura"},
-    },
-    "influencia_superior": {
-        "archivos_diplomaticos": {"base_price": 140, "name": "Archivos Diplomáticos"},
-        "reliquias_culturales": {"base_price": 185, "name": "Reliquias Culturales"},
-    },
-    "datos_criticos": {
-        "codigos_encriptacion": {"base_price": 72, "name": "Códigos de Encriptación"},
-        "matrices_ai": {"base_price": 98, "name": "Matrices de IA"},
-        "nucleos_datos": {"base_price": 132, "name": "Núcleos de Datos Crípticos"},
-    },
 }
 
 # --- SECTORES Y GENERACIÓN V4.2.0 ---

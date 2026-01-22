@@ -18,6 +18,7 @@ class Sector:
     
     # Metadata opcional
     resource_type: Optional[str] = None
+    luxury_resource: Optional[str] = None # V4.3.0: Recurso de lujo específico
     buildings_count: int = 0
     explored_by: List[int] = field(default_factory=list) # IDs de jugadores
     owner_id: Optional[int] = None # ID del jugador dueño de la base/puesto

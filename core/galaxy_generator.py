@@ -1,4 +1,4 @@
-# core/galaxy_generator.py
+# core/galaxy_generator.py (Completo)
 import math
 import random
 from typing import List, Tuple
@@ -7,7 +7,8 @@ from .world_constants import (
     STAR_TYPES, STAR_RARITY_WEIGHTS, PLANET_BIOMES,
     PLANET_MASS_CLASSES, ORBITAL_ZONE_WEIGHTS,
     SECTOR_TYPE_URBAN, SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN, SECTOR_TYPE_INHOSPITABLE,
-    MAX_SLOTS_PER_SECTOR
+    MAX_SLOTS_PER_SECTOR, SECTOR_NAMES_BY_CATEGORY, LUXURY_RESOURCES_BY_CATEGORY,
+    RESOURCE_PROB_HIGH, RESOURCE_PROB_MEDIUM, RESOURCE_PROB_LOW, RESOURCE_PROB_NONE
 )
 
 class GalaxyGenerator:
@@ -88,7 +89,7 @@ class GalaxyGenerator:
                 system_id=system.id,
                 name=f"{system.name}-{j+1}",
                 biome=biome,
-                is_habitable=PLANET_BIOMES[biome]['modifiers']['habitability'] > -50,
+                is_habitable=PLANET_BIOMES[biome].get('habitability', 0) > 0.4, # Simple check para flag global
                 orbital_ring=ring,
                 mass_class=chosen_mass,
                 max_sectors=max_sectors
@@ -102,57 +103,121 @@ class GalaxyGenerator:
 
     def _select_biome_by_ring(self, ring: int) -> str:
         """Aplica Weighted Random Choice basado en la Zona Orbital."""
-        if ring <= 2: zone = "INNER"
-        elif ring <= 4: zone = "HABITABLE"
-        else: zone = "OUTER"
-
+        # Se asume que PLANET_BIOMES ya no tiene 'allowed_zones' con mapeo directo
+        # sino que usamos preferred_rings o lógica custom.
+        # Sin embargo, para mantener coherencia con el generador anterior y los nuevos datos:
+        
+        # Mapeo simple basado en preferred_rings de los nuevos biomas
+        # Si el anillo está en preferred, peso alto. Si está adyacente, medio. Si no, bajo.
         biomes = list(PLANET_BIOMES.keys())
         weights = []
-
-        for b in biomes:
-            w_str = PLANET_BIOMES[b]['allowed_zones'].get(zone)
-            w_val = ORBITAL_ZONE_WEIGHTS.get(w_str, 0) if w_str else 0
-            weights.append(w_val)
-
-        # Fallback si todos los pesos son 0 por error de config
-        if sum(weights) == 0: return "Arido" 
         
+        for b in biomes:
+            preferred = PLANET_BIOMES[b].get('preferred_rings', [])
+            if ring in preferred:
+                weights.append(10)
+            elif (ring - 1) in preferred or (ring + 1) in preferred:
+                weights.append(3)
+            else:
+                weights.append(1)
+
         return random.choices(biomes, weights=weights, k=1)[0]
 
     def _generate_sectors_for_planet(self, planet: Planet) -> List[Sector]:
-        """Genera N sectores físicos e instancia la niebla de superficie."""
+        """
+        Refactorización completa (V4.3.0) - Flujo de 4 Pasos.
+        """
         sectors = []
-        num_sectors = planet.max_sectors
         biome_data = PLANET_BIOMES[planet.biome]
+        biome_habitability = biome_data.get('habitability', 0.0)
         
-        # Habitabilidad influye en la probabilidad de Llanura vs Inhóspito
-        habitability = biome_data['modifiers'].get('habitability', 0)
+        prob_map = {
+            "ALTA": RESOURCE_PROB_HIGH,
+            "MEDIA": RESOURCE_PROB_MEDIUM,
+            "BAJA": RESOURCE_PROB_LOW,
+            "NULA": RESOURCE_PROB_NONE
+        }
 
-        for k in range(num_sectors):
-            sector_index = k + 1
+        for k in range(planet.max_sectors):
+            sector_index = k + 1 # 1-based index
             sector_id = (planet.id * 1000) + sector_index
             
-            # Sector 1: Siempre Urbano y Conocido (Landing Zone)
-            if sector_index == 1:
-                sec_type = SECTOR_TYPE_URBAN
-                is_known = True
-            else:
-                is_known = False
-                # Lógica de habitabilidad de sector
-                # Si habitabilidad < -20, chance alta de ser inhóspito
-                inhospitable_threshold = (habitability + 100) / 200 # 0.0 a 1.0
-                if random.random() > inhospitable_threshold:
-                    sec_type = SECTOR_TYPE_INHOSPITABLE
+            # --- PASO 1: Determinación de Habitabilidad Física ---
+            is_physically_habitable = random.random() < biome_habitability
+            
+            sec_type = SECTOR_TYPE_INHOSPITABLE
+            slots = 0
+            resource_category = None
+            luxury_res = None
+            
+            if is_physically_habitable:
+                slots = MAX_SLOTS_PER_SECTOR
+                
+                # --- PASO 2: Asignación de Recursos (Solo Habitable) ---
+                resource_found = False
+                
+                # A) Check de Anillo
+                preferred_rings = biome_data.get('preferred_rings', [])
+                if planet.orbital_ring in preferred_rings:
+                    if random.random() < 0.5: # 50% chance
+                        common_list = biome_data.get('common_resources', [])
+                        if common_list:
+                            resource_category = random.choice(common_list)
+                            resource_found = True
+                
+                # B) Check de Matriz (Si no se asignó en A)
+                if not resource_found:
+                    matrix = biome_data.get('resource_matrix', {})
+                    candidates = []
+                    # Recolectamos candidatos que pasen su chequeo de probabilidad individual
+                    for cat, prob_key in matrix.items():
+                        prob = prob_map.get(prob_key, 0.0)
+                        if random.random() < prob:
+                            candidates.append(cat)
+                    
+                    if candidates:
+                        resource_category = random.choice(candidates)
+                        resource_found = True
+                
+                # Asignación de datos si se encontró recurso
+                if resource_found and resource_category:
+                    sec_type = SECTOR_NAMES_BY_CATEGORY.get(resource_category, SECTOR_TYPE_PLAIN)
+                    
+                    # Check de Lujo (V4.1.3)
+                    if random.random() < 0.2: # 20%
+                        lux_list = LUXURY_RESOURCES_BY_CATEGORY.get(resource_category, [])
+                        if lux_list:
+                            luxury_res = random.choice(lux_list)
+
+                # --- PASO 3: Definición de Sectores Habitables sin Recurso ---
                 else:
                     sec_type = random.choice([SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN])
 
-            sectors.append(Sector(
+            # --- PASO 4: Regla Forzada de Urbanismo ---
+            # Si hay población, el Sector 1 DEBE ser Urbano
+            if planet.population > 0 and sector_index == 1:
+                sec_type = SECTOR_TYPE_URBAN
+                slots = MAX_SLOTS_PER_SECTOR
+                resource_category = None # Limpiamos recurso si se fuerza urbano
+                luxury_res = None
+            
+            # Instanciar Sector
+            # Nota: is_known se deriva de si es Urbano (habitado) o lógica de exploración futura.
+            # Por defecto en generación, solo el urbano inicial suele ser conocido si es el home planet,
+            # pero aquí 'planet.population > 0' suele aplicar a la generación inicial de imperios.
+            # Si es un planeta virgen, is_known=False.
+            is_known = (sec_type == SECTOR_TYPE_URBAN)
+
+            new_sector = Sector(
                 id=sector_id,
                 planet_id=planet.id,
                 type=sec_type,
-                slots=MAX_SLOTS_PER_SECTOR if sec_type != SECTOR_TYPE_INHOSPITABLE else 0,
+                slots=slots,
+                resource_type=resource_category,
+                luxury_resource=luxury_res,
                 is_known=is_known
-            ))
+            )
+            sectors.append(new_sector)
 
         return sectors
 
