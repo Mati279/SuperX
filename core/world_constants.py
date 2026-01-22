@@ -8,6 +8,7 @@ Actualizado v4.3.0: Planetología Avanzada y Subdivisión de Sectores (Refactori
 Actualizado v4.6.0: Refactorización de Capacidad de Sectores (Slots por Tipo).
 Actualizado v4.7.0: Alineación con Reglas Definitivas (Biomas y Nomenclatura).
 Actualizado v4.8.0: Correcciones de Reglas (Habitabilidad, Economía Logarítmica, Pesos).
+Actualizado v4.8.2: Limpieza de constantes de seguridad obsoletas.
 """
 from typing import Dict, List
 
@@ -52,10 +53,6 @@ ORBITAL_ZONE_WEIGHTS = {
     "MEDIA": 3,
     "BAJA": 1
 }
-
-# Modificadores de Seguridad por distancia (Distancia al Sol)
-SECURITY_MOD_INNER = {1: -5, 2: -3}
-SECURITY_MOD_OUTER = {5: -3, 6: -5}
 
 # --- DEFINICIONES DE RECURSOS Y SECTORES (NUEVO V4.3.0) ---
 

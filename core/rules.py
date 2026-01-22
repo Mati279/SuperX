@@ -110,11 +110,11 @@ def calculate_system_control(system_id: int):
 
 def calculate_planet_habitability(planet_id: int) -> int:
     """
-    Determina la habitabilidad final basándose en Bioma y Sectores (V4.3).
-    Aplica penalización por Sectores Inhóspitos sin infraestructura de soporte.
-    Corrección V4.8: Acceso directo a habitability y escalado a 100.
+    Determina la habitabilidad final basándose en Bioma (V4.8.2).
+    Se ha eliminado la penalización por sectores inhóspitos vacíos para simplificar
+    el cálculo y mantener la consistencia con el diseño estático.
     """
-    from data.planet_repository import get_planet_by_id, get_planet_sectors_status
+    from data.planet_repository import get_planet_by_id
     
     planet = get_planet_by_id(planet_id)
     if not planet: return 0
@@ -125,16 +125,8 @@ def calculate_planet_habitability(planet_id: int) -> int:
     base_hab_float = biome_info.get("habitability", 0.0)
     base_hab = int(base_hab_float * 100)
     
-    sectors = get_planet_sectors_status(planet_id)
-    penalty = 0
-    
-    for sec in sectors:
-        # Regla 4.3: Un sector inhóspito vacío penaliza la habitabilidad global
-        if sec["type"] == SECTOR_TYPE_INHOSPITABLE and sec["buildings_count"] == 0:
-            penalty += 15
-            
-    final_habitability = base_hab - penalty
-    return max(-100, min(100, final_habitability))
+    # V4.8.2: Se retorna la habitabilidad base clampada, sin penalizaciones dinámicas de sectores.
+    return max(-100, min(100, base_hab))
 
 # --- REGLAS DE ECONOMÍA (V4.8) ---
 
@@ -164,19 +156,21 @@ def calculate_fiscal_income(rate_base: float, population_billions: float, securi
 
 # --- REGLAS DE SEGURIDAD SISTÉMICA (V4.4) ---
 
-def calculate_planet_security(base_stat: int, pop_count: float, infrastructure_defense: int, orbital_ring: int) -> int:
+def calculate_planet_security(base_stat: int, pop_count: float, infrastructure_defense: int, orbital_ring: int) -> float:
     """
     Calcula el valor de seguridad (Sp) de un planeta.
     Fórmula: Sp = Base + (Pop * 5) + Infra - (2 * Ring)
     Regla: Si Pop == 0 -> Sp = 0.
+    
+    Actualización V4.8.2: Retorna float para precisión decimal.
     """
     if pop_count <= 0:
-        return 0
+        return 0.0
         
     raw_security = base_stat + (pop_count * SECURITY_POP_MULT) + infrastructure_defense - (orbital_ring * RING_PENALTY)
     
-    # Clamping entre 0 y 100
-    return max(0, min(100, int(raw_security)))
+    # Clamping entre 0.0 y 100.0 (Float)
+    return max(0.0, min(100.0, float(raw_security)))
 
 def calculate_and_update_system_security(system_id: int):
     """

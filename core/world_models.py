@@ -3,6 +3,7 @@
 Modelos de datos para el universo de SuperX.
 Define la jerarquía de cuerpos celestes, sectores y estructuras galácticas.
 Actualizado v4.8.1: Eliminación de recursos planetarios (migrados a Sectores).
+Actualizado v4.8.2: Refactorización de Sector (max_slots, resource_category) y validación de tipos.
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, Optional
@@ -13,13 +14,21 @@ class Sector:
     """Modelo que representa un sector dentro de un planeta (V4.2.0)."""
     id: int
     planet_id: int
-    type: str  # 'Urbano', 'Llanura', 'Montañoso', 'Inhospito' (Ahora dinámico en v4.8)
-    slots: int
+    type: str  # 'Urbano', 'Llanura', 'Montañoso', 'Inhospito'
+    max_slots: int # Renombrado de slots a max_slots (V4.8.2)
+    
+    # Campos descriptivos
+    name: str = "Sector Desconocido" # Añadido para consistencia con generador
     
     # Metadata opcional
-    resource_type: Optional[str] = None
+    resource_category: Optional[str] = None # Renombrado de resource_type a resource_category (V4.8.2)
     luxury_resource: Optional[str] = None # V4.3.0: Recurso de lujo específico
+    
+    # Estado de construcción
+    buildings: List[Dict[str, Any]] = field(default_factory=list) # Lista de edificios instalados
     buildings_count: int = 0
+    
+    # Propiedad y Exploración
     explored_by: List[int] = field(default_factory=list) # IDs de jugadores
     owner_id: Optional[int] = None # ID del jugador dueño de la base/puesto
     has_outpost: bool = False
@@ -29,7 +38,8 @@ class Sector:
         return player_id in self.explored_by
 
     def available_slots(self) -> int:
-        return max(0, self.slots - self.buildings_count)
+        # Actualizado para usar max_slots
+        return max(0, self.max_slots - self.buildings_count)
 
 @dataclass
 class CelestialBody:
@@ -84,8 +94,8 @@ class Planet(CelestialBody):
 
     @property
     def total_sector_slots(self) -> int:
-        """Suma de slots de todos los sectores."""
-        return sum(s.slots for s in self.sectors)
+        """Suma de slots de todos los sectores. Actualizado V4.8.2."""
+        return sum(s.max_slots for s in self.sectors)
 
     @property
     def used_sector_slots(self) -> int:
