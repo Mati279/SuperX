@@ -3,6 +3,7 @@
 Mapa Galáctico - Usa datos directamente de la Base de Datos.
 Refactorizado MMFR V2: Indicadores de Seguridad (Ss/Sp), Mantenimiento y Tooltips.
 Actualizado V4.4: Uso de 'systems.security' pre-calculado y desglose.
+Corrección V4.4.1: Manejo seguro de 'maybe_single' para assets inexistentes.
 """
 import json
 import math
@@ -17,7 +18,9 @@ from data.planet_repository import (
     get_base_slots_info,
     upgrade_base_tier,
     upgrade_infrastructure_module,
-    demolish_building
+    demolish_building,
+    get_planet_by_id, # Usamos el repo en lugar de queries directas donde sea posible
+    get_planet_asset
 )
 from data.world_repository import (
     get_all_systems_from_db,
@@ -89,9 +92,14 @@ def _render_player_domains_panel():
             system_info = get_system_by_id(system_id)
             system_name = system_info.get('name', '???') if system_info else "Desconocido"
             
-            # Recuperar seguridad (Priorizar valor centralizado si existe en la memoria, sino usar asset)
-            # En esta vista rapida usamos asset.get('seguridad') que es sincronizado por el tick
-            sp = asset.get('seguridad', 25.0)
+            # Recuperar seguridad: Intentar usar el valor centralizado en 'planets' si es posible,
+            # pero aquí en la lista rápida usamos asset.seguridad por performance, asumiendo sync.
+            # (Si se eliminó la columna 'seguridad' de assets, debemos hacer join o query extra)
+            
+            # Hotfix V4.4: Si la columna 'seguridad' ya no existe en asset, 
+            # necesitamos traerla del planeta o usar un default.
+            sp = asset.get('seguridad', 0.0) 
+            if sp is None: sp = 0.0
 
             c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
             c1.write(f"🏠 **{asset.get('nombre_asentamiento', 'Colonia')}**")
@@ -147,16 +155,17 @@ def _render_system_view():
     
     # Mapa de assets para identificar colonias propias
     player = get_player()
-    my_assets = {}
+    my_assets_ids = set()
     if player:
         try:
+            # Solo necesitamos saber SI tenemos asset
             assets_res = get_supabase().table("planet_assets")\
-                .select("planet_id, seguridad")\
+                .select("planet_id")\
                 .eq("system_id", system_id)\
                 .eq("player_id", player.id)\
                 .execute()
             if assets_res.data:
-                my_assets = {a['planet_id']: a for a in assets_res.data}
+                my_assets_ids = {a['planet_id'] for a in assets_res.data}
         except: pass
 
     for ring in range(1, 10):
@@ -186,7 +195,7 @@ def _render_system_view():
             pl_sec = planet.get('security', 0.0) or 0.0
             info_parts.append(f"🛡️ {pl_sec:.1f}")
             
-            if planet['id'] in my_assets:
+            if planet['id'] in my_assets_ids:
                 info_parts.append("🏳️ Tu Colonia")
             
             c2.caption(" | ".join(info_parts))
@@ -200,20 +209,29 @@ def _render_system_view():
 def _render_planet_view():
     player = get_player()
     planet_id = st.session_state.selected_planet_id
-
+    
+    # --- FIX V4.4.1: Consultas seguras ---
     try:
-        # Traer seguridad centralizada
+        # 1. Planeta (Debe existir, usamos single)
         planet_res = get_supabase().table("planets").select("*").eq("id", planet_id).single().execute()
-        planet = planet_res.data if planet_res else None
+        planet = planet_res.data
         
-        # Intentar obtener asset del jugador
-        asset_res = get_supabase().table("planet_assets").select("*").eq("planet_id", planet_id).eq("player_id", player.id).single().execute()
-        asset = asset_res.data if asset_res else None
+        # 2. Asset (Puede NO existir, usamos maybe_single)
+        asset_res = get_supabase().table("planet_assets")\
+            .select("*")\
+            .eq("planet_id", planet_id)\
+            .eq("player_id", player.id)\
+            .maybe_single()\
+            .execute()
+        asset = asset_res.data # Será None si no existe, sin lanzar error
+        
     except Exception as e:
-        st.error(f"Error de conexión con la Galaxia: {e}")
-        planet, asset = None, None
+        st.error(f"Error recuperando datos del planeta: {e}")
+        if st.button("Volver"): _reset_to_system_view()
+        return
 
     if not planet: 
+        st.error("Planeta no encontrado.")
         if st.button("Regresar"): _reset_to_system_view()
         return
 
@@ -228,7 +246,8 @@ def _render_planet_view():
     real_pop = planet.get('poblacion') or 0.0
     
     # Seguridad Centralizada
-    security_val = planet.get('security', 0.0) or 0.0
+    security_val = planet.get('security', 0.0)
+    if security_val is None: security_val = 0.0
 
     if asset:
         asset_pop = asset.get('poblacion', 0.0)
@@ -247,7 +266,7 @@ def _render_planet_view():
     # Mostrar Desglose (Si hay asset, ya se muestra abajo, sino aqui)
     if not asset and planet.get('security_breakdown'):
         bd = planet.get('security_breakdown')
-        if "text" in bd:
+        if isinstance(bd, dict) and "text" in bd:
              st.caption(f"Cálculo: {bd['text']}")
 
     st.markdown("---")
@@ -263,7 +282,7 @@ def _render_construction_ui(player, planet, planet_asset):
     
     # Mostrar desglose específico aquí
     bd = planet.get('security_breakdown')
-    if bd and "text" in bd:
+    if bd and isinstance(bd, dict) and "text" in bd:
         st.info(f"📊 Desglose Actual: {bd['text']}")
     
     mod_cols = st.columns(2)

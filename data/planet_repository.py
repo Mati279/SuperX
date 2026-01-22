@@ -5,6 +5,7 @@ Gestiona activos planetarios, edificios, recursos y mejoras de base.
 Refactorizado para MMFR V2: Seguridad dinámica (0-100) y Mantenimiento.
 Actualizado v4.3.0: Integración completa de Planetología Avanzada (Sectores).
 Actualizado v4.4.0: Persistencia de Seguridad Galáctica y Desgloses.
+Corrección v4.4.1: Consultas seguras (maybe_single) para assets opcionales.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -38,13 +39,14 @@ def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
 
 def get_planet_asset(planet_id: int, player_id: int) -> Optional[Dict[str, Any]]:
     try:
+        # V4.4.1: Usamos maybe_single() para evitar errores cuando no hay colonia
         response = _get_db().table("planet_assets")\
             .select("*")\
             .eq("planet_id", planet_id)\
             .eq("player_id", player_id)\
-            .single()\
+            .maybe_single()\
             .execute()
-        return response.data if response.data else None
+        return response.data 
     except Exception as e:
         log_event(f"Error obteniendo activo planetario: {e}", player_id, is_error=True)
         return None
