@@ -4,6 +4,7 @@ Vista de Superficie Planetaria.
 Interfaz para la gestión de sectores y construcción de estructuras.
 Implementa la visualización de la Planetología Avanzada (V4.3).
 Actualizado V4.4: Desglose de seguridad transparente.
+Actualizado V4.5: Soporte para Modo Omnisciencia (Debug) y modernización UI.
 """
 
 import streamlit as st
@@ -37,9 +38,19 @@ def render_planet_surface(planet_id: int):
     planet = get_planet_by_id(planet_id)
     asset = get_planet_asset(planet_id, player_id)
     
-    if not planet or not asset:
+    # Validar modo Omnisciencia
+    debug_mode = st.session_state.get("debug_omniscience", False)
+    
+    if not planet:
+        st.error("Datos del planeta no encontrados.")
+        return
+
+    if not asset and not debug_mode:
         st.warning("⚠️ No tienes una colonia establecida en este planeta o los datos no están disponibles.")
         return
+
+    if not asset and debug_mode:
+        st.info("🔭 Modo Omnisciencia Activado: Visualizando superficie sin colonia establecida.")
 
     # 2. Cabecera de Información General
     _render_info_header(planet, asset)
@@ -59,6 +70,10 @@ def _render_info_header(planet: dict, asset: dict):
     with col1:
         biome = planet['biome']
         st.metric("Bioma Planetario", biome)
+        # Métricas adicionales V4.3
+        st.metric("Clase de Masa", planet.get('mass_class', 'Desconocido'))
+        st.metric("Anillo Orbital", planet.get('orbital_ring', 'N/A'))
+        
         # Descripción del bioma desde constantes
         desc = PLANET_BIOMES.get(biome, {}).get("description", "Entorno hostil sin catalogar.")
         st.caption(desc)
@@ -76,8 +91,8 @@ def _render_info_header(planet: dict, asset: dict):
 
     # V4.4: Visualización Transparente de Seguridad
     with col3:
-        # Usamos el valor centralizado en 'planets' como Source of Truth
-        security_val = planet.get('security', asset.get('seguridad', 0.0))
+        # Usamos el valor centralizado en 'planets' como Source of Truth (Asset security es legacy)
+        security_val = planet.get('security', 0.0)
         sec_breakdown = planet.get('security_breakdown') or {}
         
         st.metric("Seguridad (Sp)", f"{security_val:.1f}%", help="Nivel de seguridad fiscal y policial.")
@@ -91,8 +106,11 @@ def _render_info_header(planet: dict, asset: dict):
     
     # Slots Info (Extra row)
     st.divider()
-    slots = get_base_slots_info(asset['id'])
-    st.write(f"**Capacidad de Construcción:** {slots['used']} / {slots['total']} Slots utilizados.")
+    if asset:
+        slots = get_base_slots_info(asset['id'])
+        st.write(f"**Capacidad de Construcción:** {slots['used']} / {slots['total']} Slots utilizados.")
+    else:
+        st.write("**Capacidad de Construcción:** Modo Observador (Sin Colonia)")
 
 
 def _render_sectors_management(planet: dict, asset: dict, player_id: int):
@@ -105,7 +123,9 @@ def _render_sectors_management(planet: dict, asset: dict, player_id: int):
         return
 
     # Obtener edificios para filtrarlos por sector en la visualización
-    buildings = get_planet_buildings(asset['id'])
+    # Si asset es None (Debug), buildings será vacío
+    buildings = get_planet_buildings(asset['id']) if asset else []
+    asset_id = asset['id'] if asset else None
 
     # Crear Grid de Sectores (2 columnas para legibilidad en Streamlit)
     for i in range(0, len(sectors), 2):
@@ -115,7 +135,7 @@ def _render_sectors_management(planet: dict, asset: dict, player_id: int):
         for idx, sector in enumerate(row_sectors):
             with cols[idx]:
                 with st.container(border=True):
-                    _render_sector_card(sector, buildings, asset['id'], player_id)
+                    _render_sector_card(sector, buildings, asset_id, player_id)
 
 
 def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id: int):
@@ -131,6 +151,14 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     
     st.markdown(f"### {icon} {sector['type']} (Sector {sector['id']})")
     
+    # V4.5: Visualización de Recursos
+    res_cat = sector.get('resource_category')
+    lux_res = sector.get('luxury_resource')
+    if res_cat:
+        st.caption(f"Recurso: **{res_cat}**")
+    if lux_res:
+        st.caption(f"💎 Recurso de Lujo: **{lux_res}**")
+
     # Visualización de capacidad del sector
     used = sector['buildings_count']
     total = sector['slots']
@@ -149,16 +177,16 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
             c1, c2 = st.columns([0.8, 0.2])
             c1.write(f"• {name} (Tier {b['building_tier']})")
             
-            # Opción de Demolición
-            if c2.button("🗑️", key=f"dem_{b['id']}", help=f"Demoler {name}"):
+            # Opción de Demolición (Solo si hay asset)
+            if asset_id and c2.button("🗑️", key=f"dem_{b['id']}", help=f"Demoler {name}"):
                 if demolish_building(b['id'], player_id):
                     st.toast(f"Estructura {name} demolida.")
                     st.rerun()
     else:
         st.caption("No hay estructuras en este sector.")
 
-    # Panel de Construcción (Solo si hay slots libres)
-    if used < total:
+    # Panel de Construcción (Solo si hay slots libres y asset existe)
+    if asset_id and used < total:
         with st.expander("🏗️ Construir Estructura"):
             available_types = list(BUILDING_TYPES.keys())
             

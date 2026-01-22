@@ -6,6 +6,7 @@ Actualizado V4.4: Uso de 'systems.security' pre-calculado y desglose.
 Corrección V4.4.1: Manejo seguro de 'maybe_single' para assets inexistentes.
 Corrección V5.0: Fix Mismatch 'population' vs 'poblacion' y Cálculo Dinámico de Seguridad (Ss).
 Refactorizado V5.1: Protecciones 'NoneType' en respuestas de Supabase.
+Actualizado V5.2: Integración con Modo Omnisciencia (Debug).
 """
 import json
 import math
@@ -48,6 +49,11 @@ BIOME_COLORS = {
 
 def show_galaxy_map_page():
     st.title("Mapa de la Galaxia")
+    
+    # Indicador de modo debug
+    if st.session_state.get("debug_omniscience", False):
+        st.caption("🔭 MODO OMNISCIENCIA ACTIVO: Visibilidad total habilitada.")
+        
     _render_player_domains_panel()
     st.markdown("---")
 
@@ -175,6 +181,9 @@ def _render_system_view():
                 my_assets_ids = {a['planet_id'] for a in assets_res.data}
         except: pass
 
+    # Debug check: Si Omnisciencia está activo, asumimos "known" implícitamente
+    is_omni = st.session_state.get("debug_omniscience", False)
+
     for ring in range(1, 10):
         planet = next((p for p in planets if p.get('orbital_ring') == ring), None)
         if not planet: continue
@@ -207,6 +216,7 @@ def _render_system_view():
             
             c2.caption(" | ".join(info_parts))
             
+            # Botón siempre visible, el detalle interno manejará si se puede ver o no la superficie
             if c3.button("Ver Detalles", key=f"pl_det_{planet['id']}"):
                 st.session_state.selected_planet_id = planet['id']
                 st.session_state.map_view = "planet"
@@ -277,16 +287,25 @@ def _render_planet_view():
     else:
         m1.metric("Población (Nativa/Neutral)", f"{real_pop:,.1f}B")
         m2.metric("Seguridad Global", f"{security_val:.1f}/100")
-        m3.write("No colonizado por ti")
+        
+        # Feedback de Omnisciencia
+        if st.session_state.get("debug_omniscience", False):
+            m3.write("🕵️ Modo Omnisciencia")
+        else:
+            m3.write("No colonizado por ti")
         
     # Mostrar Desglose (Si hay asset, ya se muestra abajo, sino aqui)
+    # Si estamos en debug o hay desglose, lo mostramos
     if not asset and planet.get('security_breakdown'):
         bd = planet.get('security_breakdown')
         if isinstance(bd, dict) and "text" in bd:
              st.caption(f"Cálculo: {bd['text']}")
 
     st.markdown("---")
-    if asset: _render_construction_ui(player, planet, asset)
+    if asset: 
+        _render_construction_ui(player, planet, asset)
+    elif st.session_state.get("debug_omniscience", False):
+         st.info("ℹ️ Para ver y gestionar la superficie en Modo Omnisciencia, utiliza la herramienta de Superficie (ui/planet_surface_view). Esta vista es el resumen cartográfico.")
 
 
 def _render_construction_ui(player, planet, planet_asset):
@@ -504,6 +523,10 @@ def _render_interactive_galaxy_map():
     scaled_positions = _scale_positions(systems, canvas_width, canvas_height)
     
     systems_payload = []
+    
+    # Debug: Saber si estamos en modo omnisciencia (aunque aquí renderizamos todo)
+    is_omni = st.session_state.get("debug_omniscience", False)
+    
     for sys in systems:
         if sys['id'] not in scaled_positions: continue
         x, y = scaled_positions[sys['id']]

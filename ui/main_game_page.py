@@ -378,6 +378,9 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         st.markdown("---")
         st.caption("🛠️ DEBUG TOOLS")
 
+        # 1. Toggle de Omnisciencia
+        st.toggle("🔭 Omnisciencia (Debug)", key="debug_omniscience", help="Permite ver todos los sistemas y superficies sin exploración ni colonias.")
+
         if st.button("💰 +5000 Créditos", use_container_width=True):
             if add_player_credits(player.id, 5000):
                 st.toast("✅ 5000 Créditos añadidos")
