@@ -77,6 +77,17 @@ class GalaxyGenerator:
         available_rings = list(range(1, 7))
         random.shuffle(available_rings)
 
+        # Pre-cálculo para identificar el planeta primario antes de generar sectores
+        # Necesitamos saber cuál será el principal para forzar visibilidad de sectores
+        primary_planet_ring = None
+        if is_civilized:
+            # Lógica simplificada de selección de candidato para simulación
+            habitable_rings = [r for r in available_rings if r in [2,3,4]] # Aprox
+            if habitable_rings:
+                primary_planet_ring = random.choice(habitable_rings)
+            else:
+                primary_planet_ring = available_rings[0] # Fallback
+
         # --- FASE 1: Creación Física ---
         for j in range(min(num_planets, len(available_rings))):
             ring = available_rings.pop()
@@ -108,8 +119,16 @@ class GalaxyGenerator:
                 security=0.0 
             )
             
+            # Determinar si este será el planeta primario (civilizado)
+            # Nota: Esto es una aproximación para la generación. La lógica fina está en Fase 2,
+            # pero necesitamos generar sectores ahora.
+            is_primary_candidate = (is_civilized and not planets and new_planet.is_habitable) 
+            # (Simplificación: el primer habitable generado en sistema civilizado asume rol para visibilidad)
+            
             # Generar Sectores Iniciales
-            new_planet.sectors = self._generate_sectors_for_planet(new_planet)
+            # Fix Task 2: Si es sistema civilizado y el planeta es habitable, forzamos visibilidad inicial
+            force_vis = is_civilized and new_planet.is_habitable
+            new_planet.sectors = self._generate_sectors_for_planet(new_planet, force_visible=force_vis)
             
             # Refactor V5.3: Actualizar max_sectors real basado en los sectores viables generados
             new_planet.max_sectors = len(new_planet.sectors)
@@ -122,16 +141,17 @@ class GalaxyGenerator:
             primary_planet = None
             
             if not habitable_candidates:
+                # Si no hay habitables, forzamos uno (Lógica legacy)
                 best_candidate = min(planets, key=lambda p: abs(p.orbital_ring - 3.5))
                 best_candidate.biome = "Templado"
                 best_candidate.is_habitable = True
                 
                 # Regenerar sectores para asegurar habitabilidad forzada
-                # (Temporalmente restauramos el potencial de masa para generar)
                 max_sec = PLANET_MASS_CLASSES[best_candidate.mass_class]
                 best_candidate.max_sectors = max_sec 
                 
-                best_candidate.sectors = self._generate_sectors_for_planet(best_candidate)
+                # Fix Task 2: Al regenerar el planeta forzado, asegurar visibilidad
+                best_candidate.sectors = self._generate_sectors_for_planet(best_candidate, force_visible=True)
                 best_candidate.max_sectors = len(best_candidate.sectors)
                 
                 primary_planet = best_candidate
@@ -158,6 +178,7 @@ class GalaxyGenerator:
                          p.sectors[0].max_slots = SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_URBAN, 2)
                          p.sectors[0].resource_category = None
                          p.sectors[0].luxury_resource = None
+                         # Asegurar que el sector urbano principal sea conocido
                          p.sectors[0].is_known = True
 
 
@@ -186,11 +207,15 @@ class GalaxyGenerator:
                 weights.append(ORBITAL_ZONE_WEIGHTS["BAJA"])
         return random.choices(biomes, weights=weights, k=1)[0]
 
-    def _generate_sectors_for_planet(self, planet: Planet) -> List[Sector]:
+    def _generate_sectors_for_planet(self, planet: Planet, force_visible: bool = False) -> List[Sector]:
         """
         Genera los sectores validando habitabilidad y recursos.
         Refactor V5.3: Solo instancia sectores útiles (habitables o con recursos).
         Descarta sectores inhóspitos vacíos para ahorrar espacio en DB.
+        
+        Args:
+            planet: Objeto planeta.
+            force_visible: Si es True, todos los sectores generados serán conocidos (útil para planetas de inicio).
         """
         sectors = []
         biome_data = PLANET_BIOMES[planet.biome]
@@ -263,6 +288,10 @@ class GalaxyGenerator:
             
             # Solo añadimos el sector si es viable (tiene slots > 0 y tipo válido)
             if is_viable_sector and slots > 0:
+                # Fix Task 2: Lógica de visibilidad mejorada
+                # Es conocido si: Se fuerza visibilidad OR es el primer sector de la lista generada
+                is_known_flag = force_visible or (len(sectors) == 0)
+
                 sectors.append(Sector(
                     id=sector_id,
                     planet_id=planet.id,
@@ -272,7 +301,7 @@ class GalaxyGenerator:
                     luxury_resource=luxury_res,
                     max_slots=slots,
                     buildings=[],
-                    is_known=(len(sectors) == 0) # El primer sector es conocido
+                    is_known=is_known_flag
                 ))
                 
         return sectors
