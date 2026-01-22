@@ -5,6 +5,7 @@ Refactorizado MMFR V2: Indicadores de Seguridad (Ss/Sp), Mantenimiento y Tooltip
 Actualizado V4.4: Uso de 'systems.security' pre-calculado y desglose.
 Corrección V4.4.1: Manejo seguro de 'maybe_single' para assets inexistentes.
 Corrección V4.4.2: Eliminada importación obsoleta de METAL_RESOURCES.
+Corrección V5.0: Fix Mismatch 'population' vs 'poblacion' y Cálculo Dinámico de Seguridad (Ss).
 """
 import json
 import math
@@ -125,15 +126,17 @@ def _render_system_view():
 
     # 1. Obtener planetas
     planets = get_planets_by_system_id(system_id)
-    total_planets = len(planets)
-
-    # V4.4: Usar Seguridad Pre-calculada del Sistema
-    ss = system.get('security', 0.0)
-    if ss is None: ss = 0.0
     
-    # Calcular población total para display
-    total_pop = sum(p.get('poblacion', 0.0) or 0.0 for p in planets)
+    # 2. Calcular Métricas en vivo (Fix V5.0)
+    # Total Población: Usamos 'population' (inglés) no 'poblacion' (español)
+    total_pop = sum(p.get('population', 0.0) or 0.0 for p in planets)
 
+    # Seguridad (Ss): Si es nula en sistema, calculamos promedio de planetas
+    ss = system.get('security')
+    if ss is None: 
+        secs = [p.get('security', 0.0) or 0.0 for p in planets]
+        ss = sum(secs) / len(secs) if secs else 0.0
+    
     st.header(f"Sistema: {system.get('name', 'Desconocido')}")
     
     col_back, col_metrics = st.columns([4, 3])
@@ -182,7 +185,8 @@ def _render_system_view():
             color = BIOME_COLORS.get(biome, "#7ec7ff")
             c2.markdown(f"<span style='color: {color}; font-weight: 700'>{planet['name']}</span>", unsafe_allow_html=True)
             
-            p_pop = planet.get('poblacion') or 0.0
+            # Fix V5.0: Usar 'population'
+            p_pop = planet.get('population') or 0.0
             
             # --- INFO STRING BUILDER ---
             info_parts = []
@@ -245,14 +249,18 @@ def _render_planet_view():
     # DATOS MÉTRICOS (MMFR V2)
     m1, m2, m3 = st.columns(3)
     
-    real_pop = planet.get('poblacion') or 0.0
+    # Fix V5.0: Usar 'population' para el planeta
+    real_pop = planet.get('population') or 0.0
     
     # Seguridad Centralizada
     security_val = planet.get('security', 0.0)
     if security_val is None: security_val = 0.0
 
     if asset:
-        asset_pop = asset.get('poblacion', 0.0)
+        # Asset suele usar 'poblacion' o 'population' dependiendo de la versión del modelo,
+        # pero mantenemos 'poblacion' si viene de la tabla planet_assets antigua, o 'population' si se migró.
+        # Por seguridad revisamos ambas o usamos el modelo.
+        asset_pop = asset.get('poblacion') or asset.get('population') or 0.0
         m1.metric("Población (Ciudadanos)", f"{asset_pop:,.1f}B")
         
         delta_color = "normal" if security_val >= 50 else "inverse" 
@@ -418,22 +426,28 @@ def _render_interactive_galaxy_map():
     starlanes = get_starlanes_from_db()
     if not systems: st.error("No se pudieron cargar los sistemas."); return
 
-    # --- PRE-CÁLCULO DE MÉTRICAS MASIVO (Optimización) ---
+    # --- PRE-CÁLCULO DE MÉTRICAS MASIVO (Fix V5.0) ---
     try:
-        all_planets_data = get_supabase().table("planets").select("id, system_id, poblacion").execute().data
+        # Corregido: Usamos 'population' (inglés) y traemos 'security'
+        all_planets_data = get_supabase().table("planets").select("id, system_id, population, security").execute().data
     except:
         all_planets_data = []
 
-    # Ya no necesitamos hacer el merge manual con assets, usamos system.security
-    system_planet_counts = {}
-    system_total_pop = {}
+    # Diccionario para agrupar estadísticas por Sistema
+    system_stats = {} # {sid: {'pop': 0.0, 'sec_sum': 0.0, 'count': 0}}
     
     for p in all_planets_data:
         sid = p['system_id']
-        pop = p.get('poblacion') or 0.0
+        # Usamos population (campo correcto en DB)
+        pop = p.get('population') or 0.0
+        sec = p.get('security') or 0.0
         
-        system_planet_counts[sid] = system_planet_counts.get(sid, 0) + 1
-        system_total_pop[sid] = system_total_pop.get(sid, 0.0) + pop
+        if sid not in system_stats: 
+            system_stats[sid] = {'pop': 0.0, 'sec_sum': 0.0, 'count': 0}
+            
+        system_stats[sid]['pop'] += pop
+        system_stats[sid]['sec_sum'] += sec
+        system_stats[sid]['count'] += 1
 
     # --- UI DE CONTROL ---
     systems_sorted = sorted(systems, key=lambda s: s.get('id', 0))
@@ -464,9 +478,15 @@ def _render_interactive_galaxy_map():
             if preview_sys:
                 pid = preview_sys['id']
                 
-                # Usar seguridad precalculada
-                sys_ss = preview_sys.get('security', 0.0) or 0.0
-                sys_pop = system_total_pop.get(pid, 0.0)
+                # Obtener estadísticas calculadas
+                stats = system_stats.get(pid, {'pop': 0.0, 'sec_sum': 0.0, 'count': 0})
+                sys_pop = stats['pop']
+                
+                # Calcular Ss (Promedio) si tenemos datos, sino fallback a DB del sistema
+                if stats['count'] > 0:
+                    sys_ss = stats['sec_sum'] / stats['count']
+                else:
+                    sys_ss = preview_sys.get('security', 0.0) or 0.0
                 
                 st.subheader(f"🔭 {preview_sys.get('name', 'Sistema')}")
                 st.write(f"**Población:** {sys_pop:,.1f}B")
@@ -488,8 +508,15 @@ def _render_interactive_galaxy_map():
         base_radius = STAR_SIZES.get(star_class, 7) * star_scale
         
         sid = sys['id']
-        calculated_ss = sys.get('security', 0.0) or 0.0
-        total_pop_real = system_total_pop.get(sid, 0.0)
+        
+        # Calcular valores para el payload JSON (SVG Tooltips)
+        stats = system_stats.get(sid, {'pop': 0.0, 'sec_sum': 0.0, 'count': 0})
+        total_pop_real = stats['pop']
+        
+        if stats['count'] > 0:
+            calculated_ss = stats['sec_sum'] / stats['count']
+        else:
+            calculated_ss = sys.get('security', 0.0) or 0.0
         
         systems_payload.append({
             "id": sys['id'], 
