@@ -7,7 +7,7 @@ from .world_constants import (
     STAR_TYPES, STAR_RARITY_WEIGHTS, PLANET_BIOMES,
     PLANET_MASS_CLASSES, ORBITAL_ZONE_WEIGHTS,
     SECTOR_TYPE_URBAN, SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN, SECTOR_TYPE_INHOSPITABLE,
-    MAX_SLOTS_PER_SECTOR, SECTOR_NAMES_BY_CATEGORY, LUXURY_RESOURCES_BY_CATEGORY,
+    SECTOR_SLOTS_CONFIG, SECTOR_NAMES_BY_CATEGORY, LUXURY_RESOURCES_BY_CATEGORY,
     RESOURCE_PROB_HIGH, RESOURCE_PROB_MEDIUM, RESOURCE_PROB_LOW, RESOURCE_PROB_NONE,
     EMPTY_SYSTEMS_COUNT, WILD_POPULATION_CHANCE, POP_RANGE
 )
@@ -193,6 +193,7 @@ class GalaxyGenerator:
     def _generate_sectors_for_planet(self, planet: Planet) -> List[Sector]:
         """
         Refactorización completa (V4.3.0) - Flujo de 4 Pasos.
+        Actualización V4.6: Asignación dinámica de slots por tipo de sector.
         """
         sectors = []
         biome_data = PLANET_BIOMES[planet.biome]
@@ -213,12 +214,11 @@ class GalaxyGenerator:
             is_physically_habitable = random.random() < biome_habitability
             
             sec_type = SECTOR_TYPE_INHOSPITABLE
-            slots = 0
+            slots = 0 # Valor por defecto para inhóspito
             resource_category = None
             luxury_res = None
             
             if is_physically_habitable:
-                slots = MAX_SLOTS_PER_SECTOR
                 
                 # --- PASO 2: Asignación de Recursos (Solo Habitable) ---
                 resource_found = False
@@ -260,6 +260,10 @@ class GalaxyGenerator:
                 else:
                     sec_type = random.choice([SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN])
 
+                # Asignación de slots basada en la configuración (Llanura 3, Montaña/Recursos 2)
+                # Fallback de seguridad es 2 para habitables desconocidos
+                slots = SECTOR_SLOTS_CONFIG.get(sec_type, 2)
+
             # --- PASO 4: Regla Forzada de Urbanismo ---
             # Si hay población inicial asignada al planeta (ojo: esto se evalúa al generar,
             # si population se asigna después, este check podría fallar en la primera pasada,
@@ -267,7 +271,8 @@ class GalaxyGenerator:
             # En la V4.5, si regeneramos sectores tras forzar bioma, esto aplicará correctamente.
             if planet.population > 0 and sector_index == 1:
                 sec_type = SECTOR_TYPE_URBAN
-                slots = MAX_SLOTS_PER_SECTOR
+                # Asignación de slots para sector urbano (2 según reglas)
+                slots = SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_URBAN, 2)
                 resource_category = None # Limpiamos recurso si se fuerza urbano
                 luxury_res = None
             

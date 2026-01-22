@@ -5,6 +5,7 @@ Incluye recursos, tipos de estrellas y definiciones de edificios/módulos.
 Actualizado v4.1.3: Recurso Datos y Categorías de Lujo.
 Actualizado v4.2.0: Arquitectura de Sectores y Matriz de Probabilidad.
 Actualizado v4.3.0: Planetología Avanzada y Subdivisión de Sectores (Refactorización Completa).
+Actualizado v4.6.0: Refactorización de Capacidad de Sectores (Slots por Tipo).
 """
 from typing import Dict, List
 
@@ -291,13 +292,24 @@ VALID_SECTOR_TYPES = [
     SECTOR_TYPE_INHOSPITABLE
 ]
 
+# Configuración de Slots por Tipo de Sector (V4.6.0)
+# Define la capacidad de construcción según geografía
+SECTOR_SLOTS_CONFIG = {
+    SECTOR_TYPE_PLAIN: 3,        # Llanuras: 3 slots (Máximo)
+    SECTOR_TYPE_MOUNTAIN: 2,     # Montañoso: 2 slots
+    SECTOR_TYPE_URBAN: 2,        # Urbano: 2 slots
+    SECTOR_TYPE_INHOSPITABLE: 0, # Inhóspito: 0 slots
+    # Mapeo dinámico de yacimientos de recursos (Todos 2 slots)
+    **{name: 2 for name in SECTOR_NAMES_BY_CATEGORY.values()}
+}
+
 # Probabilidad de aparición de recursos (Alta, Media, Baja, Nula)
 RESOURCE_CHANCE_HIGH = 0.60
 RESOURCE_CHANCE_MEDIUM = 0.30
 RESOURCE_CHANCE_LOW = 0.10
 RESOURCE_CHANCE_NONE = 0.0
 
-MAX_SLOTS_PER_SECTOR = 3
+# MAX_SLOTS_PER_SECTOR = 3  <-- DEPRECATED: Usar SECTOR_SLOTS_CONFIG
 
 # --- GENERACIÓN DE POBLACIÓN (V4.5) ---
 
