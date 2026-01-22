@@ -1,4 +1,4 @@
-# services/character_generation_service.py
+# services/character_generation_service.py (Completo)
 """
 Servicio de Generación de Personajes con IA.
 Actualizado para Especialización de Personajes de Alto Nivel y Biografías Coherentes.
@@ -6,6 +6,7 @@ Implementa distribución ponderada de atributos y habilidades según la clase.
 Debug v2.4: Implementada reparación de JSON robusta y refuerzo de prompt para escape de comillas.
 Actualizado v5.1.0: Biografía consolidada de 3 niveles y limpieza de campos legacy.
 Actualizado v5.1.6: Soporte para 'initial_knowledge_level' en reclutamiento directo.
+Actualizado v5.2.0: Restricción de Origen a Biomas Habitables y mejora de Lore.
 """
 
 import random
@@ -18,7 +19,7 @@ from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from google.genai import types
 
-from data.database import get_service_container
+from data.database import get_service_container, get_db_connection
 from data.log_repository import log_event
 from data.character_repository import create_character
 from data.planet_repository import get_planet_by_id
@@ -26,6 +27,7 @@ from data.world_repository import get_world_state
 from utils.helpers import clean_json_string, try_repair_json
 
 from core.constants import RACES, CLASSES, SKILL_MAPPING
+from core.world_constants import HABITABLE_BIRTH_BIOMES
 from core.rules import calculate_skills
 from core.models import BiologicalSex, CharacterRole, KnowledgeLevel, CharacterStatus
 from core.character_engine import (
@@ -65,13 +67,14 @@ DATOS TÉCNICOS:
 - Sexo: {sex}
 - Edad: {age} años
 - Personalidad: {traits}
+- Origen: Nacido en {birth_planet} ({birth_biome})
 - Atributos clave: {top_attributes}
 - Especialidades técnicas (Habilidades): {top_skills}
 
 INSTRUCCIONES DE GENERACIÓN (3 NIVELES):
 1. NOMBRE y APELLIDO: Coherentes con la raza.
 2. BIOGRAFIA CORTA (Público - 1 oración): Solo una descripción visual o impresión rápida.
-3. BIO CONOCIDA (Estándar - 40 palabras aprox): Resumen profesional. DEBE reflejar su clase y sus habilidades más altas.
+3. BIO CONOCIDA (Estándar - 40 palabras aprox): Resumen profesional. DEBE mencionar su origen en {birth_planet} y cómo el entorno ({birth_biome}) influyó en sus habilidades.
 4. BIO PROFUNDA (Privado - 60-80 palabras): Secretos, traumas o motivaciones ocultas.
 
 ⚠️ INSTRUCCIÓN ESPECIAL: 'apariencia_visual' (ADN VISUAL) ⚠️
@@ -188,6 +191,55 @@ def _select_class(level: int, force_class: Optional[str] = None) -> tuple[str, D
     return class_name, class_data
 
 
+def _select_birth_planet(preferred_system_id: Optional[str] = None) -> tuple[str, str]:
+    """
+    Selecciona un planeta de origen que cumpla con las condiciones de habitabilidad.
+    Intenta buscar primero en el sistema actual, luego hace un fallback global.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Construir placeholder para la lista de biomas permitidos
+    placeholders = ', '.join(['?'] * len(HABITABLE_BIRTH_BIOMES))
+    
+    try:
+        # 1. Intentar encontrar planeta habitable en el sistema actual
+        if preferred_system_id:
+            query_local = f"""
+                SELECT name, biome 
+                FROM planets 
+                WHERE system_id = ? AND biome IN ({placeholders})
+                ORDER BY RANDOM() LIMIT 1
+            """
+            params = [preferred_system_id] + HABITABLE_BIRTH_BIOMES
+            cursor.execute(query_local, params)
+            result = cursor.fetchone()
+            if result:
+                return result['name'], result['biome']
+        
+        # 2. Fallback: Cualquier planeta habitable de la galaxia
+        query_global = f"""
+            SELECT name, biome 
+            FROM planets 
+            WHERE biome IN ({placeholders})
+            ORDER BY RANDOM() LIMIT 1
+        """
+        cursor.execute(query_global, HABITABLE_BIRTH_BIOMES)
+        result = cursor.fetchone()
+        
+        if result:
+            return result['name'], result['biome']
+            
+        # 3. Fallback Último Recurso (Si no hay planetas generados o solo gaseosos)
+        return "Estación Espacial Nómada", "Artificial"
+        
+    except Exception as e:
+        log_event(f"Error seleccionando planeta de origen: {e}", is_error=True)
+        return "Origen Desconocido", "Misterioso"
+    finally:
+        conn.close()
+
+
 def _calculate_recruitment_cost(stats_json: Dict[str, Any]) -> int:
     try:
         level = stats_json.get("progresion", {}).get("nivel", 1)
@@ -255,7 +307,9 @@ def generate_identity_with_ai_sync(
     age: int,
     traits: List[str],
     attributes: Dict[str, int],
-    skills: Dict[str, int]
+    skills: Dict[str, int],
+    birth_planet: str,
+    birth_biome: str
 ) -> GeneratedIdentity:
     """
     Versión síncrona con logging extendido y manejo de errores legible.
@@ -277,7 +331,9 @@ def generate_identity_with_ai_sync(
         age=age,
         traits=", ".join(traits),
         top_attributes=_get_top_attributes(attributes),
-        top_skills=_get_top_skills(skills)
+        top_skills=_get_top_skills(skills),
+        birth_planet=birth_planet,
+        birth_biome=birth_biome
     )
 
     identity_schema = types.Schema(
@@ -376,6 +432,23 @@ def generate_random_character_with_ai(
     feats = random.sample(AVAILABLE_FEATS, min(num_feats, len(AVAILABLE_FEATS)))
     traits = random.sample(PERSONALITY_TRAITS, k=2)
 
+    # --- SELECCIÓN DE PLANETA DE ORIGEN ---
+    location_system_id = None
+    location_name = "Barracones"
+    system_name = "Desconocido"
+
+    if context.location_planet_id:
+        try:
+            planet_info = get_planet_by_id(context.location_planet_id)
+            if planet_info:
+                location_name = planet_info.get("name", "Base")
+                location_system_id = planet_info.get("system_id")
+                system_name = f"Sistema {location_system_id}"
+        except Exception: pass
+
+    # Determinar planeta de nacimiento válido (Habitable)
+    birth_planet, birth_biome = _select_birth_planet(location_system_id)
+
     identity = generate_identity_with_ai_sync(
         race=race_name,
         char_class=class_name,
@@ -384,7 +457,9 @@ def generate_random_character_with_ai(
         age=age,
         traits=traits,
         attributes=attributes,
-        skills=skills
+        skills=skills,
+        birth_planet=birth_planet,
+        birth_biome=birth_biome
     )
 
     # --- LÓGICA DE RESOLUCIÓN DE COLISIONES ---
@@ -411,16 +486,6 @@ def generate_random_character_with_ai(
         full_name = f"{identity.nombre} {identity.apellido}"
         log_event(f"Character name collision resolved with UUID: {full_name}", context.player_id)
 
-    location = "Barracones"
-    system = "Desconocido"
-    if context.location_planet_id:
-        try:
-            planet = get_planet_by_id(context.location_planet_id)
-            if planet:
-                location = planet.get("name", "Base")
-                system = f"Sistema {planet.get('system_id', 'Desconocido')}"
-        except Exception: pass
-
     stats_json = {
         "bio": {
             "nombre": identity.nombre,
@@ -432,6 +497,10 @@ def generate_random_character_with_ai(
             "bio_conocida": identity.bio_conocida,
             "bio_profunda": identity.bio_profunda,
             "apariencia_visual": identity.apariencia_visual,
+            "origen": {
+                "planeta": birth_planet,
+                "bioma": birth_biome
+            },
             "nivel_acceso": BIO_ACCESS_UNKNOWN,
             "ticks_reclutado": 0,
             "ticks_como_conocido": 0,
@@ -463,8 +532,8 @@ def generate_random_character_with_ai(
         },
         "estado": {
             "estados_activos": ["Disponible"],
-            "sistema_actual": system,
-            "ubicacion_local": location,
+            "sistema_actual": system_name,
+            "ubicacion_local": location_name,
             "rol_asignado": CharacterRole.NONE.value,
             "accion_actual": "Esperando asignación"
         }
@@ -474,7 +543,7 @@ def generate_random_character_with_ai(
         "nombre": full_name,
         "rango": DEFAULT_RANK,
         "estado": "Disponible",
-        "ubicacion": location,
+        "ubicacion": location_name,
         "es_comandante": False,
         "stats_json": stats_json
     }

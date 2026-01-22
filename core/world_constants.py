@@ -9,6 +9,7 @@ Actualizado v4.6.0: Refactorización de Capacidad de Sectores (Slots por Tipo).
 Actualizado v4.7.0: Alineación con Reglas Definitivas (Biomas y Nomenclatura).
 Actualizado v4.8.0: Correcciones de Reglas (Habitabilidad, Economía Logarítmica, Pesos).
 Actualizado v4.8.2: Limpieza de constantes de seguridad obsoletas.
+Actualizado v5.2.0: Definición de Biomas de Nacimiento Habitables.
 """
 from typing import Dict, List
 
@@ -157,6 +158,11 @@ PLANET_BIOMES = {
         "description": "Gigante sin superficie sólida."
     }
 }
+
+# --- REGLA DE NACIMIENTO: BIOMAS HABITABLES ---
+# Define los únicos biomas donde los personajes pueden nacer "naturalmente"
+# Se excluyen Volcánico, Tóxico y Gaseoso por lógica biológica estándar.
+HABITABLE_BIRTH_BIOMES = ["Templado", "Desértico", "Oceánico", "Glacial"]
 
 # --- RECURSOS Y PESOS ---
 
