@@ -16,7 +16,12 @@ from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
 from .prestige_constants import *
+from data.database import get_supabase
+from data.log_repository import log_event
+from data.faction_repository import get_all_factions, update_faction
 
+def _get_db():
+    return get_supabase()
 
 class FactionState(Enum):
     """Estados de poder de una facción."""
@@ -331,80 +336,104 @@ def validate_zero_sum(factions: Dict[int, float], tolerance: float = PRESTIGE_SU
 
 
 # ============================================================
-# UTILIDADES
+# UTILIDADES Y ORQUESTACIÓN (V4.3)
 # ============================================================
 
 def get_top_faction(factions: Dict[int, float]) -> Tuple[int, float]:
-    """
-    Obtiene la facción con mayor prestigio.
-
-    Args:
-        factions: Dict de {faction_id: prestigio}
-
-    Returns:
-        Tuple de (faction_id, prestigio) de la facción líder
-    """
+    """Obtiene la facción con mayor prestigio."""
     if not factions:
         return (0, 0.0)
     return max(factions.items(), key=lambda x: x[1])
 
 
 def calculate_prestige_difference(faction_a: float, faction_b: float) -> float:
-    """
-    Calcula la diferencia de prestigio entre dos facciones.
-
-    Args:
-        faction_a: Prestigio de facción A
-        faction_b: Prestigio de facción B
-
-    Returns:
-        float: Diferencia (positivo si A > B)
-    """
+    """Calcula la diferencia de prestigio entre dos facciones."""
     return faction_a - faction_b
 
 
 def is_near_hegemony(prestige: float, threshold_distance: float = 3.0) -> bool:
-    """
-    Verifica si una facción está cerca del umbral de hegemonía.
-
-    Args:
-        prestige: Prestigio actual
-        threshold_distance: Distancia al umbral (default: 3%)
-
-    Returns:
-        bool: True si está a menos de threshold_distance del 25%
-    """
+    """Verifica si una facción está cerca del umbral de hegemonía."""
     return abs(prestige - HEGEMONY_THRESHOLD) < threshold_distance
 
 
 def get_player_prestige_level(player_id: int) -> float:
     """
     Obtiene el nivel de prestigio actual del jugador desde la base de datos.
-    Esta función actúa como un puente seguro entre el motor de prestigio y la capa de datos.
-
-    Args:
-        player_id: ID del jugador a consultar.
-
-    Returns:
-        float: El valor de prestigio (0.0 a 100.0). Retorna 0.0 si el jugador no existe.
-    
-    Nota:
-        Utiliza importación local para evitar dependencias circulares con `data.player_repository`,
-        ya que el repositorio suele importar constantes de `core`.
     """
     try:
-        # Importación local para prevenir ciclos (core <-> data)
         from data.player_repository import get_player_by_id
         
         player = get_player_by_id(player_id)
         if not player:
             return 0.0
             
-        # Obtenemos 'prestigio'. Si no existe la columna o es None, fallback a 0.0
         return float(player.get("prestigio", 0.0) or 0.0)
         
     except Exception as e:
-        # En caso de error de DB o importación, fallamos seguro a 0 (prestigio neutral/bajo)
-        # Esto evita que el juego crashee si la DB está en mantenimiento
         print(f"Error obteniendo prestigio para {player_id}: {e}")
         return 0.0
+
+# --- PROCESAMIENTO DE CICLO (HEGEMONÍA) ---
+
+def process_hegemony_tick(current_tick: int) -> bool:
+    """
+    Evalúa el estado de hegemonía de todas las facciones.
+    Debe llamarse en cada Tick (Fase 3).
+    
+    Retorna True si alguien ha ganado la partida.
+    """
+    factions_list = get_all_factions()
+    game_over = False
+    
+    for faction in factions_list:
+        f_id = faction['id']
+        prestige = float(faction.get('prestige', 0.0))
+        stats = faction.get('stats_json', {}) or {}
+        
+        # Estado actual
+        is_hegemon = stats.get('is_hegemon', False)
+        hegemony_counter = stats.get('hegemony_counter', HEGEMONY_VICTORY_TICKS)
+        
+        name = faction.get('name', f"Facción {f_id}")
+        updated = False
+        
+        # 1. Check Ascenso (Trigger 25%)
+        if not is_hegemon and prestige >= HEGEMONY_THRESHOLD:
+            is_hegemon = True
+            hegemony_counter = HEGEMONY_VICTORY_TICKS
+            stats['is_hegemon'] = True
+            stats['hegemony_counter'] = hegemony_counter
+            updated = True
+            log_event(f"{LOG_PREFIX_HEGEMONY} ¡LA FACCIÓN {name} HA ASCENDIDO A HEGEMÓN! (Prestigio: {prestige:.1f}%)", f_id)
+            log_event(f"⏳ INICIO DE CUENTA REGRESIVA: {HEGEMONY_VICTORY_TICKS} CICLOS PARA VICTORIA TOTAL.", f_id)
+
+        # 2. Check Mantenimiento / Caída (Buffer 20%)
+        elif is_hegemon:
+            if prestige < HEGEMONY_FALL_THRESHOLD:
+                # Caída
+                is_hegemon = False
+                stats['is_hegemon'] = False
+                stats['hegemony_counter'] = HEGEMONY_VICTORY_TICKS # Reset
+                updated = True
+                log_event(f"{LOG_PREFIX_FALL} {name} ha perdido el estatus de Hegemón. (Prestigio < {HEGEMONY_FALL_THRESHOLD}%)", f_id)
+            else:
+                # Mantenimiento -> Decrementar contador
+                hegemony_counter -= 1
+                stats['hegemony_counter'] = hegemony_counter
+                updated = True
+                
+                # Check Victoria
+                if hegemony_counter <= 0:
+                    log_event(f"{LOG_PREFIX_VICTORY} ¡VICTORIA POR HEGEMONÍA! {name} ha consolidado su poder absoluto.", f_id)
+                    game_over = True
+                else:
+                    if hegemony_counter % 5 == 0 or hegemony_counter <= 5:
+                        log_event(f"⏳ Hegemonía: {name} a {hegemony_counter} ciclos de la victoria.", f_id)
+
+        if updated:
+            update_faction(f_id, {"stats_json": stats})
+            
+        if game_over:
+            break
+            
+    return game_over

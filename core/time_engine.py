@@ -4,7 +4,7 @@ import pytz
 import random
 import time as time_lib  # Para el sleep del backoff
 import logging
-import re # Aseguramos import de re para las regex
+import re 
 
 # Imports del repositorio de mundo
 from data.world_repository import (
@@ -14,7 +14,8 @@ from data.world_repository import (
     get_all_pending_actions,
     mark_action_processed
 )
-from data.player_repository import get_all_players
+from data.player_repository import get_all_players, get_player_credits, update_player_credits
+from data.log_repository import log_event, clear_player_logs
 # Imports para la lógica del MRG (Misiones)
 from data.database import get_supabase
 from data.character_repository import update_character, STATUS_ID_MAP
@@ -26,15 +27,13 @@ def _get_db():
     """Obtiene el cliente de Supabase de forma segura."""
     return get_supabase()
 
-from data.player_repository import get_player_credits, update_player_credits
-from data.log_repository import log_event, clear_player_logs
-
 from core.mrg_engine import resolve_action, ResultType
 # IMPORT NUEVO: Servicio de Eventos Narrativos
 from services.event_service import generate_tick_event
 
-# IMPORT V4.2: Constantes de Prestigio
+# IMPORT V4.3: Constantes de Prestigio y Hegemonía
 from core.prestige_constants import FRICTION_RATE
+from core.prestige_engine import process_hegemony_tick
 
 # Forzamos la zona horaria a Argentina (GMT-3)
 SAFE_TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
@@ -49,7 +48,6 @@ def get_server_time() -> datetime:
 def get_current_tick() -> int:
     """
     Retorna el número de tick actual.
-    Wrapper sobre get_world_state para uso fácil en otros módulos (ej: Mercado).
     """
     state = get_world_state()
     return state.get("current_tick", 1)
@@ -64,7 +62,7 @@ def is_lock_in_window() -> bool:
 def check_and_trigger_tick() -> None:
     """
     Verifica si debemos ejecutar un Tick (Lazy Tick).
-    Implementa Backoff Exponencial para manejar bloqueos de concurrencia [Errno 11].
+    Implementa Backoff Exponencial para manejar bloqueos de concurrencia.
     """
     global _IS_PROCESSING_TICK
     
@@ -75,17 +73,15 @@ def check_and_trigger_tick() -> None:
     today_date_iso = now.date().isoformat()
     
     max_retries = 3
-    retry_delay = 0.5 # Segundos iniciales
+    retry_delay = 0.5
 
     for attempt in range(max_retries):
         try:
-            # Intentamos ejecutar el tick en la DB de forma atómica.
             if try_trigger_db_tick(today_date_iso):
                 _execute_game_logic_tick(now)
-            break # Éxito o ya procesado por otro
+            break 
             
         except BlockingIOError:
-            # Error 11: El recurso está bloqueado por otro proceso/instancia
             if attempt < max_retries - 1:
                 wait = retry_delay * (2 ** attempt) + (random.uniform(0, 0.1))
                 logger.warning(f"Tick detectó recurso ocupado. Reintentando en {wait:.2f}s (Intento {attempt+1})")
@@ -113,7 +109,6 @@ def debug_force_tick() -> None:
 def _execute_game_logic_tick(execution_time: datetime):
     """
     Lógica pesada del juego que ocurre cuando cambia el día.
-    Sigue un flujo lineal estricto para garantizar consistencia de datos.
     """
     global _IS_PROCESSING_TICK
     if _IS_PROCESSING_TICK:
@@ -130,7 +125,6 @@ def _execute_game_logic_tick(execution_time: datetime):
 
         log_event(f"🔄 INICIANDO PROCESAMIENTO DE TICK: {execution_time.isoformat()}")
 
-        # Obtener número de tick actual para referencias
         world_state = get_world_state()
         current_tick = world_state.get('current_tick', 1)
 
@@ -144,8 +138,8 @@ def _execute_game_logic_tick(execution_time: datetime):
         # 2. Resolución de Simultaneidad (Conflictos en el mismo Tick)
         _phase_concurrency_resolution()
 
-        # 3. Fase de Prestigio (Suma Cero)
-        _phase_prestige_calculation()
+        # 3. Fase de Prestigio (Fricción V4.3 y Hegemonía)
+        _phase_prestige_calculation(current_tick)
 
         # 4. Fase Macro económica (MMFR)
         _phase_macroeconomics()
@@ -159,7 +153,7 @@ def _execute_game_logic_tick(execution_time: datetime):
         # 7. Fase de Limpieza y Auditoría
         _phase_cleanup_and_audit()
 
-        # 8. Fase de Progresión de Conocimiento de Personal
+        # 8. Fase de Progresión de Conocimiento de Personal (V4.3)
         _phase_knowledge_progression(current_tick)
 
         duration = (datetime.now() - tick_start).total_seconds()
@@ -272,76 +266,57 @@ def _phase_concurrency_resolution():
             logger.error(f"Error procesando orden diferida {action_id}: {e}")
             mark_action_processed(action_id, "ERROR")
 
-
 def _process_candidate_search(player_id: int, current_tick: int):
-    """
-    Procesa la búsqueda de nuevos candidatos de reclutamiento (ASÍNCRONO).
-    """
+    """Procesa la búsqueda de nuevos candidatos de reclutamiento."""
     from data.recruitment_repository import clear_untracked_candidates
     from services.character_generation_service import generate_character_pool
 
     log_event("🔍 INICIANDO PROCESO DE BÚSQUEDA DE CANDIDATOS...", player_id)
-    logger.info(f"⚡ _process_candidate_search RUNNING (Player {player_id}) - v3 CLEAN FIX")
+    logger.info(f"⚡ _process_candidate_search RUNNING (Player {player_id})")
 
     try:
-        cleared = clear_untracked_candidates(player_id)
-        if cleared > 0:
-            logger.info(f"Limpieza pre-búsqueda: {cleared} candidatos eliminados para player {player_id}")
-
-        log_event("📡 Contactando red de reclutamiento (Generación de perfiles)...", player_id)
-        
+        clear_untracked_candidates(player_id)
         new_candidates = generate_character_pool(
             player_id=player_id,
             pool_size=3,
             location_planet_id=None
         )
 
-        count = len(new_candidates) if new_candidates else 0
-        logger.info(f"generate_character_pool retornó {count} candidatos para player {player_id}")
-
-        if count == 0:
-            log_event("⚠️ ADVERTENCIA: La red de reclutamiento no devolvió candidatos viables. Se han reembolsado los créditos (lógica pendiente) o intente más tarde.", player_id, is_error=True)
-            return
-
         candidates_fixed = 0
-        for char in new_candidates:
-            try:
-                char_id = char.get('id')
-                if not char_id:
-                    continue
+        if new_candidates:
+            for char in new_candidates:
+                try:
+                    char_id = char.get('id')
+                    if not char_id: continue
 
-                stats = char.get("stats_json", {})
-                if "estado" not in stats: stats["estado"] = {}
-                
-                current_loc = stats["estado"].get("ubicacion", {})
-                if isinstance(current_loc, dict):
-                    current_loc["ubicacion_local"] = "Centro de Reclutamiento"
+                    stats = char.get("stats_json", {})
+                    if "estado" not in stats: stats["estado"] = {}
+                    
+                    # Ensure location structure
+                    current_loc = stats["estado"].get("ubicacion", {})
+                    if not isinstance(current_loc, dict):
+                        current_loc = {"ubicacion_local": "Centro de Reclutamiento"}
+                    else:
+                        current_loc["ubicacion_local"] = "Centro de Reclutamiento"
                     stats["estado"]["ubicacion"] = current_loc
-                else:
-                    stats["estado"]["ubicacion"] = {"ubicacion_local": "Centro de Reclutamiento"}
 
-                update_payload = {
-                    "estado_id": STATUS_ID_MAP["Candidato"],
-                    "stats_json": stats
-                }
-                
-                logger.info(f"DEBUG: Updating char {char_id} payload keys: {list(update_payload.keys())}")
-                
-                update_character(char_id, update_payload)
-                candidates_fixed += 1
-            except Exception as inner_e:
-                logger.error(f"Error ajustando estado de candidato {char.get('id')}: {inner_e}")
+                    update_character(char_id, {
+                        "estado_id": STATUS_ID_MAP["Candidato"],
+                        "stats_json": stats
+                    })
+                    candidates_fixed += 1
+                except Exception:
+                    pass
 
-        log_event(f"✅ RECLUTAMIENTO COMPLETADO: {candidates_fixed} nuevos expedientes disponibles en el Centro.", player_id)
+        log_event(f"✅ RECLUTAMIENTO COMPLETADO: {candidates_fixed} nuevos expedientes.", player_id)
 
     except Exception as e:
-        logger.error(f"Error CRÍTICO en búsqueda de candidatos para player {player_id}: {e}", exc_info=True)
-        log_event(f"❌ Error crítico en red de reclutamiento: {str(e)}", player_id, is_error=True)
-        raise e
+        logger.error(f"Error CRÍTICO en búsqueda de candidatos: {e}")
+        log_event(f"❌ Error crítico en red de reclutamiento.", player_id, is_error=True)
 
 
 def _process_investigation(player_id: int, action_text: str):
-    """Procesa una investigación de personaje (candidato o miembro)."""
+    """Procesa una investigación de personaje."""
     from data.character_repository import get_commander_by_player_id, get_character_by_id
     from data.recruitment_repository import get_candidate_by_id
 
@@ -357,11 +332,9 @@ def _process_investigation(player_id: int, action_text: str):
         if id_match: target_id = int(id_match.group(1))
 
         debug_match = re.search(r"debug_outcome=(\w+)", action_text)
-        if debug_match: 
-            debug_outcome = debug_match.group(1)
+        if debug_match: debug_outcome = debug_match.group(1)
 
-        if not target_id:
-            return
+        if not target_id: return
 
         commander = get_commander_by_player_id(player_id)
         if not commander: return
@@ -389,13 +362,10 @@ def _process_investigation(player_id: int, action_text: str):
             target_merit = (target_skills.get("Sigilo físico", 5) + target_skills.get("Infiltración urbana", 5)) // 2 + 40
 
         outcome = "FAIL"
-
         if debug_outcome:
             outcome = debug_outcome
-            log_event(f"🔧 DEBUG: Investigación forzada a resultado {outcome}.", player_id)
         else:
             result = resolve_action(merit_points=cmd_merit, difficulty=target_merit, action_description=f"Investigación sobre {target_name}")
-            
             if result.result_type == ResultType.CRITICAL_SUCCESS: outcome = "CRIT_SUCCESS"
             elif result.result_type in [ResultType.TOTAL_SUCCESS, ResultType.PARTIAL_SUCCESS]: outcome = "SUCCESS"
             elif result.result_type == ResultType.CRITICAL_FAILURE: outcome = "CRIT_FAIL"
@@ -434,29 +404,46 @@ def _apply_member_investigation_result(player_id: int, character_id: int, name: 
     else:
         log_event(f"INTEL: Investigación sobre {name} sin resultados.", player_id)
 
-def _phase_prestige_calculation():
-    """Fase 3: Cálculo y transferencia de Prestigio (V4.2 Friction)."""
-    log_event("running phase 3: Prestigio...")
+def _phase_prestige_calculation(current_tick: int):
+    """
+    Fase 3: Cálculo de Prestigio, Hegemonía y Subsidios (V4.3).
+    """
+    log_event("running phase 3: Prestigio y Hegemonía...")
     try:
         from data.faction_repository import get_all_factions, update_faction_prestige
         factions = get_all_factions()
         if not factions or len(factions) < 2: return
         
-        # Usamos la tasa importada (1.5) convertida a porcentaje
-        friction_pct = FRICTION_RATE / 100.0  # 1.5 -> 0.015
+        # 1. Hegemonía
+        game_over = process_hegemony_tick(current_tick)
+        if game_over:
+            log_event("🏆 JUEGO TERMINADO POR HEGEMONÍA 🏆")
+            # Lógica de fin de juego aquí
         
-        high_factions = [f for f in factions if f.get('prestige', 0) > 20.0]
-        low_factions = [f for f in factions if f.get('prestige', 0) < 5.0]
+        # 2. Fricción Galáctica V4.3: Subsidio de Supervivencia
+        friction_pct = FRICTION_RATE / 100.0  # 1.5% -> 0.015
         
-        if high_factions and low_factions:
-            total_friction = sum(f.get('prestige', 0) * friction_pct for f in high_factions)
-            share_per_low = total_friction / len(low_factions)
+        # Drenaje: Facciones > 20%
+        rich_factions = [f for f in factions if f.get('prestige', 0) > 20.0]
+        # Redistribución: TODAS las otras facciones (<= 20%)
+        # Corrección V4.3: Redistribuir entre TODAS las demás, no solo las <5%.
+        other_factions = [f for f in factions if f.get('prestige', 0) <= 20.0]
+        
+        if rich_factions and other_factions:
+            total_drained = 0.0
             
-            for f in high_factions: 
-                update_faction_prestige(f['id'], f.get('prestige', 0) * (1 - friction_pct))
+            # Aplicar Drenaje
+            for f in rich_factions:
+                amount = f.get('prestige', 0) * friction_pct
+                new_prestige = f.get('prestige', 0) - amount
+                update_faction_prestige(f['id'], new_prestige)
+                total_drained += amount
                 
-            for f in low_factions: 
-                update_faction_prestige(f['id'], f.get('prestige', 0) + share_per_low)
+            # Aplicar Redistribución Equitativa
+            subsidy_per_faction = total_drained / len(other_factions)
+            for f in other_factions:
+                new_prestige = f.get('prestige', 0) + subsidy_per_faction
+                update_faction_prestige(f['id'], new_prestige)
                 
     except Exception as e:
         logger.error(f"Error en fase de prestigio: {e}")
@@ -515,16 +502,12 @@ def _phase_mission_resolution():
                 reward = int(mission_data.get('reward', 200) * (0.75 if result.result_type == ResultType.PARTIAL_SUCCESS else 1.1))
                 update_player_credits(player_id, get_player_credits(player_id) + reward)
                 msg = f"✅ ÉXITO: {char['nombre']} completó misión. Recompensa: {reward} C."
-                status_id = STATUS_ID_MAP["Disponible"]
-                loc_local = "Barracones"
             else:
                 if result.result_type == ResultType.CRITICAL_FAILURE:
                     status_id = STATUS_ID_MAP["Herido"]
                     loc_local = "Enfermería"
                     msg = f"❌ FRACASO: {char['nombre']} falló la misión. Sufrió heridas graves."
                 else:
-                    status_id = STATUS_ID_MAP["Disponible"]
-                    loc_local = "Barracones"
                     msg = f"❌ FRACASO: {char['nombre']} falló la misión."
             
             if 'active_mission' in stats: del stats['active_mission']
@@ -556,7 +539,7 @@ def _phase_cleanup_and_audit():
         logger.error(f"Error en limpieza: {e}")
 
 def _phase_knowledge_progression(current_tick: int):
-    """Fase 8: Progresión de Conocimiento Pasivo."""
+    """Fase 8: Progresión de Conocimiento Pasivo (V4.3)."""
     log_event("running phase 8: Progresión de Conocimiento...")
     try:
         from core.character_engine import process_passive_knowledge_updates

@@ -5,6 +5,7 @@ Define las estructuras de datos centrales del juego usando Pydantic
 para garantizar validación y serialización consistente.
 Refactorizado para cumplir con el esquema V2 Híbrido (SQL + JSON).
 Actualizado v5.1.4: Estandarización de IDs de Roles (Fix Error 22P02).
+Actualizado V4.3: Enums de Conocimiento y Secretos.
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -51,17 +52,17 @@ class CharacterRole(str, Enum):
 
 
 class KnowledgeLevel(str, Enum):
-    """Niveles de conocimiento sobre un personaje."""
-    UNKNOWN = "desconocido"     # Bio superficial (biografia_corta), sin rasgos de personalidad
-    KNOWN = "conocido"          # Bio conocida + rasgos de personalidad
-    FRIEND = "amigo"            # Bio profunda + secreto revelado
+    """Niveles de conocimiento sobre un personaje (V4.3)."""
+    UNKNOWN = "unknown"     # Bio superficial
+    KNOWN = "known"         # Bio conocida + rasgos
+    FRIEND = "friend"       # Bio profunda + secreto revelado
 
 
 class SecretType(str, Enum):
-    """Tipos de secretos revelables al alcanzar nivel 'amigo'."""
-    PROFESSIONAL = "profesional"  # +XP fijo (mejor entrenamiento)
-    PERSONAL = "personal"         # +2 Voluntad (se siente parte del equipo)
-    CRITICAL = "critico"          # Misión personal (desarrollo futuro)
+    """Tipos de secretos revelables al alcanzar nivel 'amigo' (V4.3)."""
+    PROFESSIONAL = "profesional"  # +XP fijo
+    PERSONAL = "personal"         # +2 Voluntad
+    CRITICAL = "critico"          # Misión personal
 
 class MarketOrderStatus(str, Enum):
     """Estados de una orden de mercado."""
@@ -83,6 +84,9 @@ class CharacterBio(BaseModel):
     biografia_corta: str = Field(default="Sin biografía registrada.")
     bio_conocida: str = Field(default="Sin información adicional disponible.")
     bio_profunda: str = Field(default="Sin secretos registrados.")
+    
+    # Control de acceso interno (Legacy/JSON)
+    nivel_acceso: str = Field(default="unknown")
     
     apariencia_visual: Optional[str] = Field(
         default=None, 
@@ -125,7 +129,8 @@ class CharacterBehavior(BaseModel):
     """Perfiles de Comportamiento y Capas Sociales."""
     rasgos_personalidad: List[str] = Field(default_factory=list)
     relaciones: List[Dict[str, Any]] = Field(default_factory=list) # Lista de nodos de relación
-    lealtad: int = Field(default=50, ge=0, le=100) # Inyectado desde SQL
+    lealtad: int = Field(default=5, ge=0, le=100) # Inyectado desde SQL
+    mision_personal_disponible: bool = False
 
 class CharacterLogistics(BaseModel):
     """Logística y Equipamiento."""

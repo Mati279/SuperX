@@ -2,6 +2,7 @@
 """
 Motor de Personajes - Gestión de conocimiento, progresión y biografías.
 Refactorizado para Esquema Híbrido (SQL + JSON).
+Actualizado V4.3: Sistema de Niveles de Conocimiento (Unknown -> Known -> Friend).
 """
 from typing import Dict, Any, Tuple, List, Optional
 import random
@@ -17,16 +18,18 @@ from core.constants import (
     MAX_ATTRIBUTE_VALUE,
     PERSONALITY_TRAITS
 )
-from core.rules import calculate_passive_knowledge_progress
 from core.models import KnowledgeLevel, SecretType
 from data.log_repository import log_event
 
 
 # --- Constantes de Nivel de Acceso a Biografía ---
-BIO_ACCESS_UNKNOWN = "desconocido"
-BIO_ACCESS_KNOWN = "conocido"
-BIO_ACCESS_DEEP = "profundo"
+BIO_ACCESS_UNKNOWN = "unknown"
+BIO_ACCESS_KNOWN = "known"
+BIO_ACCESS_DEEP = "deep"
 
+# --- Constantes de Progresión V4.3 ---
+TICKS_REQ_KNOWN_BASE = 20
+TICKS_REQ_FRIEND_BASE = 50
 
 # --- Funciones de XP y Progresión ---
 
@@ -268,18 +271,19 @@ def update_character_access_level(
     return result is not None
 
 
-# --- Función Principal de Progresión Pasiva ---
+# --- Función Principal de Progresión Pasiva (V4.3) ---
 
 def process_passive_knowledge_updates(player_id: int, current_tick: int) -> List[str]:
     """
     Se ejecuta cada Tick. Revisa todos los personajes de la facción.
-    Aplica la fórmula dinámica basada en Presencia.
+    Aplica la fórmula dinámica basada en Presencia para subir nivel.
     Revela secretos al alcanzar nivel FRIEND.
     """
     from data.character_repository import (
         get_all_player_characters,
         set_character_knowledge_level,
-        get_character_knowledge_level
+        get_character_knowledge_level,
+        update_character
     )
 
     updates_log = []
@@ -292,59 +296,81 @@ def process_passive_knowledge_updates(player_id: int, current_tick: int) -> List
             continue
 
         char_id = char["id"]
+        # Obtener nivel actual desde DB o stats
         current_level_enum = get_character_knowledge_level(char_id, player_id)
 
-        # Si ya es FRIEND, no hay más progreso
+        # Si ya es FRIEND, no hay más progreso pasivo
         if current_level_enum == KnowledgeLevel.FRIEND:
             continue
-
-        # Obtener ticks en servicio
-        # PREFERENCIA: Columna SQL recruited_at_tick
-        recruited_tick = char.get("recruited_at_tick", current_tick)
-        if recruited_tick is None: 
-             recruited_tick = current_tick
-             
-        ticks_in_service = max(0, current_tick - recruited_tick)
-
-        # Obtener atributos (estructura V2 o legacy)
+            
+        # Extraer Stats y Atributos
         stats = char.get("stats_json", {})
         attributes = {}
         if "capacidades" in stats and "atributos" in stats["capacidades"]:
             attributes = stats["capacidades"]["atributos"]
         elif "atributos" in stats:
             attributes = stats["atributos"]
+            
+        presence = attributes.get('presencia', 10) # Default 10
 
-        # Calcular nuevo nivel
-        new_level_enum, progress_pct = calculate_passive_knowledge_progress(
-            ticks_in_service,
-            current_level_enum,
-            attributes
-        )
+        # Obtener progreso acumulado
+        progress_ticks = stats.get('knowledge_progress_ticks', 0)
+        progress_ticks += 1
+        stats['knowledge_progress_ticks'] = progress_ticks
+        
+        new_level = None
 
-        # Si hay cambio de nivel
-        if new_level_enum != current_level_enum:
-            success = set_character_knowledge_level(char_id, player_id, new_level_enum)
+        # --- LÓGICA DE TRANSICIÓN V4.3 ---
+        
+        # 1. UNKNOWN -> KNOWN
+        if current_level_enum == KnowledgeLevel.UNKNOWN:
+            # Fórmula: Base (20) - (Presencia - 10)
+            # Presencia 15 (+5) -> Req = 20 - 5 = 15.
+            # Presencia 5 (-5) -> Req = 20 - (-5) = 25.
+            req_ticks = TICKS_REQ_KNOWN_BASE - (presence - 10)
+            req_ticks = max(5, req_ticks) # Seguridad
+            
+            if progress_ticks >= req_ticks:
+                new_level = KnowledgeLevel.KNOWN
+                # Generar bio_conocida si no existe
+                if 'bio_conocida' not in stats.get('bio', {}):
+                    if 'bio' not in stats: stats['bio'] = {}
+                    stats['bio']['bio_conocida'] = "Biografía detallada generada por IA."
+
+        # 2. KNOWN -> FRIEND
+        elif current_level_enum == KnowledgeLevel.KNOWN:
+            # Fórmula: Base (50) + Penalización si Presencia < 10
+            penalty = max(0, 10 - presence)
+            req_ticks = TICKS_REQ_FRIEND_BASE + penalty
+            
+            if progress_ticks >= req_ticks:
+                new_level = KnowledgeLevel.FRIEND
+
+        # --- APLICAR CAMBIOS ---
+        if new_level:
+            char_name = char.get("nombre", "Unidad")
+            
+            # Resetear contador para el nuevo nivel
+            stats['knowledge_progress_ticks'] = 0
+            
+            # Actualizar DB
+            update_character(char_id, {"stats_json": stats})
+            success = set_character_knowledge_level(char_id, player_id, new_level)
+            
             if success:
-                char_name = char.get("nombre", "Unidad")
-
-                if new_level_enum == KnowledgeLevel.KNOWN:
+                if new_level == KnowledgeLevel.KNOWN:
                     msg = f"ℹ️ Conocimiento actualizado: Has pasado suficiente tiempo con **{char_name}** para conocer sus capacidades."
                     updates_log.append(msg)
                     log_event(msg, player_id)
-
-                    # Actualizar nivel_acceso interno (JSON)
                     update_character_access_level(char_id, BIO_ACCESS_KNOWN)
 
-                elif new_level_enum == KnowledgeLevel.FRIEND:
+                elif new_level == KnowledgeLevel.FRIEND:
                     msg = f"🤝 Vínculo fortalecido: **{char_name}** ahora confía plenamente en ti."
                     updates_log.append(msg)
                     log_event(msg, player_id)
-
-                    # Actualizar nivel_acceso interno (JSON)
                     update_character_access_level(char_id, BIO_ACCESS_DEEP)
 
                     # Revelar secreto
-                    # FIX: Pasamos 'char' completo para acceder a cols SQL
                     secret_type, secret_msg, _ = reveal_secret_on_friend(
                         char_id,
                         player_id,
@@ -352,5 +378,8 @@ def process_passive_knowledge_updates(player_id: int, current_tick: int) -> List
                     )
                     updates_log.append(secret_msg)
                     log_event(secret_msg, player_id)
+        else:
+            # Solo actualizar contador de progreso en DB
+            update_character(char_id, {"stats_json": stats})
 
     return updates_log

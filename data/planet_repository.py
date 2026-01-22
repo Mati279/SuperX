@@ -1,4 +1,4 @@
-# data/planet_repository.py
+# data/planet_repository.py (Completo)
 """
 Repositorio de Planetas y Edificios.
 Gestiona activos planetarios, edificios, recursos y mejoras de base.
@@ -417,4 +417,43 @@ def update_planet_asset(planet_asset_id: int, updates: Dict[str, Any]) -> bool:
         return True
     except Exception as e:
         log_event(f"Error actualizando activo {planet_asset_id}: {e}", is_error=True)
+        return False
+
+# --- V4.3: CONTROL DEL SISTEMA ESTELAR ---
+
+def check_system_majority_control(system_id: int, faction_id: int) -> bool:
+    """
+    Verifica si una facción tiene 'Control de Sistema' según V4.3.
+    Regla: Poseer > 50% de los planetas habitados/habitables del sistema.
+    """
+    try:
+        db = _get_db()
+        
+        # 1. Contar total de planetas relevantes en el sistema
+        all_planets_res = db.table("planets").select("id").eq("system_id", system_id).execute()
+        all_planets = all_planets_res.data if all_planets_res.data else []
+        total_planets = len(all_planets)
+        
+        if total_planets == 0:
+            return False
+            
+        # 2. Contar planetas controlados por la facción (Jugador/Facción)
+        # Verificamos planetas donde 'surface_owner_id' coincida con la facción (o player asociado)
+        # Nota: Asumimos que faction_id es equivalente a player_id para propiedad directa
+        # o que hay lógica de alianza. Para simplificar, usamos surface_owner_id.
+        
+        my_planets_res = db.table("planets").select("id")\
+            .eq("system_id", system_id)\
+            .eq("surface_owner_id", faction_id)\
+            .execute()
+            
+        my_count = len(my_planets_res.data) if my_planets_res.data else 0
+        
+        # 3. Verificar mayoría simple (> 50%)
+        has_majority = my_count > (total_planets / 2.0)
+        
+        return has_majority
+
+    except Exception as e:
+        print(f"Error checking system control: {e}")
         return False
