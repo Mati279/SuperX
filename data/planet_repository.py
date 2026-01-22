@@ -22,6 +22,7 @@ from .database import get_supabase
 from .log_repository import log_event
 from .world_repository import get_world_state
 from core.world_constants import BUILDING_TYPES, BASE_TIER_COSTS, ECONOMY_RATES
+from core.rules import calculate_planet_security
 
 
 def _get_db():
@@ -38,7 +39,7 @@ def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
     """
     try:
         response = _get_db().table("planets")\
-            .select("id, name, system_id, biome, mass_class, orbital_ring, is_habitable, surface_owner_id, orbital_owner_id, is_disputed, security, population, security_breakdown")\
+            .select("id, name, system_id, biome, mass_class, orbital_ring, is_habitable, surface_owner_id, orbital_owner_id, is_disputed, security, population, security_breakdown, base_defense")\
             .eq("id", planet_id)\
             .single()\
             .execute()
@@ -172,16 +173,29 @@ def create_planet_asset(
 ) -> Optional[Dict[str, Any]]:
     """Crea una colonia con seguridad inicial basada en población."""
     try:
+        db = _get_db()
         existing_assets = get_all_player_planets(player_id)
         if not existing_assets:
+            # Boost para la primera colonia
             initial_population = random.uniform(1.5, 1.7)
 
-        base_sec = ECONOMY_RATES.get("security_base", 25.0)
-        per_pop = ECONOMY_RATES.get("security_per_1b_pop", 5.0)
+        # --- FIX SEGURIDAD (V5.9) ---
+        # Obtener datos reales del planeta para calcular seguridad correcta
+        planet_data = get_planet_by_id(planet_id)
         
-        pop_bonus = initial_population * per_pop
-        initial_security = base_sec + pop_bonus
-        initial_security = max(1.0, min(initial_security, 100.0))
+        initial_security = 20.0 # Fallback seguro
+        if planet_data:
+            base_def = planet_data.get("base_defense", 10) or 10
+            ring = planet_data.get("orbital_ring", 3) or 3
+            
+            # Usamos la regla centralizada con flag de propiedad
+            initial_security = calculate_planet_security(
+                base_stat=base_def,
+                pop_count=initial_population,
+                infrastructure_defense=0,
+                orbital_ring=ring,
+                is_player_owned=True 
+            )
 
         asset_data = {
             "planet_id": planet_id,
@@ -196,17 +210,33 @@ def create_planet_asset(
             "base_tier": 1
         }
         
-        response = _get_db().table("planet_assets").insert(asset_data).execute()
+        response = db.table("planet_assets").insert(asset_data).execute()
         
         if response and response.data:
             # Sincronizar tabla PLANETS
-            # FIX V5.8: Uso estricto de population
-            _get_db().table("planets").update({
+            db.table("planets").update({
                 "surface_owner_id": player_id,
                 "security": initial_security,
                 "population": initial_population
             }).eq("id", planet_id).execute()
             
+            # --- FAIL-SAFE DE SECTORES (V5.9) ---
+            # Verificar si existen sectores. Si no, crear uno de emergencia.
+            sectors_check = db.table("sectors").select("id").eq("planet_id", planet_id).execute()
+            if not sectors_check.data:
+                # Crear sector de emergencia
+                emergency_sector = {
+                    "id": (planet_id * 1000) + 1,
+                    "planet_id": planet_id,
+                    "name": "Sector Urbano (Emergencia)",
+                    "type": "Urbano",
+                    "max_slots": 5,
+                    "buildings_count": 0,
+                    "is_known": True
+                }
+                db.table("sectors").insert(emergency_sector).execute()
+                log_event(f"Sector de emergencia creado para {planet_id}", player_id, is_error=True)
+
             log_event(f"Planeta colonizado: {settlement_name} (Seguridad inicial: {initial_security:.1f})", player_id)
             return response.data[0]
         return None

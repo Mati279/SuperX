@@ -59,7 +59,7 @@ def render_planet_surface(planet_id: int):
     st.divider()
 
     # 3. Grid de Sectores y Gestión de Edificios
-    _render_sectors_management(planet, asset, player_id)
+    _render_sectors_management(planet, asset, player_id, debug_mode)
 
 
 def _render_info_header(planet: dict, asset: dict):
@@ -109,11 +109,15 @@ def _render_info_header(planet: dict, asset: dict):
         st.write("**Capacidad de Construcción:** Modo Observador (Sin Colonia)")
 
 
-def _render_sectors_management(planet: dict, asset: dict, player_id: int):
+def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_mode: bool):
     """Renderiza el grid de sectores y sus opciones interactivas."""
     st.subheader("Distribución de Sectores")
     
     sectors = get_planet_sectors_status(planet['id'])
+    
+    if debug_mode:
+        st.info(f"🐛 Debug Sectores: Encontrados {len(sectors)} registros en DB para PlanetID {planet['id']}")
+
     if not sectors:
         st.info("🛰️ No se han detectado sectores. El escaneo de superficie podría estar incompleto.")
         return
