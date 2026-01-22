@@ -8,6 +8,7 @@ Actualizado v4.4.0: Persistencia de Seguridad Galáctica.
 Corrección v4.4.1: Consultas seguras (maybe_single) para assets opcionales.
 Actualizado v4.7.0: Estandarización de Capitales (Población Inicial).
 Actualizado v4.8.1: Eliminación definitiva de 'security_breakdown' para sincronización con DB.
+Refactorizado v5.3: Limpieza de redundancia 'slots' en Planeta.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -28,6 +29,7 @@ def _get_db():
 def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
     """Obtiene información de un planeta de la tabla mundial 'planets'."""
     try:
+        # V5.3: Eliminado 'slots' de cualquier select a nivel planeta
         # V4.8.1: Eliminado 'security_breakdown' del select
         response = _get_db().table("planets")\
             .select("id, name, system_id, biome, mass_class, orbital_ring, is_habitable, surface_owner_id, orbital_owner_id, is_disputed, security")\

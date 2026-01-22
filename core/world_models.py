@@ -4,6 +4,7 @@ Modelos de datos para el universo de SuperX.
 Define la jerarquía de cuerpos celestes, sectores y estructuras galácticas.
 Actualizado v4.8.1: Eliminación de recursos planetarios (migrados a Sectores).
 Actualizado v4.8.2: Refactorización de Sector (max_slots, resource_category) y validación de tipos.
+Refactorizado v5.3: Limpieza de redundancia 'slots' en Planeta. Fuente de verdad: total_sector_slots.
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, Optional
@@ -61,7 +62,7 @@ class Planet(CelestialBody):
     system_id: int = 0
     biome: str = "Desconocido"
     is_habitable: bool = False
-    slots: int = 0
+    # Refactor V5.3: Eliminado 'slots' redundante.
     # resources: Dict[str, float] eliminado en v4.8.1 - Ahora gestionado por Sector
     
     # --- Actualización V4.3.0: Planetología Avanzada ---

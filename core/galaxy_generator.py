@@ -85,7 +85,7 @@ class GalaxyGenerator:
             mass_types = list(PLANET_MASS_CLASSES.keys())
             mass_weights = [0.20, 0.50, 0.20, 0.10]
             chosen_mass = random.choices(mass_types, weights=mass_weights, k=1)[0]
-            max_sectors = PLANET_MASS_CLASSES[chosen_mass]
+            max_sectors_potential = PLANET_MASS_CLASSES[chosen_mass]
             
             # Bioma
             biome = self._select_biome_by_ring(ring)
@@ -102,7 +102,7 @@ class GalaxyGenerator:
                 is_habitable=PLANET_BIOMES[biome].get('habitability', 0) > 0.4, 
                 orbital_ring=ring,
                 mass_class=chosen_mass,
-                max_sectors=max_sectors,
+                max_sectors=max_sectors_potential, # Inicialmente potencial
                 base_defense=base_defense,
                 population=0.0,
                 security=0.0 
@@ -110,6 +110,10 @@ class GalaxyGenerator:
             
             # Generar Sectores Iniciales
             new_planet.sectors = self._generate_sectors_for_planet(new_planet)
+            
+            # Refactor V5.3: Actualizar max_sectors real basado en los sectores viables generados
+            new_planet.max_sectors = len(new_planet.sectors)
+            
             planets.append(new_planet)
 
         # --- FASE 2: Población y Civilización ---
@@ -121,7 +125,15 @@ class GalaxyGenerator:
                 best_candidate = min(planets, key=lambda p: abs(p.orbital_ring - 3.5))
                 best_candidate.biome = "Templado"
                 best_candidate.is_habitable = True
+                
+                # Regenerar sectores para asegurar habitabilidad forzada
+                # (Temporalmente restauramos el potencial de masa para generar)
+                max_sec = PLANET_MASS_CLASSES[best_candidate.mass_class]
+                best_candidate.max_sectors = max_sec 
+                
                 best_candidate.sectors = self._generate_sectors_for_planet(best_candidate)
+                best_candidate.max_sectors = len(best_candidate.sectors)
+                
                 primary_planet = best_candidate
             else:
                 primary_planet = random.choice(habitable_candidates)
@@ -137,6 +149,17 @@ class GalaxyGenerator:
                 if should_populate:
                     # Rango Natural Unificado: 1.0 - 10.0 Billones
                     p.population = round(random.uniform(1.0, 10.0), 2)
+                    
+                    # Garantizar sector urbano si hay población
+                    # Verificar si ya existe sector urbano, si no, transformar el primero
+                    has_urban = any(s.type == SECTOR_TYPE_URBAN for s in p.sectors)
+                    if not has_urban and p.sectors:
+                         p.sectors[0].type = SECTOR_TYPE_URBAN
+                         p.sectors[0].max_slots = SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_URBAN, 2)
+                         p.sectors[0].resource_category = None
+                         p.sectors[0].luxury_resource = None
+                         p.sectors[0].is_known = True
+
 
         # --- FASE 3: Seguridad ---
         for p in planets:
@@ -164,30 +187,38 @@ class GalaxyGenerator:
         return random.choices(biomes, weights=weights, k=1)[0]
 
     def _generate_sectors_for_planet(self, planet: Planet) -> List[Sector]:
-        """Genera los sectores con recursos, habitabilidad y lógica de slots."""
+        """
+        Genera los sectores validando habitabilidad y recursos.
+        Refactor V5.3: Solo instancia sectores útiles (habitables o con recursos).
+        Descarta sectores inhóspitos vacíos para ahorrar espacio en DB.
+        """
         sectors = []
         biome_data = PLANET_BIOMES[planet.biome]
         biome_habitability = biome_data.get('habitability', 0.0)
         prob_map = {"ALTA": RESOURCE_PROB_HIGH, "MEDIA": RESOURCE_PROB_MEDIUM, "BAJA": RESOURCE_PROB_LOW, "NULA": RESOURCE_PROB_NONE}
-        generated_habitable_count = 0
-
+        
+        # Iteramos sobre el potencial físico del planeta (max_sectors)
         for k in range(planet.max_sectors):
             sector_index = k + 1
             sector_id = (planet.id * 1000) + sector_index
             
-            # Habitabilidad física
+            # Probabilidad de ser sector útil (habitable o con recursos explotables)
+            is_viable_sector = False
+            
+            # 1. Check de Habitabilidad Física (para construir)
             is_physically_habitable = random.random() < biome_habitability
-            # Garantía para el último sector
-            if planet.biome != "Gaseoso" and k == (planet.max_sectors - 1) and generated_habitable_count == 0:
-                is_physically_habitable = True
-
-            sec_type = SECTOR_TYPE_INHOSPITABLE
+            
+            # Garantía para el último sector si no hay ninguno habitable en planetas no gaseosos
+            if planet.biome != "Gaseoso" and k == (planet.max_sectors - 1) and not sectors:
+                 is_physically_habitable = True
+            
+            sec_type = None
             slots = 0
             resource_category = None
             luxury_res = None
             
             if is_physically_habitable:
-                generated_habitable_count += 1
+                is_viable_sector = True
                 resource_found = False
                 
                 # Check de Anillo
@@ -218,28 +249,32 @@ class GalaxyGenerator:
                     sec_type = random.choice([SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN])
 
                 slots = SECTOR_SLOTS_CONFIG.get(sec_type, 2)
-            else:
-                sec_type = INHOSPITABLE_BIOME_NAMES.get(planet.biome, SECTOR_TYPE_INHOSPITABLE)
-                slots = SECTOR_SLOTS_CONFIG.get(sec_type, 0)
-
-            # Regla de Urbanismo Forzado
-            if planet.population > 0 and sector_index == 1:
+            
+            # Si NO es físicamente habitable, ¿tiene recursos extremos? (Futuro: Minería en zonas hostiles)
+            # Por ahora, si no es habitable, lo consideramos "Inhóspito vacío" y lo descartamos 
+            # salvo que la lógica cambie.
+            
+            # Regla de Urbanismo Forzado (Solo si ya se determinó población antes, o es el primer sector viable)
+            if planet.population > 0 and not sectors and is_viable_sector:
                 sec_type = SECTOR_TYPE_URBAN
                 slots = SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_URBAN, 2)
                 resource_category = None
                 luxury_res = None
             
-            sectors.append(Sector(
-                id=sector_id,
-                planet_id=planet.id,
-                name=f"Sector {sector_index}",
-                type=sec_type,
-                resource_category=resource_category,
-                luxury_resource=luxury_res,
-                max_slots=slots,
-                buildings=[],
-                is_known=sector_index == 1
-            ))
+            # Solo añadimos el sector si es viable (tiene slots > 0 y tipo válido)
+            if is_viable_sector and slots > 0:
+                sectors.append(Sector(
+                    id=sector_id,
+                    planet_id=planet.id,
+                    name=f"Sector {len(sectors) + 1}", # Renombrar secuencialmente
+                    type=sec_type,
+                    resource_category=resource_category,
+                    luxury_resource=luxury_res,
+                    max_slots=slots,
+                    buildings=[],
+                    is_known=(len(sectors) == 0) # El primer sector es conocido
+                ))
+                
         return sectors
 
     def _generate_starlanes(self):
