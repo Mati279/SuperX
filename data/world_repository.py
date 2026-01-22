@@ -13,7 +13,9 @@ def get_world_state() -> Dict[str, Any]:
     """Obtiene el estado actual del mundo (ticks, freeze)."""
     try:
         response = _get_db().table("world_state").select("*").single().execute()
-        return response.data
+        if response and response.data:
+            return response.data
+        return {"last_tick_processed_at": None, "is_frozen": False, "current_tick": 1}
     except Exception as e:
         log_event(f"Error obteniendo world_state: {e}", is_error=True)
         return {"last_tick_processed_at": None, "is_frozen": False, "current_tick": 1}
@@ -26,7 +28,11 @@ def queue_player_action(player_id: int, action_text: str) -> bool:
             "action_text": action_text,
             "status": "PENDING"
         }
-        _get_db().table("action_queue").insert(data).execute()
+        response = _get_db().table("action_queue").insert(data).execute()
+        if not response:
+            log_event("Error crítico: No hubo respuesta al encolar acción.", player_id, is_error=True)
+            return False
+            
         log_event(f"Acción encolada para el siguiente ciclo.", player_id)
         return True
     except Exception as e:
@@ -43,7 +49,7 @@ def has_pending_investigation(player_id: int) -> bool:
             .eq("status", "PENDING")\
             .execute()
 
-        if not response.data:
+        if not response or not response.data:
             return False
 
         for action in response.data:
@@ -63,7 +69,7 @@ def has_pending_search(player_id: int) -> bool:
             .eq("status", "PENDING")\
             .execute()
 
-        if not response.data:
+        if not response or not response.data:
             return False
 
         for action in response.data:
@@ -86,7 +92,7 @@ def get_investigating_target_info(player_id: int) -> Optional[Dict[str, Any]]:
             .eq("status", "PENDING")\
             .execute()
 
-        if not response.data:
+        if not response or not response.data:
             return None
 
         import re
@@ -122,7 +128,7 @@ def try_trigger_db_tick(target_date_iso: str) -> bool:
     """Llama a la función RPC de Supabase para intentar reclamar el Tick."""
     try:
         response = _get_db().rpc("try_process_tick", {"target_date": target_date_iso}).execute()
-        return response.data 
+        return response.data if response else False
     except Exception as e:
         log_event(f"Error RPC try_process_tick: {e}", is_error=True)
         return False
@@ -132,11 +138,11 @@ def force_db_tick() -> bool:
     try:
         current = get_world_state()
         new_tick = current.get('current_tick', 1) + 1
-        _get_db().table("world_state").update({
+        response = _get_db().table("world_state").update({
             "current_tick": new_tick,
             "last_tick_processed_at": datetime.utcnow().isoformat()
         }).eq("id", 1).execute()
-        return True
+        return True if response else False
     except Exception as e:
         log_event(f"Error forzando tick (DEBUG): {e}", is_error=True)
         return False
@@ -145,14 +151,14 @@ def get_pending_actions_count(player_id: int) -> int:
     try:
         response = _get_db().table("action_queue").select("id", count="exact")\
             .eq("player_id", player_id).eq("status", "PENDING").execute()
-        return response.count if response.count else 0
+        return response.count if response and response.count is not None else 0
     except Exception:
         return 0
 
 def get_all_pending_actions() -> List[Dict[str, Any]]:
     try:
         response = _get_db().table("action_queue").select("*").eq("status", "PENDING").execute()
-        return response.data if response.data else []
+        return response.data if response and response.data else []
     except Exception as e:
         log_event(f"Error recuperando cola de acciones: {e}", is_error=True)
         return []
@@ -181,13 +187,14 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
     try:
         # 1. Obtener el player_id asociado al comandante
         char_res = _get_db().table("characters").select("player_id").eq("id", commander_id).maybe_single().execute()
-        if not char_res.data:
+        
+        # Guard: Validación de respuesta nula
+        if not char_res or not char_res.data:
             return default_loc
         
         player_id = char_res.data.get("player_id")
 
         # 2. Buscar el ASENTAMIENTO PRINCIPAL (Base) en planet_assets
-        # Priorizamos por población o fecha de creación
         asset_res = _get_db().table("planet_assets")\
             .select("system_id, planet_id, nombre_asentamiento")\
             .eq("player_id", player_id)\
@@ -196,7 +203,8 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
             .maybe_single()\
             .execute()
         
-        if not asset_res.data:
+        # Guard: Validación de respuesta nula para activos
+        if not asset_res or not asset_res.data:
             return default_loc
 
         asset = asset_res.data
@@ -210,7 +218,7 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
         if asset.get("system_id"):
             try:
                 sys_res = _get_db().table("systems").select("name").eq("id", asset["system_id"]).single().execute()
-                if sys_res.data:
+                if sys_res and sys_res.data:
                     loc_data["system"] = sys_res.data.get("name")
             except Exception:
                 pass
@@ -219,7 +227,7 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
         if asset.get("planet_id"):
             try:
                 pl_res = _get_db().table("planets").select("name").eq("id", asset["planet_id"]).single().execute()
-                if pl_res.data:
+                if pl_res and pl_res.data:
                     loc_data["planet"] = pl_res.data.get("name")
             except Exception:
                 pass
@@ -237,7 +245,7 @@ def get_all_systems_from_db() -> List[Dict[str, Any]]:
     """Obtiene todos los sistemas estelares de la base de datos."""
     try:
         response = _get_db().table("systems").select("*, security, security_breakdown").execute()
-        return response.data if response.data else []
+        return response.data if response and response.data else []
     except Exception as e:
         log_event(f"Error obteniendo sistemas de BD: {e}", is_error=True)
         return []
@@ -247,7 +255,7 @@ def get_system_by_id(system_id: int) -> Optional[Dict[str, Any]]:
     """Obtiene un sistema por su ID."""
     try:
         response = _get_db().table("systems").select("*, security, security_breakdown").eq("id", system_id).single().execute()
-        return response.data if response.data else None
+        return response.data if response and response.data else None
     except Exception:
         return None
 
@@ -256,7 +264,7 @@ def get_planets_by_system_id(system_id: int) -> List[Dict[str, Any]]:
     """Obtiene todos los planetas de un sistema."""
     try:
         response = _get_db().table("planets").select("*").eq("system_id", system_id).order("orbital_ring").execute()
-        return response.data if response.data else []
+        return response.data if response and response.data else []
     except Exception as e:
         log_event(f"Error obteniendo planetas del sistema {system_id}: {e}", is_error=True)
         return []
@@ -266,7 +274,7 @@ def get_starlanes_from_db() -> List[Dict[str, Any]]:
     """Obtiene todas las rutas estelares."""
     try:
         response = _get_db().table("starlanes").select("*").execute()
-        return response.data if response.data else []
+        return response.data if response and response.data else []
     except Exception as e:
         log_event(f"Error obteniendo starlanes: {e}", is_error=True)
         return []
@@ -279,13 +287,15 @@ def update_system_controller(system_id: int, faction_id: Optional[int]) -> bool:
     Se usa para marcar el dominio > 50% de los planetas.
     """
     try:
-        _get_db().table("systems").update({
+        response = _get_db().table("systems").update({
             "controlling_faction_id": faction_id
         }).eq("id", system_id).execute()
         
-        status = f"Facción {faction_id}" if faction_id else "Neutral/Disputado"
-        log_event(f"Control del Sistema {system_id} actualizado a: {status}", event_type="GALAXY_CONTROL")
-        return True
+        if response:
+            status = f"Facción {faction_id}" if faction_id else "Neutral/Disputado"
+            log_event(f"Control del Sistema {system_id} actualizado a: {status}", event_type="GALAXY_CONTROL")
+            return True
+        return False
     except Exception as e:
         log_event(f"Error actualizando controlador de sistema {system_id}: {e}", is_error=True)
         return False
@@ -295,8 +305,8 @@ def update_system_controller(system_id: int, faction_id: Optional[int]) -> bool:
 def update_system_security(system_id: int, security: float) -> bool:
     """Actualiza la seguridad promedio del sistema."""
     try:
-        _get_db().table("systems").update({"security": security}).eq("id", system_id).execute()
-        return True
+        response = _get_db().table("systems").update({"security": security}).eq("id", system_id).execute()
+        return True if response else False
     except Exception as e:
         log_event(f"Error actualizando seguridad sistema {system_id}: {e}", is_error=True)
         return False
@@ -306,11 +316,11 @@ def update_system_security_data(system_id: int, security: float, breakdown: Dict
     Actualiza la seguridad agregada y su desglose detallado en la tabla 'systems'.
     """
     try:
-        _get_db().table("systems").update({
+        response = _get_db().table("systems").update({
             "security": security,
             "security_breakdown": breakdown
         }).eq("id", system_id).execute()
-        return True
+        return True if response else False
     except Exception as e:
         log_event(f"Error actualizando seguridad detallada sistema {system_id}: {e}", is_error=True)
         return False

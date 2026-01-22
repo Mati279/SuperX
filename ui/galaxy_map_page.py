@@ -6,12 +6,12 @@ Actualizado V4.4: Uso de 'systems.security' pre-calculado y desglose.
 Corrección V4.4.1: Manejo seguro de 'maybe_single' para assets inexistentes.
 Corrección V4.4.2: Eliminada importación obsoleta de METAL_RESOURCES.
 Corrección V5.0: Fix Mismatch 'population' vs 'poblacion' y Cálculo Dinámico de Seguridad (Ss).
+Refactorizado V5.1: Protecciones 'NoneType' en respuestas de Supabase.
 """
 import json
 import math
 import streamlit as st
 import streamlit.components.v1 as components
-# SE ELIMINÓ METAL_RESOURCES DE ESTA LÍNEA
 from core.world_constants import BUILDING_TYPES, INFRASTRUCTURE_MODULES, ECONOMY_RATES
 from data.database import get_supabase
 from data.planet_repository import (
@@ -22,7 +22,7 @@ from data.planet_repository import (
     upgrade_base_tier,
     upgrade_infrastructure_module,
     demolish_building,
-    get_planet_by_id, # Usamos el repo en lugar de queries directas donde sea posible
+    get_planet_by_id, 
     get_planet_asset
 )
 from data.world_repository import (
@@ -95,12 +95,6 @@ def _render_player_domains_panel():
             system_info = get_system_by_id(system_id)
             system_name = system_info.get('name', '???') if system_info else "Desconocido"
             
-            # Recuperar seguridad: Intentar usar el valor centralizado en 'planets' si es posible,
-            # pero aquí en la lista rápida usamos asset.seguridad por performance, asumiendo sync.
-            # (Si se eliminó la columna 'seguridad' de assets, debemos hacer join o query extra)
-            
-            # Hotfix V4.4: Si la columna 'seguridad' ya no existe en asset, 
-            # necesitamos traerla del planeta o usar un default.
             sp = asset.get('seguridad', 0.0) 
             if sp is None: sp = 0.0
 
@@ -121,14 +115,13 @@ def _render_player_domains_panel():
 
 def _render_system_view():
     system_id = st.session_state.selected_system_id
-    system = get_system_by_id(system_id) # Trae campos 'security' y 'security_breakdown'
+    system = get_system_by_id(system_id)
     if not system: _reset_to_galaxy_view(); return
 
     # 1. Obtener planetas
     planets = get_planets_by_system_id(system_id)
     
     # 2. Calcular Métricas en vivo (Fix V5.0)
-    # Total Población: Usamos 'population' (inglés) no 'poblacion' (español)
     total_pop = sum(p.get('population', 0.0) or 0.0 for p in planets)
 
     # Seguridad (Ss): Si es nula en sistema, calculamos promedio de planetas
@@ -169,7 +162,7 @@ def _render_system_view():
                 .eq("system_id", system_id)\
                 .eq("player_id", player.id)\
                 .execute()
-            if assets_res.data:
+            if assets_res and assets_res.data:
                 my_assets_ids = {a['planet_id'] for a in assets_res.data}
         except: pass
 
@@ -185,7 +178,6 @@ def _render_system_view():
             color = BIOME_COLORS.get(biome, "#7ec7ff")
             c2.markdown(f"<span style='color: {color}; font-weight: 700'>{planet['name']}</span>", unsafe_allow_html=True)
             
-            # Fix V5.0: Usar 'population'
             p_pop = planet.get('population') or 0.0
             
             # --- INFO STRING BUILDER ---
@@ -197,7 +189,6 @@ def _render_system_view():
             else:
                 info_parts.append("🏜️ Deshabitado")
             
-            # Visualización de Seguridad Individual (Source of Truth: planet['security'])
             pl_sec = planet.get('security', 0.0) or 0.0
             info_parts.append(f"🛡️ {pl_sec:.1f}")
             
@@ -216,10 +207,18 @@ def _render_planet_view():
     player = get_player()
     planet_id = st.session_state.selected_planet_id
     
-    # --- FIX V4.4.1: Consultas seguras ---
+    # --- FIX V4.4.1 & V5.1: Consultas seguras y guards contra NoneType ---
     try:
         # 1. Planeta (Debe existir, usamos single)
         planet_res = get_supabase().table("planets").select("*, security, security_breakdown").eq("id", planet_id).single().execute()
+        
+        # Guard Crítico
+        if not planet_res:
+            st.error("Error de comunicación con el servidor central de datos.")
+            if st.button("Reintentar"): st.rerun()
+            if st.button("Volver"): _reset_to_system_view()
+            return
+
         planet = planet_res.data
         
         # 2. Asset (Puede NO existir, usamos maybe_single)
@@ -229,7 +228,9 @@ def _render_planet_view():
             .eq("player_id", player.id)\
             .maybe_single()\
             .execute()
-        asset = asset_res.data # Será None si no existe, sin lanzar error
+        
+        # Guard para asset opcional
+        asset = asset_res.data if asset_res else None
         
     except Exception as e:
         st.error(f"Error recuperando datos del planeta: {e}")
@@ -237,7 +238,7 @@ def _render_planet_view():
         return
 
     if not planet: 
-        st.error("Planeta no encontrado.")
+        st.error("Planeta no encontrado en la base de datos.")
         if st.button("Regresar"): _reset_to_system_view()
         return
 
@@ -249,17 +250,11 @@ def _render_planet_view():
     # DATOS MÉTRICOS (MMFR V2)
     m1, m2, m3 = st.columns(3)
     
-    # Fix V5.0: Usar 'population' para el planeta
     real_pop = planet.get('population') or 0.0
-    
-    # Seguridad Centralizada
     security_val = planet.get('security', 0.0)
     if security_val is None: security_val = 0.0
 
     if asset:
-        # Asset suele usar 'poblacion' o 'population' dependiendo de la versión del modelo,
-        # pero mantenemos 'poblacion' si viene de la tabla planet_assets antigua, o 'population' si se migró.
-        # Por seguridad revisamos ambas o usamos el modelo.
         asset_pop = asset.get('poblacion') or asset.get('population') or 0.0
         m1.metric("Población (Ciudadanos)", f"{asset_pop:,.1f}B")
         
@@ -426,19 +421,17 @@ def _render_interactive_galaxy_map():
     starlanes = get_starlanes_from_db()
     if not systems: st.error("No se pudieron cargar los sistemas."); return
 
-    # --- PRE-CÁLCULO DE MÉTRICAS MASIVO (Fix V5.0) ---
+    # --- PRE-CÁLCULO DE MÉTRICAS MASIVO (Fix V5.0 & V5.1) ---
     try:
-        # Corregido: Usamos 'population' (inglés) y traemos 'security'
-        all_planets_data = get_supabase().table("planets").select("id, system_id, population, security").execute().data
+        all_planets_res = get_supabase().table("planets").select("id, system_id, population, security").execute()
+        all_planets_data = all_planets_res.data if all_planets_res and all_planets_res.data else []
     except:
         all_planets_data = []
 
-    # Diccionario para agrupar estadísticas por Sistema
-    system_stats = {} # {sid: {'pop': 0.0, 'sec_sum': 0.0, 'count': 0}}
+    system_stats = {} 
     
     for p in all_planets_data:
         sid = p['system_id']
-        # Usamos population (campo correcto en DB)
         pop = p.get('population') or 0.0
         sec = p.get('security') or 0.0
         
@@ -477,12 +470,9 @@ def _render_interactive_galaxy_map():
             preview_sys = next((s for s in systems if s['id'] == st.session_state.preview_system_id), None)
             if preview_sys:
                 pid = preview_sys['id']
-                
-                # Obtener estadísticas calculadas
                 stats = system_stats.get(pid, {'pop': 0.0, 'sec_sum': 0.0, 'count': 0})
                 sys_pop = stats['pop']
                 
-                # Calcular Ss (Promedio) si tenemos datos, sino fallback a DB del sistema
                 if stats['count'] > 0:
                     sys_ss = stats['sec_sum'] / stats['count']
                 else:
@@ -508,8 +498,6 @@ def _render_interactive_galaxy_map():
         base_radius = STAR_SIZES.get(star_class, 7) * star_scale
         
         sid = sys['id']
-        
-        # Calcular valores para el payload JSON (SVG Tooltips)
         stats = system_stats.get(sid, {'pop': 0.0, 'sec_sum': 0.0, 'count': 0})
         total_pop_real = stats['pop']
         
