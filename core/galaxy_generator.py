@@ -8,7 +8,8 @@ from .world_constants import (
     PLANET_MASS_CLASSES, ORBITAL_ZONE_WEIGHTS,
     SECTOR_TYPE_URBAN, SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN, SECTOR_TYPE_INHOSPITABLE,
     MAX_SLOTS_PER_SECTOR, SECTOR_NAMES_BY_CATEGORY, LUXURY_RESOURCES_BY_CATEGORY,
-    RESOURCE_PROB_HIGH, RESOURCE_PROB_MEDIUM, RESOURCE_PROB_LOW, RESOURCE_PROB_NONE
+    RESOURCE_PROB_HIGH, RESOURCE_PROB_MEDIUM, RESOURCE_PROB_LOW, RESOURCE_PROB_NONE,
+    EMPTY_SYSTEMS_COUNT, WILD_POPULATION_CHANCE, POP_RANGE
 )
 # V4.4: Importar lógica de seguridad para cálculo inicial
 from .rules import calculate_planet_security
@@ -21,9 +22,12 @@ class GalaxyGenerator:
         random.seed(self.seed)
 
     def generate_galaxy(self) -> Galaxy:
-        """Genera una nueva galaxia con lógica de planetología avanzada."""
+        """Genera una nueva galaxia con lógica de planetología avanzada y distribución de población."""
         systems = []
         
+        # Selección aleatoria de sistemas vacíos/salvajes (V4.5)
+        empty_system_indices = set(random.sample(range(self.num_systems), min(self.num_systems, EMPTY_SYSTEMS_COUNT)))
+
         for i in range(self.num_systems):
             angle = 0.5 * i
             dist = 10 * math.sqrt(i + 1)
@@ -42,7 +46,10 @@ class GalaxyGenerator:
                 planets=[]
             )
             
-            new_system.planets = self._generate_planets_for_system(new_system)
+            # Determinar si el sistema está civilizado (no está en la lista de vacíos)
+            is_civilized = i not in empty_system_indices
+            
+            new_system.planets = self._generate_planets_for_system(new_system, is_civilized)
             systems.append(new_system)
 
         self.galaxy.systems = systems
@@ -63,8 +70,11 @@ class GalaxyGenerator:
             energy_output=star_data.get("energy_modifier", 1.0)
         )
 
-    def _generate_planets_for_system(self, system: System) -> List[Planet]:
-        """Genera planetas aplicando reglas de masa y zonas orbitales."""
+    def _generate_planets_for_system(self, system: System, is_civilized: bool) -> List[Planet]:
+        """
+        Genera planetas aplicando reglas de masa y zonas orbitales.
+        V4.5: Aplica distribución de población y garantía de nodo vital si is_civilized es True.
+        """
         num_planets = random.randint(1, 6)
         planets = []
         
@@ -72,6 +82,7 @@ class GalaxyGenerator:
         available_rings = list(range(1, 7))
         random.shuffle(available_rings)
 
+        # --- FASE 1: Creación Física de Planetas ---
         for j in range(min(num_planets, len(available_rings))):
             ring = available_rings.pop()
             
@@ -86,19 +97,9 @@ class GalaxyGenerator:
             biome = self._select_biome_by_ring(ring)
             
             # V4.4: Determinar Base Stat (Defensa) para el planeta
-            # Asignamos un valor aleatorio entre 10 y 30. Podría refinarse según bioma.
             base_defense = random.randint(10, 30)
-            initial_population = 0 # Planetas salvajes no tienen población jugable
+            initial_population = 0 # Se calculará en Fase 2
             
-            # V4.4: Cálculo Inicial de Seguridad
-            # Nota: Al ser population 0, el resultado será 0, pero seteamos el valor base_defense
-            initial_security = calculate_planet_security(
-                base_stat=base_defense,
-                pop_count=initial_population,
-                infrastructure_defense=0,
-                orbital_ring=ring
-            )
-
             planet_id = (system.id * 100) + j
             new_planet = Planet(
                 id=planet_id,
@@ -112,12 +113,61 @@ class GalaxyGenerator:
                 # V4.4 Fields
                 base_defense=base_defense,
                 population=initial_population,
-                security=initial_security
+                security=0 # Se calculará en Fase 2
             )
             
             # 3. Generación de Sectores (Tarea 3.3)
+            # Nota: Esto se regenerará luego si el bioma cambia forzosamente, 
+            # pero es necesario instanciarlo ahora.
             new_planet.sectors = self._generate_sectors_for_planet(new_planet)
             planets.append(new_planet)
+
+        # --- FASE 2: Lógica de Población y Civilización (V4.5) ---
+        if is_civilized and planets:
+            # Identificar candidatos habitables existentes
+            habitable_candidates = [p for p in planets if p.is_habitable]
+            primary_planet = None
+
+            # Garantía de Nodo Vital
+            if not habitable_candidates:
+                # Si no hay habitables, forzar mutación en el mejor candidato (anillos centrales)
+                # Buscamos el más cercano a 3.5 (entre anillo 3 y 4)
+                best_candidate = min(planets, key=lambda p: abs(p.orbital_ring - 3.5))
+                
+                # Mutar a Templado (Habitabilidad 0.9)
+                best_candidate.biome = "Templado"
+                best_candidate.is_habitable = True
+                
+                # Regenerar sectores para reflejar el nuevo bioma habitable
+                best_candidate.sectors = self._generate_sectors_for_planet(best_candidate)
+                
+                primary_planet = best_candidate
+            else:
+                primary_planet = random.choice(habitable_candidates)
+
+            # Asignación de Población
+            for p in planets:
+                pop = 0
+                if p == primary_planet:
+                    # Planeta principal obtiene población garantizada
+                    pop = random.randint(*POP_RANGE)
+                else:
+                    # Distribución Estocástica para el resto
+                    # Aplicamos WILD_POPULATION_CHANCE
+                    if random.random() < WILD_POPULATION_CHANCE:
+                         pop = random.randint(*POP_RANGE)
+                
+                p.population = pop
+
+        # --- FASE 3: Sincronización de Seguridad ---
+        for p in planets:
+            # Calcular seguridad final basada en la población asignada (o cero si es wild/vacío)
+            p.security = calculate_planet_security(
+                base_stat=p.base_defense,
+                pop_count=p.population,
+                infrastructure_defense=0,
+                orbital_ring=p.orbital_ring
+            )
             
         return sorted(planets, key=lambda p: p.orbital_ring)
 
@@ -211,7 +261,10 @@ class GalaxyGenerator:
                     sec_type = random.choice([SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN])
 
             # --- PASO 4: Regla Forzada de Urbanismo ---
-            # Si hay población, el Sector 1 DEBE ser Urbano
+            # Si hay población inicial asignada al planeta (ojo: esto se evalúa al generar,
+            # si population se asigna después, este check podría fallar en la primera pasada,
+            # pero es correcto para regeneraciones o si population > 0 ya está set).
+            # En la V4.5, si regeneramos sectores tras forzar bioma, esto aplicará correctamente.
             if planet.population > 0 and sector_index == 1:
                 sec_type = SECTOR_TYPE_URBAN
                 slots = MAX_SLOTS_PER_SECTOR

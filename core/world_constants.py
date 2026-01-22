@@ -298,3 +298,9 @@ RESOURCE_CHANCE_LOW = 0.10
 RESOURCE_CHANCE_NONE = 0.0
 
 MAX_SLOTS_PER_SECTOR = 3
+
+# --- GENERACIÓN DE POBLACIÓN (V4.5) ---
+
+EMPTY_SYSTEMS_COUNT = 5 # Cantidad de nodos que deben permanecer con población cero
+WILD_POPULATION_CHANCE = 0.25 # Probabilidad de asignación de datos en nodos secundarios
+POP_RANGE = (1, 10) # Rango de magnitud para el atributo población en miles de millones
