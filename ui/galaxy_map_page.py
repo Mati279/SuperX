@@ -1,9 +1,8 @@
-# ui/galaxy_map_page.py
+# ui/galaxy_map_page.py (Completo)
 """
 Mapa Galáctico - Usa datos directamente de la Base de Datos.
 Refactorizado MMFR V2: Indicadores de Seguridad (Ss/Sp), Mantenimiento y Tooltips.
-Corrección: Seguridad 0 para planetas con Población 0 (Deshabitados).
-Fix: Robustez en el acceso a 'base_tier' y 'poblacion' en assets (Evita KeyError).
+Actualizado V4.4: Uso de 'systems.security' pre-calculado y desglose.
 """
 import json
 import math
@@ -90,7 +89,8 @@ def _render_player_domains_panel():
             system_info = get_system_by_id(system_id)
             system_name = system_info.get('name', '???') if system_info else "Desconocido"
             
-            # Recuperar seguridad (default 25.0 si no migrado)
+            # Recuperar seguridad (Priorizar valor centralizado si existe en la memoria, sino usar asset)
+            # En esta vista rapida usamos asset.get('seguridad') que es sincronizado por el tick
             sp = asset.get('seguridad', 25.0)
 
             c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
@@ -110,52 +110,19 @@ def _render_player_domains_panel():
 
 def _render_system_view():
     system_id = st.session_state.selected_system_id
-    system = get_system_by_id(system_id)
+    system = get_system_by_id(system_id) # Trae campos 'security' y 'security_breakdown'
     if not system: _reset_to_galaxy_view(); return
 
-    # 1. Obtener todos los planetas del sistema (Realidad física)
+    # 1. Obtener planetas
     planets = get_planets_by_system_id(system_id)
     total_planets = len(planets)
 
-    # 2. Obtener assets del sistema (Gobernanza)
-    try:
-        assets_res = get_supabase().table("planet_assets").select("planet_id, seguridad").eq("system_id", system_id).execute()
-        assets = assets_res.data if assets_res.data else []
-        # Mapa de seguridad real de los assets existentes
-        asset_map = {a['planet_id']: a.get('seguridad', 0.0) for a in assets}
-    except: 
-        asset_map = {}
-
-    # 3. Calcular Métricas Consolidadas
-    total_pop = 0.0
-    security_sum = 0.0
-
-    # Constantes para cálculo
-    base_sec = ECONOMY_RATES.get('security_base', 25.0)
-    per_pop_sec = ECONOMY_RATES.get('security_per_1b_pop', 5.0)
-
-    for p in planets:
-        # Población real del planeta
-        pop = p.get('poblacion') or 0.0
-        total_pop += pop
-        
-        if p['id'] in asset_map:
-            # Es un asset colonizado: Usamos su seguridad real
-            security_sum += (asset_map[p['id']] or 0.0)
-        else:
-            # Es neutral
-            if pop <= 0:
-                est_sec = 0.0
-            else:
-                est_sec = base_sec + (pop * per_pop_sec)
-                est_sec = max(0.0, min(est_sec, 100.0)) # Clamp 0-100
-            
-            security_sum += est_sec
-
-    if total_planets > 0:
-        ss = security_sum / total_planets
-    else:
-        ss = 0.0
+    # V4.4: Usar Seguridad Pre-calculada del Sistema
+    ss = system.get('security', 0.0)
+    if ss is None: ss = 0.0
+    
+    # Calcular población total para display
+    total_pop = sum(p.get('poblacion', 0.0) or 0.0 for p in planets)
 
     st.header(f"Sistema: {system.get('name', 'Desconocido')}")
     
@@ -166,11 +133,32 @@ def _render_system_view():
     
     with col_metrics:
         m1, m2 = st.columns(2)
-        m1.metric("Seguridad (Ss)", f"{ss:.1f}/100", help="Promedio de seguridad del sistema (0 para mundos deshabitados).")
+        m1.metric("Seguridad (Ss)", f"{ss:.1f}/100", help="Promedio de seguridad del sistema.")
         m2.metric("Población Total", f"{total_pop:,.1f}B")
+    
+    # Mostrar Desglose de Sistema si existe
+    sys_breakdown = system.get('security_breakdown')
+    if sys_breakdown and isinstance(sys_breakdown, dict) and "details" in sys_breakdown:
+        with st.expander("📊 Ver Desglose de Seguridad del Sistema"):
+            st.write(sys_breakdown.get("details", ""))
+            st.caption("Promedio basado en la seguridad individual de los cuerpos celestes.")
 
     st.subheader("Cuerpos celestiales")
     
+    # Mapa de assets para identificar colonias propias
+    player = get_player()
+    my_assets = {}
+    if player:
+        try:
+            assets_res = get_supabase().table("planet_assets")\
+                .select("planet_id, seguridad")\
+                .eq("system_id", system_id)\
+                .eq("player_id", player.id)\
+                .execute()
+            if assets_res.data:
+                my_assets = {a['planet_id']: a for a in assets_res.data}
+        except: pass
+
     for ring in range(1, 10):
         planet = next((p for p in planets if p.get('orbital_ring') == ring), None)
         if not planet: continue
@@ -194,18 +182,12 @@ def _render_system_view():
             else:
                 info_parts.append("🏜️ Deshabitado")
             
-            # Visualización de Seguridad Individual
-            if planet['id'] in asset_map:
-                sec_val = asset_map[planet['id']]
-                info_parts.append(f"🛡️ {sec_val:.1f} (Real)")
-                info_parts.append("🏳️ Colonizado")
-            else:
-                if p_pop <= 0:
-                    est_sec = 0.0
-                else:
-                    est_sec = base_sec + (p_pop * per_pop_sec)
-                    est_sec = max(0.0, min(est_sec, 100.0))
-                info_parts.append(f"🛡️ ~{est_sec:.1f} (Est)")
+            # Visualización de Seguridad Individual (Source of Truth: planet['security'])
+            pl_sec = planet.get('security', 0.0) or 0.0
+            info_parts.append(f"🛡️ {pl_sec:.1f}")
+            
+            if planet['id'] in my_assets:
+                info_parts.append("🏳️ Tu Colonia")
             
             c2.caption(" | ".join(info_parts))
             
@@ -220,6 +202,7 @@ def _render_planet_view():
     planet_id = st.session_state.selected_planet_id
 
     try:
+        # Traer seguridad centralizada
         planet_res = get_supabase().table("planets").select("*").eq("id", planet_id).single().execute()
         planet = planet_res.data if planet_res else None
         
@@ -243,36 +226,29 @@ def _render_planet_view():
     m1, m2, m3 = st.columns(3)
     
     real_pop = planet.get('poblacion') or 0.0
+    
+    # Seguridad Centralizada
+    security_val = planet.get('security', 0.0) or 0.0
 
     if asset:
-        # FIX: Acceso robusto para evitar KeyError si la base no tiene estos campos
-        # Se prefiere .get() ya que asset viene directamente del execute().data de Supabase
         asset_pop = asset.get('poblacion', 0.0)
         m1.metric("Población (Ciudadanos)", f"{asset_pop:,.1f}B")
         
-        sp = asset.get('seguridad', 25.0)
-        delta_color = "normal" if sp >= 50 else "inverse" 
-        m2.metric("Seguridad (Sp)", f"{sp:.1f}/100", delta_color=delta_color)
+        delta_color = "normal" if security_val >= 50 else "inverse" 
+        m2.metric("Seguridad (Sp)", f"{security_val:.1f}/100", delta_color=delta_color)
         
-        # FIX MMFR: Se usa .get() para base_tier con valor por defecto 1 para evitar KeyError reportado
         tier = asset.get('base_tier', 1)
         m3.metric("Nivel de Base", f"Tier {tier}")
-        
-        # Debug complementario (visible solo si hay inconsistencias críticas)
-        if 'base_tier' not in asset:
-             st.caption("⚠️ Nota: 'base_tier' no detectado en el asset SQL. Usando valor por defecto.")
     else:
-        # Cálculo estimado para visualización
-        if real_pop <= 0:
-            est_sec = 0.0
-        else:
-            base = ECONOMY_RATES.get('security_base', 25.0)
-            per_pop = ECONOMY_RATES.get('security_per_1b_pop', 5.0)
-            est_sec = min(100.0, base + (real_pop * per_pop))
-        
         m1.metric("Población (Nativa/Neutral)", f"{real_pop:,.1f}B")
-        m2.metric("Seguridad Estimada", f"~{est_sec:.1f}/100", help="0 si está deshabitado.")
+        m2.metric("Seguridad Global", f"{security_val:.1f}/100")
         m3.write("No colonizado por ti")
+        
+    # Mostrar Desglose (Si hay asset, ya se muestra abajo, sino aqui)
+    if not asset and planet.get('security_breakdown'):
+        bd = planet.get('security_breakdown')
+        if "text" in bd:
+             st.caption(f"Cálculo: {bd['text']}")
 
     st.markdown("---")
     if asset: _render_construction_ui(player, planet, asset)
@@ -284,6 +260,11 @@ def _render_construction_ui(player, planet, planet_asset):
     # 📡 INFRAESTRUCTURA DE SEGURIDAD
     st.markdown("#### 📡 Infraestructura de Seguridad")
     st.caption("Aumenta la **Seguridad (Sp)** para mejorar la eficiencia fiscal y protegerte de ataques.")
+    
+    # Mostrar desglose específico aquí
+    bd = planet.get('security_breakdown')
+    if bd and "text" in bd:
+        st.info(f"📊 Desglose Actual: {bd['text']}")
     
     mod_cols = st.columns(2)
     modules = ["sensor_ground", "sensor_orbital", "defense_aa", "defense_ground"]
@@ -422,37 +403,16 @@ def _render_interactive_galaxy_map():
     except:
         all_planets_data = []
 
-    try:
-        all_assets_data = get_supabase().table("planet_assets").select("planet_id, seguridad, system_id").execute().data
-        asset_security_map = {row['planet_id']: row.get('seguridad', 0.0) for row in all_assets_data}
-    except:
-        asset_security_map = {}
-
+    # Ya no necesitamos hacer el merge manual con assets, usamos system.security
     system_planet_counts = {}
     system_total_pop = {}
-    system_security_sum = {}
     
     for p in all_planets_data:
         sid = p['system_id']
-        pid = p['id']
         pop = p.get('poblacion') or 0.0
         
         system_planet_counts[sid] = system_planet_counts.get(sid, 0) + 1
         system_total_pop[sid] = system_total_pop.get(sid, 0.0) + pop
-        
-        if pid in asset_security_map:
-            current_sec = asset_security_map[pid]
-        else:
-            if pop <= 0:
-                current_sec = 0.0
-            else:
-                base = ECONOMY_RATES.get('security_base', 25.0)
-                per_pop = ECONOMY_RATES.get('security_per_1b_pop', 5.0)
-                current_sec = base + (pop * per_pop)
-                current_sec = max(0.0, min(current_sec, 100.0))
-            
-        system_security_sum[sid] = system_security_sum.get(sid, 0.0) + current_sec
-
 
     # --- UI DE CONTROL ---
     systems_sorted = sorted(systems, key=lambda s: s.get('id', 0))
@@ -482,10 +442,9 @@ def _render_interactive_galaxy_map():
             preview_sys = next((s for s in systems if s['id'] == st.session_state.preview_system_id), None)
             if preview_sys:
                 pid = preview_sys['id']
-                p_count = system_planet_counts.get(pid, 0)
-                sec_sum = system_security_sum.get(pid, 0.0)
                 
-                sys_ss = sec_sum / p_count if p_count > 0 else 0.0
+                # Usar seguridad precalculada
+                sys_ss = preview_sys.get('security', 0.0) or 0.0
                 sys_pop = system_total_pop.get(pid, 0.0)
                 
                 st.subheader(f"🔭 {preview_sys.get('name', 'Sistema')}")
@@ -508,10 +467,7 @@ def _render_interactive_galaxy_map():
         base_radius = STAR_SIZES.get(star_class, 7) * star_scale
         
         sid = sys['id']
-        p_count = system_planet_counts.get(sid, 0)
-        sec_sum = system_security_sum.get(sid, 0.0)
-        
-        calculated_ss = sec_sum / p_count if p_count > 0 else 0.0
+        calculated_ss = sys.get('security', 0.0) or 0.0
         total_pop_real = system_total_pop.get(sid, 0.0)
         
         systems_payload.append({

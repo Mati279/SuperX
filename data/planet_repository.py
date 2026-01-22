@@ -4,7 +4,7 @@ Repositorio de Planetas y Edificios.
 Gestiona activos planetarios, edificios, recursos y mejoras de base.
 Refactorizado para MMFR V2: Seguridad dinámica (0-100) y Mantenimiento.
 Actualizado v4.3.0: Integración completa de Planetología Avanzada (Sectores).
-Actualizado v4.4.0: Persistencia de Seguridad Galáctica.
+Actualizado v4.4.0: Persistencia de Seguridad Galáctica y Desgloses.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -25,7 +25,7 @@ def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
     """Obtiene información de un planeta de la tabla mundial 'planets'."""
     try:
         response = _get_db().table("planets")\
-            .select("id, name, system_id, biome, mass_class, orbital_ring, is_habitable, surface_owner_id, orbital_owner_id, is_disputed, security")\
+            .select("id, name, system_id, biome, mass_class, orbital_ring, is_habitable, surface_owner_id, orbital_owner_id, is_disputed, security, security_breakdown")\
             .eq("id", planet_id)\
             .single()\
             .execute()
@@ -468,6 +468,20 @@ def update_planet_security_value(planet_id: int, value: float) -> bool:
         return True
     except Exception as e:
         log_event(f"Error actualizando seguridad del planeta {planet_id}: {e}", is_error=True)
+        return False
+
+def update_planet_security_data(planet_id: int, security: float, breakdown: Dict[str, Any]) -> bool:
+    """
+    Actualiza la seguridad y el desglose detallado (breakdown) en la tabla 'planets'.
+    """
+    try:
+        _get_db().table("planets").update({
+            "security": security,
+            "security_breakdown": breakdown
+        }).eq("id", planet_id).execute()
+        return True
+    except Exception as e:
+        log_event(f"Error actualizando seguridad detallada planeta {planet_id}: {e}", is_error=True)
         return False
 
 def get_all_colonized_system_ids() -> List[int]:

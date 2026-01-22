@@ -236,7 +236,7 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
 def get_all_systems_from_db() -> List[Dict[str, Any]]:
     """Obtiene todos los sistemas estelares de la base de datos."""
     try:
-        response = _get_db().table("systems").select("*").execute()
+        response = _get_db().table("systems").select("*, security, security_breakdown").execute()
         return response.data if response.data else []
     except Exception as e:
         log_event(f"Error obteniendo sistemas de BD: {e}", is_error=True)
@@ -246,7 +246,7 @@ def get_all_systems_from_db() -> List[Dict[str, Any]]:
 def get_system_by_id(system_id: int) -> Optional[Dict[str, Any]]:
     """Obtiene un sistema por su ID."""
     try:
-        response = _get_db().table("systems").select("*").eq("id", system_id).single().execute()
+        response = _get_db().table("systems").select("*, security, security_breakdown").eq("id", system_id).single().execute()
         return response.data if response.data else None
     except Exception:
         return None
@@ -299,4 +299,18 @@ def update_system_security(system_id: int, security: float) -> bool:
         return True
     except Exception as e:
         log_event(f"Error actualizando seguridad sistema {system_id}: {e}", is_error=True)
+        return False
+
+def update_system_security_data(system_id: int, security: float, breakdown: Dict[str, Any]) -> bool:
+    """
+    Actualiza la seguridad agregada y su desglose detallado en la tabla 'systems'.
+    """
+    try:
+        _get_db().table("systems").update({
+            "security": security,
+            "security_breakdown": breakdown
+        }).eq("id", system_id).execute()
+        return True
+    except Exception as e:
+        log_event(f"Error actualizando seguridad detallada sistema {system_id}: {e}", is_error=True)
         return False

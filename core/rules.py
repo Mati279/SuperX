@@ -1,4 +1,4 @@
-# core/rules.py
+# core/rules.py (Completo)
 from typing import Dict, Any, Tuple, Optional
 from core.constants import SKILL_MAPPING, ATTRIBUTE_COST_MULTIPLIER
 from core.world_constants import PLANET_BIOMES, SECTOR_TYPE_INHOSPITABLE
@@ -126,3 +126,46 @@ def calculate_planet_habitability(planet_id: int) -> int:
             
     final_habitability = base_hab - penalty
     return max(-100, min(100, final_habitability))
+
+# --- REGLAS DE SEGURIDAD SISTÉMICA (V4.4) ---
+
+def calculate_and_update_system_security(system_id: int):
+    """
+    Calcula la seguridad promedio de un sistema basado en sus planetas.
+    Genera un desglose detallado para transparencia.
+    """
+    from data.world_repository import get_planets_by_system_id, update_system_security_data
+    from data.database import get_supabase
+    
+    # Obtener planetas directamente con su seguridad actualizada
+    # Nota: get_planets_by_system_id usa "select *" así que traerá 'security' si existe
+    planets = get_planets_by_system_id(system_id)
+    if not planets:
+        return
+        
+    total_security = 0.0
+    breakdown_lines = []
+    
+    count = 0
+    for p in planets:
+        # Priorizar la columna 'security' de la tabla 'planets' (Source of Truth V4.4)
+        sec_val = p.get('security', 0.0)
+        
+        # Fallback defensivo si la migración no llenó defaults
+        if sec_val is None: sec_val = 0.0
+            
+        total_security += sec_val
+        breakdown_lines.append(f"{p['name']}: {sec_val:.1f}")
+        count += 1
+        
+    avg_security = total_security / count if count > 0 else 0.0
+    avg_security = round(avg_security, 2)
+    
+    breakdown_text = ", ".join(breakdown_lines)
+    full_breakdown = {
+        "text": f"Promedio: {avg_security} (De {count} cuerpos)",
+        "details": breakdown_text,
+        "planet_count": count
+    }
+    
+    update_system_security_data(system_id, avg_security, full_breakdown)

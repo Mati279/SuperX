@@ -7,6 +7,7 @@ Refactorizado para cumplir con el esquema V2 Híbrido (SQL + JSON).
 Actualizado v5.1.4: Estandarización de IDs de Roles (Fix Error 22P02).
 Actualizado V4.3: Enums de Conocimiento y Secretos.
 Corregido v5.1.5: Fix BiologicalSex Enum y defaults.
+Refactor v5.2: Seguridad movida a tabla 'planets'.
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -456,7 +457,7 @@ class PlanetAsset(BaseModel):
     pops_activos: int = 0
     pops_desempleados: int = 0
     base_tier: int = Field(default=1, ge=1)
-    seguridad: float = Field(default=25.0, ge=0.0, le=100.0)
+    # Refactor V5.2: Seguridad movida a tabla planets, eliminada de aquí.
     infraestructura_defensiva: int = 0
 
     # Infraestructura de Módulos

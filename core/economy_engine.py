@@ -1,8 +1,9 @@
-# core/economy_engine.py
+# core/economy_engine.py (Completo)
 """
 Motor Económico MMFR (Materials, Metals, Fuel, Resources).
 Gestiona toda la lógica de cálculo económico del juego.
 Refactorizado V4.2: Modelo Logarítmico y Penalización Orbital.
+Actualizado V4.4: Centralización de Seguridad y Transparencia (Breakdowns).
 """
 
 from typing import Dict, List, Any, Tuple, Optional
@@ -14,9 +15,10 @@ from data.player_repository import get_player_finances, update_player_resources,
 from data.planet_repository import (
     get_all_player_planets_with_buildings,
     get_luxury_extraction_sites_for_player,
-    batch_update_planet_security,
+    batch_update_planet_security, # Deprecated en V4.4 pero mantenido por compatibilidad
     batch_update_building_status,
-    update_planet_asset
+    update_planet_asset,
+    update_planet_security_data # Nueva función V4.4
 )
 
 from core.world_constants import (
@@ -28,6 +30,7 @@ from core.world_constants import (
 )
 from core.models import ProductionSummary, EconomyTickResult
 from core.market_engine import process_pending_market_orders
+from core.rules import calculate_and_update_system_security
 
 
 # --- FUNCIONES DE CÁLCULO ECONÓMICO (PURAS) ---
@@ -35,20 +38,38 @@ from core.market_engine import process_pending_market_orders
 def calculate_planet_security(
     population: float,
     infrastructure_defense: int,
-    orbital_distance: int # Nuevo V4.2
-) -> float:
+    orbital_distance: int 
+) -> Tuple[float, Dict[str, Any]]:
     """
-    Calcula el nivel de seguridad del planeta (0-100).
+    Calcula el nivel de seguridad del planeta (0-100) y genera un desglose.
     Formula V4.2: Base (25) + (Población * 5) + Infraestructura - (2 * Anillo Orbital).
+    
+    Returns:
+        Tuple[float, Dict]: (Valor Final, Objeto Breakdown)
     """
+    if population <= 0:
+        return 0.0, {"text": "Deshabitado (Población 0)", "total": 0.0}
+
     base = ECONOMY_RATES.get("security_base", 25.0)
     per_pop = ECONOMY_RATES.get("security_per_1b_pop", 5.0)
     
     pop_bonus = population * per_pop
     distance_penalty = 2.0 * orbital_distance
     
-    total = base + pop_bonus + infrastructure_defense - distance_penalty
-    return max(1.0, min(total, 100.0))
+    raw_total = base + pop_bonus + infrastructure_defense - distance_penalty
+    final_val = max(1.0, min(raw_total, 100.0)) # Clamp 1-100 si hay población
+    
+    # Generar Desglose
+    breakdown = {
+        "base": base,
+        "pop_bonus": round(pop_bonus, 2),
+        "infra": infrastructure_defense,
+        "penalty": round(distance_penalty, 2),
+        "total": round(final_val, 2),
+        "text": f"Base ({base}) + Pop ({pop_bonus:.1f}) + Infra ({infrastructure_defense}) - Dist ({distance_penalty:.1f})"
+    }
+    
+    return final_val, breakdown
 
 
 def calculate_income(
@@ -59,22 +80,16 @@ def calculate_income(
     """
     Calcula el ingreso de créditos.
     Formula V4.2: (RateBase * log10(Población)) * (Seguridad / 100).
-    Se usa max(1.0, population) para evitar errores matemáticos, 
-    aunque el mínimo del juego es 1.5B.
     """
     rate = ECONOMY_RATES.get("income_per_pop", 150.0)
     
     # Crecimiento Logarítmico
-    # Si Población = 1.5, log10(1.5) ≈ 0.176
-    # Si Población = 10, log10(10) = 1.0
-    # Si Población = 100, log10(100) = 2.0
     pop_factor = math.log10(max(1.001, population)) 
     
     efficiency = security / 100.0
     
     income = (rate * pop_factor) * efficiency * penalty_multiplier
     
-    # Garantizar que el ingreso no sea negativo
     return max(0, int(income))
 
 
@@ -220,28 +235,32 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             "datos": finances.get("datos", 0)
         }
         
-        security_updates: List[Tuple[int, float]] = []
         building_status_updates: List[Tuple[int, bool]] = []
+        systems_to_update_security = set()
         
         # 2. Procesar cada planeta
         for planet in planets:
-            # A. Seguridad (V4.2: Dependencia de Distancia Orbital)
+            # A. Seguridad (V4.4: Centralizada en tabla planets con Breakdown)
             pop = float(planet.get("poblacion", 0.0))
             infra_def = planet.get("infraestructura_defensiva", 0)
             
-            # Intentar obtener distancia orbital. Default 0 si no existe la columna en la vista actual.
             orbital_dist = planet.get("orbital_distance", 0) 
-            # Fallback a 'ring_index' si la DB usa ese nombre
             if orbital_dist == 0 and "ring_index" in planet:
                 orbital_dist = planet["ring_index"]
 
-            security = calculate_planet_security(pop, infra_def, orbital_dist)
+            # CALCULO PRINCIPAL DE SEGURIDAD
+            security, security_breakdown = calculate_planet_security(pop, infra_def, orbital_dist)
             
-            old_sec = planet.get("seguridad", 25.0)
-            if abs(security - old_sec) > 0.1:
-                security_updates.append((planet["id"], security))
+            # Persistencia V4.4: Guardar en tabla PLANETS (Source of Truth)
+            update_planet_security_data(planet["planet_id"], security, security_breakdown)
             
-            # B. Estado de Disputa / Bloqueo (V4.2.0)
+            # Sincronizar hacia planet_assets para compatibilidad UI legacy temporal
+            if abs(security - planet.get("seguridad", 0)) > 0.1:
+                update_planet_asset(planet["id"], {"seguridad": security})
+            
+            systems_to_update_security.add(planet["system_id"])
+            
+            # B. Estado de Disputa / Bloqueo
             orbital_owner = planet.get("orbital_owner_id")
             surface_owner = planet.get("surface_owner_id")
             is_disputed = planet.get("is_disputed", False)
@@ -249,14 +268,13 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             penalty = 1.0
             is_blockaded = False
             
-            # Chequeo de Bloqueo: Si existe dueño orbital y NO soy yo (dueño superficie)
             if orbital_owner is not None and orbital_owner != surface_owner:
                 is_blockaded = True
                 
             if is_disputed or is_blockaded:
                 penalty = DISPUTED_PENALTY_MULTIPLIER # 0.3
             
-            # C. Ingresos (Aplicando penalización y Logaritmo)
+            # C. Ingresos
             income = calculate_income(pop, security, penalty_multiplier=penalty)
             result.total_income += income
             
@@ -288,11 +306,15 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
         result.luxury_extracted = luxury_extracted
 
         # 4. Actualizar DB
-        if security_updates:
-            batch_update_planet_security(security_updates)
-        
         if building_status_updates:
             batch_update_building_status(building_status_updates)
+            
+        # V4.4: Recalcular seguridad de sistemas afectados
+        for sys_id in systems_to_update_security:
+            try:
+                calculate_and_update_system_security(sys_id)
+            except Exception as e:
+                print(f"Error actualizando seguridad sistema {sys_id}: {e}")
 
         # 5. Calculo Final
         final_resources = {
@@ -325,7 +347,7 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
 
 
 def run_global_economy_tick() -> List[EconomyTickResult]:
-    log_event("🏛️ Iniciando fase económica global (Control V4.2)...")
+    log_event("🏛️ Iniciando fase económica global (Control V4.4)...")
     results = []
     try:
         players = get_all_players()
@@ -361,7 +383,8 @@ def get_player_projected_economy(player_id: int) -> Dict[str, int]:
             if orbital_dist == 0 and "ring_index" in planet:
                 orbital_dist = planet["ring_index"]
 
-            sec = calculate_planet_security(pop, infra, orbital_dist)
+            # Unpack tuple V4.4
+            sec, _ = calculate_planet_security(pop, infra, orbital_dist)
             
             # Ingresos proyectados con penalización
             income = calculate_income(pop, sec, penalty_multiplier=penalty)

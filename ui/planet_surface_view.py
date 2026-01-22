@@ -1,8 +1,9 @@
-# ui/planet_surface_view.py
+# ui/planet_surface_view.py (Completo)
 """
 Vista de Superficie Planetaria.
 Interfaz para la gestión de sectores y construcción de estructuras.
 Implementa la visualización de la Planetología Avanzada (V4.3).
+Actualizado V4.4: Desglose de seguridad transparente.
 """
 
 import streamlit as st
@@ -69,15 +70,29 @@ def _render_info_header(planet: dict, asset: dict):
         
         st.write(f"**Habitabilidad Global:** :{hb_color}[{habitability}%]")
         
-        # Barra de progreso normalizada (-100 a 100 mapeado a 0.0 a 1.0)
         norm_hab = (habitability + 100) / 200
         st.progress(max(0.0, min(1.0, norm_hab)))
         st.caption("Afectada por el bioma y el desarrollo de los sectores.")
-        
+
+    # V4.4: Visualización Transparente de Seguridad
     with col3:
-        slots = get_base_slots_info(asset['id'])
-        st.metric("Slots Globales", f"{slots['used']} / {slots['total']}")
-        st.caption(f"Disponibles: {slots['free']} espacios de construcción.")
+        # Usamos el valor centralizado en 'planets' como Source of Truth
+        security_val = planet.get('security', asset.get('seguridad', 0.0))
+        sec_breakdown = planet.get('security_breakdown') or {}
+        
+        st.metric("Seguridad (Sp)", f"{security_val:.1f}%", help="Nivel de seguridad fiscal y policial.")
+        
+        if sec_breakdown and "text" in sec_breakdown:
+            with st.expander("🔍 Desglose de Cálculo"):
+                st.write(f"**Fórmula:** {sec_breakdown['text']}")
+                st.caption("Base + Población + Infraestructura - Penalización Orbital")
+        else:
+            st.caption("Desglose no disponible.")
+    
+    # Slots Info (Extra row)
+    st.divider()
+    slots = get_base_slots_info(asset['id'])
+    st.write(f"**Capacidad de Construcción:** {slots['used']} / {slots['total']} Slots utilizados.")
 
 
 def _render_sectors_management(planet: dict, asset: dict, player_id: int):
