@@ -5,6 +5,7 @@ Interfaz para la gestión de sectores y construcción de estructuras.
 Implementa la visualización de la Planetología Avanzada (V4.3).
 Actualizado V4.4: Desglose de seguridad transparente.
 Actualizado V4.5: Soporte para Modo Omnisciencia (Debug) y modernización UI.
+Refactor V5.8: Estandarización a 'population' y métricas mejoradas.
 """
 
 import streamlit as st
@@ -65,44 +66,39 @@ def _render_info_header(planet: dict, asset: dict):
     """Muestra el resumen de habitabilidad, bioma y capacidad global."""
     st.title(f"🌍 Superficie: {planet['name']}")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         biome = planet['biome']
         st.metric("Bioma Planetario", biome)
-        # Métricas adicionales V4.3
-        st.metric("Clase de Masa", planet.get('mass_class', 'Desconocido'))
-        st.metric("Anillo Orbital", planet.get('orbital_ring', 'N/A'))
-        
-        # Descripción del bioma desde constantes
-        desc = PLANET_BIOMES.get(biome, {}).get("description", "Entorno hostil sin catalogar.")
-        st.caption(desc)
+        st.caption(PLANET_BIOMES.get(biome, {}).get("description", "Entorno hostil."))
         
     with col2:
+        # Refactor V5.8: Métrica de población estandarizada
+        pop_val = planet.get('population', 0.0)
+        st.metric("Población Total", f"{pop_val:,.2f}B")
+        st.caption("Ciudadanos registrados")
+
+    with col3:
         habitability = calculate_planet_habitability(planet['id'])
         # Código de color basado en la hostilidad del entorno
         hb_color = "green" if habitability > 35 else ("orange" if habitability > -15 else "red")
-        
-        st.write(f"**Habitabilidad Global:** :{hb_color}[{habitability}%]")
-        
-        norm_hab = (habitability + 100) / 200
-        st.progress(max(0.0, min(1.0, norm_hab)))
-        st.caption("Afectada por el bioma y el desarrollo de los sectores.")
+        st.metric("Habitabilidad", f"{habitability}%", delta_color="normal" if habitability > 0 else "inverse")
+        st.progress(max(0.0, min(1.0, (habitability + 100) / 200)))
 
     # V4.4: Visualización Transparente de Seguridad
-    with col3:
-        # Usamos el valor centralizado en 'planets' como Source of Truth (Asset security es legacy)
+    with col4:
+        # Usamos el valor centralizado en 'planets' como Source of Truth
         security_val = planet.get('security', 0.0)
         sec_breakdown = planet.get('security_breakdown') or {}
         
         st.metric("Seguridad (Sp)", f"{security_val:.1f}%", help="Nivel de seguridad fiscal y policial.")
         
         if sec_breakdown and "text" in sec_breakdown:
-            with st.expander("🔍 Desglose de Cálculo"):
-                st.write(f"**Fórmula:** {sec_breakdown['text']}")
-                st.caption("Base + Población + Infraestructura - Penalización Orbital")
+            with st.expander("🔍 Desglose"):
+                st.caption(f"{sec_breakdown['text']}")
         else:
-            st.caption("Desglose no disponible.")
+            st.caption("Calculando...")
     
     # Slots Info (Extra row)
     st.divider()

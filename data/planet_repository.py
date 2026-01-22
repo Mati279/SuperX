@@ -13,6 +13,7 @@ Corrección v5.4: Protecciones robustas contra respuestas 'NoneType' de Supabase
 Corrección v5.5: Persistencia de 'poblacion' en tabla global 'planets'.
 Corrección v5.6: Join con tabla 'planets' para obtener seguridad real.
 Refactor v5.7: Estandarización de nomenclatura 'population' (Fix poblacion).
+Refactor v5.8: Limpieza integral de consultas y campos expandidos.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -31,10 +32,13 @@ def _get_db():
 # --- CONSULTA DE PLANETAS (TABLA MUNDIAL) ---
 
 def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
-    """Obtiene información de un planeta de la tabla mundial 'planets'."""
+    """
+    Obtiene información de un planeta de la tabla mundial 'planets'.
+    Actualizado V5.8: Recuperación explícita de population y breakdown.
+    """
     try:
         response = _get_db().table("planets")\
-            .select("id, name, system_id, biome, mass_class, orbital_ring, is_habitable, surface_owner_id, orbital_owner_id, is_disputed, security")\
+            .select("id, name, system_id, biome, mass_class, orbital_ring, is_habitable, surface_owner_id, orbital_owner_id, is_disputed, security, population, security_breakdown")\
             .eq("id", planet_id)\
             .single()\
             .execute()
@@ -196,7 +200,7 @@ def create_planet_asset(
         
         if response and response.data:
             # Sincronizar tabla PLANETS
-            # FIX V5.5: Se agrega 'population' al update para mantener consistencia global
+            # FIX V5.8: Uso estricto de population
             _get_db().table("planets").update({
                 "surface_owner_id": player_id,
                 "security": initial_security,

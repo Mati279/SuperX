@@ -1,4 +1,4 @@
-# scripts/fix_galaxy_population.py
+# scripts/fix_galaxy_population.py (Completo)
 import random
 from data.database import get_supabase
 
@@ -15,9 +15,10 @@ def fix_population():
     print(f"📊 Rango: {MIN_POP}B - {MAX_POP}B | Formato: Float con 2 decimales")
     
     # 1. Resetear TODA la población a 0.0
+    # Refactor V5.7: Estandarización a 'population'
     print("🧹 PASO 1: Reset global a 0.0...")
     try:
-        db.table("planets").update({"poblacion": 0.0}).gt("id", 0).execute()
+        db.table("planets").update({"population": 0.0}).gt("id", 0).execute()
     except Exception as e:
         print(f"   ⚠️ Error en el reset masivo: {e}")
 
@@ -47,7 +48,8 @@ def fix_population():
                 pop_val = round(raw_val, 2)
                 
                 try:
-                    db.table("planets").update({"poblacion": pop_val}).eq("id", p_id).execute()
+                    # Refactor V5.7: Estandarización a 'population'
+                    db.table("planets").update({"population": pop_val}).eq("id", p_id).execute()
                     count_populated += 1
                 except Exception as e:
                     print(f"   ⚠️ Error update planeta {p_id}: {e}")

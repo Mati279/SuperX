@@ -7,6 +7,7 @@ Corrección V4.4.1: Manejo seguro de 'maybe_single' para assets inexistentes.
 Corrección V5.0: Fix Mismatch 'population' vs 'poblacion' y Cálculo Dinámico de Seguridad (Ss).
 Refactorizado V5.1: Protecciones 'NoneType' en respuestas de Supabase.
 Actualizado V5.2: Integración con Modo Omnisciencia (Debug).
+Refactor V5.8: Estandarización final a 'population' y navegación directa a Superficie.
 """
 import json
 import math
@@ -120,11 +121,22 @@ def _render_player_domains_panel():
             sec_color = "green" if sp >= 70 else "orange" if sp >= 40 else "red"
             c3.markdown(f":{sec_color}[{sp:.1f}/100]")
             
-            if c4.button("Gestionar", key=f"btn_pl_{asset['id']}"):
-                st.session_state.selected_system_id = system_id
-                st.session_state.selected_planet_id = planet_id
-                st.session_state.map_view = "planet"
-                st.rerun()
+            # BOTONERA DE ACCIÓN
+            with c4:
+                b1, b2 = st.columns(2)
+                # Botón 1: Ver en mapa (comportamiento original)
+                if b1.button("🗺️", key=f"btn_map_{asset['id']}", help="Ver en Mapa"):
+                    st.session_state.selected_system_id = system_id
+                    st.session_state.selected_planet_id = planet_id
+                    st.session_state.map_view = "planet"
+                    st.rerun()
+                
+                # Botón 2: Ir a Superficie (Navegación directa)
+                if b2.button("🌐", key=f"btn_surf_{asset['id']}", help="Gestionar Superficie"):
+                    st.session_state.selected_system_id = system_id
+                    st.session_state.selected_planet_id = planet_id
+                    st.session_state.current_page = "Superficie" # Redirige a la nueva página
+                    st.rerun()
 
 
 def _render_system_view():
@@ -136,8 +148,8 @@ def _render_system_view():
     planets = get_planets_by_system_id(system_id)
     
     # 2. Calcular Métricas en vivo (Fix V5.0)
-    # Soporte dual para population (modelo) o poblacion (db raw)
-    total_pop = sum(p.get('poblacion') or p.get('population') or 0.0 for p in planets)
+    # Refactor V5.8: Solo population
+    total_pop = sum(p.get('population', 0.0) or 0.0 for p in planets)
 
     # Seguridad (Ss): Si es nula en sistema, calculamos promedio de planetas
     ss = system.get('security')
@@ -196,8 +208,8 @@ def _render_system_view():
             color = BIOME_COLORS.get(biome, "#7ec7ff")
             c2.markdown(f"<span style='color: {color}; font-weight: 700'>{planet['name']}</span>", unsafe_allow_html=True)
             
-            # Soporte dual de keys
-            p_pop = planet.get('poblacion') or planet.get('population') or 0.0
+            # Refactor V5.8: Solo population
+            p_pop = planet.get('population', 0.0) or 0.0
             
             # --- INFO STRING BUILDER ---
             info_parts = []
@@ -270,13 +282,13 @@ def _render_planet_view():
     # DATOS MÉTRICOS (MMFR V2)
     m1, m2, m3 = st.columns(3)
     
-    # Soporte dual
-    real_pop = planet.get('poblacion') or planet.get('population') or 0.0
+    # Refactor V5.8: Solo population
+    real_pop = planet.get('population', 0.0) or 0.0
     security_val = planet.get('security', 0.0)
     if security_val is None: security_val = 0.0
 
     if asset:
-        asset_pop = asset.get('poblacion') or asset.get('population') or 0.0
+        asset_pop = asset.get('population', 0.0) or 0.0
         m1.metric("Población (Ciudadanos)", f"{asset_pop:,.1f}B")
         
         delta_color = "normal" if security_val >= 50 else "inverse" 
@@ -453,8 +465,8 @@ def _render_interactive_galaxy_map():
 
     # --- PRE-CÁLCULO DE MÉTRICAS MASIVO (Fix V5.0 & V5.1) ---
     try:
-        # Traemos también 'poblacion' además de 'population' por seguridad
-        all_planets_res = get_supabase().table("planets").select("id, system_id, poblacion, population, security").execute()
+        # Traemos también 'poblacion' además de 'population' por seguridad (aunque ya no se use)
+        all_planets_res = get_supabase().table("planets").select("id, system_id, population, security").execute()
         all_planets_data = all_planets_res.data if all_planets_res and all_planets_res.data else []
     except:
         all_planets_data = []
@@ -463,8 +475,8 @@ def _render_interactive_galaxy_map():
     
     for p in all_planets_data:
         sid = p['system_id']
-        # Dual support
-        pop = p.get('poblacion') or p.get('population') or 0.0
+        # Refactor V5.8: Solo population
+        pop = p.get('population', 0.0) or 0.0
         sec = p.get('security') or 0.0
         
         if sid not in system_stats: 

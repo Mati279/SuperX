@@ -195,10 +195,11 @@ def get_commander_location_display(commander_id: int) -> Dict[str, str]:
         player_id = char_res.data.get("player_id")
 
         # 2. Buscar el ASENTAMIENTO PRINCIPAL (Base) en planet_assets
+        # Refactor V5.8: Ordenamiento corregido a 'population'
         asset_res = _get_db().table("planet_assets")\
             .select("system_id, planet_id, nombre_asentamiento")\
             .eq("player_id", player_id)\
-            .order("poblacion", desc=True)\
+            .order("population", desc=True)\
             .limit(1)\
             .maybe_single()\
             .execute()

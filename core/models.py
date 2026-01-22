@@ -472,10 +472,11 @@ class PlanetAsset(BaseModel):
     def from_dict(cls, data: Dict[str, Any]) -> 'PlanetAsset':
         if not data:
             raise ValueError("No se puede crear PlanetAsset desde datos vacíos")
-        # Aseguramos compatibilidad si llega 'poblacion' (legacy)
+        
+        # Migración segura en memoria: Si viene 'poblacion' legacy, se asigna a 'population'
         if "poblacion" in data and "population" not in data:
-             data["population"] = data.pop("poblacion")
-             
+            data["population"] = data.pop("poblacion")
+            
         return cls(**{k: v for k, v in data.items() if v is not None})
 
 

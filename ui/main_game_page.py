@@ -3,6 +3,7 @@ import streamlit as st
 import time
 from .state import logout_user, get_player, get_commander
 from data.log_repository import get_recent_logs, log_event
+from data.planet_repository import get_all_player_planets # Importación Nueva V5.8
 from services.gemini_service import resolve_player_action
 # Importación del servicio de generación para herramientas de Debug
 from services.character_generation_service import generate_character_pool
@@ -23,6 +24,7 @@ from .faction_roster import render_faction_roster
 from .recruitment_center import show_recruitment_center
 from .galaxy_map_page import show_galaxy_map_page
 from .ship_status_page import show_ship_status_page
+from .planet_surface_view import render_planet_surface # Vista de Superficie conectada
 
 # --- IMPORTACIÓN NUEVA: Widget de Resolución MRG ---
 from .mrg_resolution_widget import render_full_mrg_resolution
@@ -73,6 +75,8 @@ def render_main_game_page(cookie_manager):
         "Centro de Reclutamiento": show_recruitment_center,
         "Mapa de la Galaxia": show_galaxy_map_page,
         "Flota": show_ship_status_page,
+        # Nueva Página de Superficie (Render condicional)
+        "Superficie": lambda: render_planet_surface(st.session_state.selected_planet_id) if st.session_state.get("selected_planet_id") else st.warning("⚠️ Selecciona un planeta desde el Mapa o Accesos Directos.")
     }
     
     # Contenedor principal con margen superior para no quedar bajo el HUD
@@ -350,7 +354,6 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
         # --- SECCIÓN: IDENTIDAD ---
         st.header(f"{player.faccion_nombre}")
         if player.banner_url:
-            # FIX: width="stretch" para imágenes en versiones nuevas de Streamlit
             st.image(player.banner_url, width="stretch")
 
         st.caption(f"Comandante {commander.nombre}")
@@ -366,6 +369,28 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             if st.button(p, use_container_width=True, type="primary" if st.session_state.current_page == p else "secondary"):
                 st.session_state.current_page = p
                 st.rerun()
+
+        # --- NUEVA SECCIÓN: ACCESOS DIRECTOS COLONIAS ---
+        st.divider()
+        st.caption("📍 Accesos Directos: Colonias")
+        
+        my_planets = get_all_player_planets(player.id)
+        if my_planets:
+            for p_asset in my_planets:
+                # Nombre del asentamiento o planeta
+                p_name = p_asset.get("nombre_asentamiento") or "Colonia Sin Nombre"
+                sys_name = p_asset.get("planets", {}).get("name", "Sistema Desc.")
+                
+                label = f"🏠 {p_name}"
+                
+                # Al hacer click, configuramos el estado y cambiamos la página
+                if st.button(label, key=f"nav_col_{p_asset['id']}", use_container_width=True, help=f"Ir a {sys_name}"):
+                    st.session_state.selected_planet_id = p_asset["planet_id"]
+                    st.session_state.selected_system_id = p_asset["system_id"]
+                    st.session_state.current_page = "Superficie"
+                    st.rerun()
+        else:
+            st.info("Sin colonias establecidas.")
 
         st.divider()
         if st.button("Cerrar Sesión", use_container_width=True):
