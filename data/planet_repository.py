@@ -161,7 +161,7 @@ def create_planet_asset(
             "poblacion": initial_population,
             "pops_activos": initial_population,
             "pops_desempleados": 0.0,
-            "seguridad": initial_security, 
+            # "seguridad": initial_security, <-- ELIMINADO V4.4
             "infraestructura_defensiva": 0,
             "base_tier": 1
         }
@@ -169,7 +169,12 @@ def create_planet_asset(
         response = _get_db().table("planet_assets").insert(asset_data).execute()
         
         if response.data:
-            _get_db().table("planets").update({"surface_owner_id": player_id}).eq("id", planet_id).execute()
+            # V4.4: Actualizar seguridad en la tabla PLANETS
+            _get_db().table("planets").update({
+                "surface_owner_id": player_id,
+                "security": initial_security
+            }).eq("id", planet_id).execute()
+            
             log_event(f"Planeta colonizado: {settlement_name} (Seguridad inicial: {initial_security:.1f})", player_id)
             return response.data[0]
         return None
@@ -389,11 +394,17 @@ def get_luxury_extraction_sites_for_player(player_id: int) -> List[Dict[str, Any
 
 
 def batch_update_planet_security(updates: List[Tuple[int, float]]) -> bool:
+    """
+    Actualiza la seguridad en lote.
+    V4.4: Redirigido a la tabla 'planets'. Se espera que 'updates' sea (planet_id, security).
+    """
     if not updates: return True
     try:
         db = _get_db()
         for planet_id, security in updates:
-            db.table("planet_assets").update({"seguridad": security}).eq("id", planet_id).execute()
+            # Nota: Originalmente el primer elemento era asset_id si venía de get_all_player_planets
+            # Pero en la lógica V4.4 de economy_engine se pasa (planet['id'], security) donde planet['id'] es el PLANET ID
+            db.table("planets").update({"security": security}).eq("id", planet_id).execute()
         return True
     except Exception as e:
         log_event(f"Error batch security update: {e}", is_error=True)

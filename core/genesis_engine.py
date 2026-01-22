@@ -1,9 +1,10 @@
-# core/genesis_engine.py
+# core/genesis_engine.py (Completo)
 """
 Genesis Engine - Protocolo v4.2 "Fair Start"
 Maneja la lógica de inicialización de nuevas facciones.
 Actualizado: Estandarización de Población Inicial (1.50B - 1.70B).
 Actualizado: Generación de Tripulación Inicial (Level 5 + 2x Level 3) con conocimiento KNOWN.
+Corrección V4.4: Escritura de seguridad en tabla 'planets' en lugar de 'planet_assets'.
 """
 
 import random
@@ -51,12 +52,12 @@ def genesis_protocol(player_id: int) -> bool:
         system_id = find_safe_starting_node()
         
         # 2. Seleccionar planeta aleatorio
-        response_planets = db.table("planets").select("id, name, biome, system_id").eq("system_id", system_id).execute()
+        response_planets = db.table("planets").select("id, name, biome, system_id, orbital_ring").eq("system_id", system_id).execute()
         
         if not response_planets.data:
             log_event(f"⚠ Sistema {system_id} vacío. Buscando respaldo...", player_id, is_error=True)
             # Fallback: buscar cualquier planeta
-            fallback = db.table("planets").select("id, name, system_id").limit(1).execute()
+            fallback = db.table("planets").select("id, name, system_id, orbital_ring").limit(1).execute()
             
             if not fallback.data: 
                 print("❌ CRITICAL: No existen planetas en la base de datos.")
@@ -73,16 +74,24 @@ def genesis_protocol(player_id: int) -> bool:
         # Asignar población inicial decimal (1.5 - 1.7 Billones)
         initial_pop = round(random.uniform(GENESIS_POP_MIN, GENESIS_POP_MAX), 2)
         
-        # Calcular Seguridad Inicial Dinámica (MMFR V2)
-        # Fórmula: Base (25) + (Pop * 5)
-        # Nota: En Genesis ignoramos el anillo orbital ya que no tenemos el dato preciso aquí, se ajustará en el primer tick
+        # Calcular Seguridad Inicial Dinámica (MMFR V4.4)
         sec_base = ECONOMY_RATES.get("security_base", 25.0)
         sec_pop = ECONOMY_RATES.get("security_per_1b_pop", 5.0)
-        initial_security = sec_base + (initial_pop * sec_pop)
         
-        # Clamp preventivo
-        initial_security = max(1.0, min(initial_security, 100.0))
+        # Obtenemos orbital_ring para cálculo más preciso si existe, sino default 3
+        orbital_ring = target_planet.get('orbital_ring', 3)
+        dist_penalty = 2.0 * orbital_ring
+        
+        raw_security = sec_base + (initial_pop * sec_pop) - dist_penalty
+        initial_security = max(1.0, min(raw_security, 100.0))
+        
+        # Generar breakdown inicial
+        security_breakdown = {
+            "text": f"Génesis: Base ({sec_base}) + Pop ({initial_pop:.1f}x{sec_pop}) - Dist ({dist_penalty})",
+            "total": initial_security
+        }
 
+        # Datos del Asset (Sin columna 'seguridad')
         asset_data = {
             "player_id": player_id,
             "system_id": system_id,
@@ -91,18 +100,25 @@ def genesis_protocol(player_id: int) -> bool:
             "poblacion": initial_pop,
             "pops_activos": initial_pop,
             "pops_desempleados": 0.0,
-            "seguridad": initial_security, 
+            # "seguridad": initial_security,  <-- REMOVIDO: Columna eliminada de planet_assets
             "infraestructura_defensiva": 0
         }
 
+        # Insertar Asset
         db.table("planet_assets").insert(asset_data).execute()
+        
+        # Actualizar Planeta (Source of Truth de Seguridad)
+        db.table("planets").update({
+            "surface_owner_id": player_id,
+            "security": initial_security,
+            "security_breakdown": security_breakdown
+        }).eq("id", target_planet['id']).execute()
         
         # 4. Inventario y FOW
         apply_genesis_inventory(player_id)
         initialize_fog_of_war(player_id, system_id)
 
-        # 5. Generación de Tripulación Inicial
-        # Se comenta para mover la generación al UI manual ("Reunir personal")
+        # 5. Generación de Tripulación Inicial (Opcional/Manual en UI)
         # _deploy_starting_crew(player_id, target_planet['id'])
         
         log_event(f"✅ Protocolo Génesis completado. Base: {base_name}. Pob: {initial_pop}B. Seg: {initial_security:.1f}", player_id)
