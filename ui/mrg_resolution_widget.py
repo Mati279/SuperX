@@ -1,4 +1,4 @@
-# ui/mrg_resolution_widget.py
+# ui/mrg_resolution_widget.py (Completo)
 """Widget de UI para mostrar y resolver tiradas MRG."""
 import streamlit as st
 from core.mrg_engine import MRGResult, ResultType
@@ -92,8 +92,9 @@ def render_mrg_calculation(result: MRGResult):
 
     st.markdown("###### 📊 Cálculo")
     
-    # Obtener detalles para tooltips, con defaults seguros
-    details = result.details if result.details else {}
+    # Obtener detalles para tooltips, con defaults seguros.
+    # Usamos getattr para evitar crash si el objeto en session_state es una versión vieja sin 'details'.
+    details = getattr(result, "details", {}) or {}
     
     tip_roll = details.get("roll", "Suma natural de 2d50")
     tip_diff = details.get("difficulty", "Dificultad base establecida por el Director")
