@@ -4,9 +4,10 @@ Repositorio de Planetas y Edificios.
 Gestiona activos planetarios, edificios, recursos y mejoras de base.
 Refactorizado para MMFR V2: Seguridad dinámica (0-100) y Mantenimiento.
 Actualizado v4.3.0: Integración completa de Planetología Avanzada (Sectores).
-Actualizado v4.4.0: Persistencia de Seguridad Galáctica y Desgloses.
+Actualizado v4.4.0: Persistencia de Seguridad Galáctica.
 Corrección v4.4.1: Consultas seguras (maybe_single) para assets opcionales.
 Actualizado v4.7.0: Estandarización de Capitales (Población Inicial).
+Actualizado v4.8.1: Eliminación de columna obsoleta 'security_breakdown'.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -27,8 +28,9 @@ def _get_db():
 def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
     """Obtiene información de un planeta de la tabla mundial 'planets'."""
     try:
+        # V4.8.1: Eliminado 'security_breakdown' del select para evitar error 42703
         response = _get_db().table("planets")\
-            .select("id, name, system_id, biome, mass_class, orbital_ring, is_habitable, surface_owner_id, orbital_owner_id, is_disputed, security, security_breakdown")\
+            .select("id, name, system_id, biome, mass_class, orbital_ring, is_habitable, surface_owner_id, orbital_owner_id, is_disputed, security")\
             .eq("id", planet_id)\
             .single()\
             .execute()
@@ -150,8 +152,7 @@ def create_planet_asset(
 ) -> Optional[Dict[str, Any]]:
     """
     Crea una colonia con seguridad inicial basada en población.
-    Actualizado V4.7: Estandarización de Capitales. Si es el primer planeta,
-    fuerza población aleatoria entre 1.5 y 1.7 B.
+    Actualizado V4.7: Estandarización de Capitales.
     """
     try:
         # Lógica de Estandarización de Capitales (V4.7)
@@ -244,7 +245,6 @@ def get_sector_details(sector_id: int) -> Optional[Dict[str, Any]]:
             .eq("sector_id", sector_id)\
             .execute()
         
-        # Enriquecer nombres de edificios desde constantes
         names = []
         for b in (buildings_res.data or []):
             name = BUILDING_TYPES.get(b["building_type"], {}).get("name", "Estructura")
@@ -416,8 +416,6 @@ def batch_update_planet_security(updates: List[Tuple[int, float]]) -> bool:
     try:
         db = _get_db()
         for planet_id, security in updates:
-            # Nota: Originalmente el primer elemento era asset_id si venía de get_all_player_planets
-            # Pero en la lógica V4.4 de economy_engine se pasa (planet['id'], security) donde planet['id'] es el PLANET ID
             db.table("planets").update({"security": security}).eq("id", planet_id).execute()
         return True
     except Exception as e:
@@ -455,7 +453,6 @@ def check_system_majority_control(system_id: int, faction_id: int) -> bool:
     try:
         db = _get_db()
         
-        # 1. Contar total de planetas relevantes en el sistema
         all_planets_res = db.table("planets").select("id").eq("system_id", system_id).execute()
         all_planets = all_planets_res.data if all_planets_res.data else []
         total_planets = len(all_planets)
@@ -463,11 +460,6 @@ def check_system_majority_control(system_id: int, faction_id: int) -> bool:
         if total_planets == 0:
             return False
             
-        # 2. Contar planetas controlados por la facción (Jugador/Facción)
-        # Verificamos planetas donde 'surface_owner_id' coincida con la facción (o player asociado)
-        # Nota: Asumimos que faction_id es equivalente a player_id para propiedad directa
-        # o que hay lógica de alianza. Para simplificar, usamos surface_owner_id.
-        
         my_planets_res = db.table("planets").select("id")\
             .eq("system_id", system_id)\
             .eq("surface_owner_id", faction_id)\
@@ -475,7 +467,6 @@ def check_system_majority_control(system_id: int, faction_id: int) -> bool:
             
         my_count = len(my_planets_res.data) if my_planets_res.data else 0
         
-        # 3. Verificar mayoría simple (> 50%)
         has_majority = my_count > (total_planets / 2.0)
         
         return has_majority
@@ -497,22 +488,22 @@ def update_planet_security_value(planet_id: int, value: float) -> bool:
 
 def update_planet_security_data(planet_id: int, security: float, breakdown: Dict[str, Any]) -> bool:
     """
-    Actualiza la seguridad y el desglose detallado (breakdown) en la tabla 'planets'.
+    Actualiza la seguridad en la tabla 'planets'.
+    Nota: El desglose (breakdown) ya no se persiste en DB V4.8 por limpieza de esquema.
     """
     try:
+        # V4.8.1: Eliminado 'security_breakdown' del update
         _get_db().table("planets").update({
-            "security": security,
-            "security_breakdown": breakdown
+            "security": security
         }).eq("id", planet_id).execute()
         return True
     except Exception as e:
-        log_event(f"Error actualizando seguridad detallada planeta {planet_id}: {e}", is_error=True)
+        log_event(f"Error actualizando seguridad planeta {planet_id}: {e}", is_error=True)
         return False
 
 def get_all_colonized_system_ids() -> List[int]:
     """Retorna una lista única de IDs de sistemas que tienen al menos un planeta colonizado."""
     try:
-        # Buscamos planetas que tengan surface_owner_id definido
         response = _get_db().table("planets")\
             .select("system_id")\
             .not_.is_("surface_owner_id", "null")\
@@ -521,7 +512,6 @@ def get_all_colonized_system_ids() -> List[int]:
         if not response.data:
             return []
             
-        # Extraemos IDs únicos
         system_ids = list(set([p["system_id"] for p in response.data if p.get("system_id")]))
         return system_ids
     except Exception as e:
