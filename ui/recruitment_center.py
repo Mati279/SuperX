@@ -12,6 +12,7 @@ Debug v2.5: Herramientas de investigación determinista implementadas.
 Actualizado v5.1.8: Fuente de Verdad Unificada (SQL Knowledge System).
 Actualizado v5.1.9: Visualización estrictamente basada en KnowledgeLevel.
 Fix v5.2.0: Corrección de falso positivo en "already_investigated" por comparación de strings en Enum.
+Fix v5.2.1: Eliminación de constante de ubicación obsoleta (Refactorización v4.3.1).
 """
 
 import streamlit as st
@@ -41,7 +42,8 @@ from data.world_repository import (
     get_investigating_target_info
 )
 from data.log_repository import log_event
-from config.app_constants import DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS, DEFAULT_RECRUIT_LOCATION
+# Modificación: Eliminada DEFAULT_RECRUIT_LOCATION por ser obsoleta en v4.3.1
+from config.app_constants import DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS
 from core.character_engine import BIO_ACCESS_UNKNOWN, BIO_ACCESS_KNOWN
 from core.models import KnowledgeLevel # Importación de Enum
 # Importamos la nueva función de análisis
