@@ -1,4 +1,4 @@
-# ui/main_game_page.py
+# ui/main_game_page.py (Completo)
 import streamlit as st
 import time
 from .state import logout_user, get_player, get_commander
@@ -23,6 +23,9 @@ from .faction_roster import render_faction_roster
 from .recruitment_center import show_recruitment_center
 from .galaxy_map_page import show_galaxy_map_page
 from .ship_status_page import show_ship_status_page
+
+# --- IMPORTACIÓN NUEVA: Widget de Resolución MRG ---
+from .mrg_resolution_widget import render_full_mrg_resolution
 
 
 def render_main_game_page(cookie_manager):
@@ -465,6 +468,17 @@ def _render_war_room_page():
             if not has_items:
                 st.info("No hay recursos de lujo almacenados.")
 
+    # --- VISUALIZACIÓN DE TIRADAS MRG (Visualización inmediata) ---
+    # Comprobamos si hay un resultado reciente en sesión para animarlo
+    if "last_mrg_result" in st.session_state and st.session_state.last_mrg_result:
+        mrg_res = st.session_state.last_mrg_result
+        # IMPORTANTE: Solo renderizar si tiene dados reales (evita error en consultas 'DummyResult')
+        if hasattr(mrg_res, 'roll') and mrg_res.roll is not None:
+            render_full_mrg_resolution(mrg_res)
+        else:
+            # Si es una consulta informativa (roll=None), mostramos algo sutil o nada
+            pass
+
     # --- Chat Container ---
     chat_box = st.container(height=500, border=True)
     logs = get_recent_logs(player.id, limit=30) 
@@ -519,7 +533,17 @@ def _render_war_room_page():
     action = st.chat_input("Escriba sus órdenes...")
     if action:
         log_event(f"[PLAYER] {action}", player.id)
-        resolve_player_action(action, player.id)
+        
+        # 1. Resolvemos la acción obteniendo el objeto completo de respuesta
+        response_data = resolve_player_action(action, player.id)
+        
+        # 2. Capturamos el resultado MRG para mostrar la animación en el próximo render
+        # 'response_data' es un dict: {"narrative": str, "mrg_result": MRGResult, ...}
+        if response_data and "mrg_result" in response_data:
+            st.session_state.last_mrg_result = response_data["mrg_result"]
+        else:
+            st.session_state.last_mrg_result = None
+
         st.rerun()
 
 
