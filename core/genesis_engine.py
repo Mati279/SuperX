@@ -10,6 +10,7 @@ Corrección V5.9: Fix crítico de nomenclatura 'poblacion' a 'population' en pla
 Corrección V6.0: Fix de persistencia de seguridad (Race Condition con Triggers DB).
 Corrección V6.1: Filtro estricto de Biomas Habitables en selección de planeta inicial.
 Actualizado V7.2: Soporte para Niebla de Superficie (Descubrimiento automático de sector base).
+Actualizado V7.3: Garantía de Inicialización de Sectores y Asignación de Distrito Central.
 """
 
 import random
@@ -17,9 +18,14 @@ import traceback
 from typing import Dict, Any, List
 from data.database import get_supabase
 from data.log_repository import log_event
-# Importación actualizada para V7.2
-from data.planet_repository import grant_sector_knowledge, get_planet_sectors_status
-from core.world_constants import STAR_TYPES, ECONOMY_RATES, HABITABLE_BIRTH_BIOMES
+# Importación actualizada para V7.3
+from data.planet_repository import (
+    grant_sector_knowledge, 
+    get_planet_sectors_status, 
+    initialize_planet_sectors, 
+    claim_genesis_sector
+)
+from core.world_constants import STAR_TYPES, ECONOMY_RATES, HABITABLE_BIRTH_BIOMES, SECTOR_TYPE_URBAN
 from core.constants import MIN_ATTRIBUTE_VALUE
 from core.models import KnowledgeLevel
 from services.character_generation_service import recruit_character_with_ai
@@ -66,8 +72,8 @@ def genesis_protocol(player_id: int) -> bool:
             # A. Encontrar sistema seguro
             candidate_system_id = find_safe_starting_node()
             
-            # B. Obtener planetas del sistema
-            response_planets = db.table("planets").select("id, name, biome, system_id, orbital_ring, base_defense").eq("system_id", candidate_system_id).execute()
+            # B. Obtener planetas del sistema (Updated V7.3: Include mass_class)
+            response_planets = db.table("planets").select("id, name, biome, system_id, orbital_ring, base_defense, mass_class").eq("system_id", candidate_system_id).execute()
             
             # C. Filtrar candidatos por Bioma Habitable
             candidates = []
@@ -87,7 +93,8 @@ def genesis_protocol(player_id: int) -> bool:
             log_event(f"⚠ No se encontró sistema seguro con biomas válidos. Ejecutando Fallback Global...", player_id, is_error=True)
             
             # Fallback: buscar explícitamente cualquier planeta con bioma habitable en la BD
-            fallback = db.table("planets").select("id, name, biome, system_id, orbital_ring, base_defense")\
+            # Updated V7.3: Include mass_class
+            fallback = db.table("planets").select("id, name, biome, system_id, orbital_ring, base_defense, mass_class")\
                 .in_("biome", HABITABLE_BIRTH_BIOMES)\
                 .limit(10).execute()
             
@@ -165,26 +172,37 @@ def genesis_protocol(player_id: int) -> bool:
         apply_genesis_inventory(player_id)
         initialize_fog_of_war(player_id, system_id)
 
-        # --- V7.2: Descubrimiento del Sector Inicial (Niebla de Superficie) ---
+        # --- V7.3: Descubrimiento y Asignación de Sector Inicial ---
         try:
-            # Recuperar sectores recién creados (o existentes)
+            # A. Garantizar existencia de sectores (Inicialización Lazy)
+            # Usamos mass_class del select anterior, default a 'Estándar' si falta
+            p_mass = target_planet.get('mass_class') or 'Estándar'
+            initialize_planet_sectors(target_planet['id'], target_planet.get('biome', 'Templado'), p_mass)
+            
+            # B. Recuperar sectores
             sectors = get_planet_sectors_status(target_planet['id'])
             
-            # Priorizar sector urbano para el "aterrizaje"
-            landing_sector = next((s for s in sectors if s.get('sector_type') == 'Urbano'), None)
-            
-            # Si no hay urbano, usar el primero
-            if not landing_sector and sectors:
-                landing_sector = sectors[0]
+            # C. Identificar Sector Urbano (Distrito Central)
+            landing_sector = next((s for s in sectors if s.get('sector_type') == SECTOR_TYPE_URBAN), None)
             
             if landing_sector:
+                # D. Reclamar Sector (Asignar propiedad y flag has_outpost)
+                claim_result = claim_genesis_sector(landing_sector['id'], player_id)
+                
+                # E. Descubrir Sector (Niebla)
                 grant_sector_knowledge(player_id, landing_sector['id'])
-                log_event(f"Sector de aterrizaje identificado: {landing_sector.get('name', 'Sector Base')}", player_id)
+                
+                if claim_result:
+                    log_event(f"Sector Urbano {landing_sector['id']} asignado como zona de aterrizaje principal para el jugador {player_id}", player_id)
+                else:
+                    log_event(f"Advertencia: Fallo al reclamar sector {landing_sector['id']}", player_id, is_error=True)
             else:
-                log_event("Advertencia: No se encontraron sectores para establecer zona de aterrizaje.", player_id)
+                # Error Crítico: initialize_planet_sectors debería haber creado uno
+                log_event("❌ CRITICAL: No se encontró Sector Urbano tras inicialización.", player_id, is_error=True)
                 
         except Exception as e:
-            log_event(f"Error inicializando niebla de superficie: {e}", player_id, is_error=True)
+            log_event(f"Error inicializando niebla/sectores: {e}", player_id, is_error=True)
+            traceback.print_exc()
 
         # 5. Generación de Tripulación Inicial (Opcional/Manual en UI)
         # _deploy_starting_crew(player_id, target_planet['id'])

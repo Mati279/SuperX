@@ -20,6 +20,7 @@ Corrección v6.1: Fix crítico de tipos en seguridad (soporte Dict/Float) y pers
 Corrección v6.2: Mapeo explícito de 'population' en assets para el motor económico.
 Actualizado v6.3: Implementación de Soberanía Dinámica y Control de Construcción (Slots/Bloqueos).
 Actualizado v7.2: Soporte para Niebla de Superficie (grant_sector_knowledge).
+Actualizado v7.3: Inicialización garantizada de Sectores Urbanos para Protocolo Génesis.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -27,7 +28,17 @@ import random
 from .database import get_supabase
 from .log_repository import log_event
 from .world_repository import get_world_state
-from core.world_constants import BUILDING_TYPES, BASE_TIER_COSTS, ECONOMY_RATES
+from core.world_constants import (
+    BUILDING_TYPES, 
+    BASE_TIER_COSTS, 
+    ECONOMY_RATES, 
+    PLANET_MASS_CLASSES,
+    SECTOR_SLOTS_CONFIG,
+    SECTOR_TYPE_URBAN,
+    SECTOR_TYPE_PLAIN,
+    SECTOR_TYPE_MOUNTAIN,
+    SECTOR_TYPE_INHOSPITABLE
+)
 from core.rules import calculate_planet_security
 
 
@@ -254,6 +265,7 @@ def create_planet_asset(
             
             # --- FAIL-SAFE DE SECTORES (V5.9) ---
             # Verificar si existen sectores. Si no, crear uno de emergencia.
+            # NOTA: Genesis Engine V7.3 ahora maneja esto mejor, pero mantenemos el fallback.
             sectors_check = db.table("sectors").select("id").eq("planet_id", planet_id).execute()
             if not sectors_check.data:
                 # Crear sector de emergencia
@@ -261,7 +273,7 @@ def create_planet_asset(
                     "id": (planet_id * 1000) + 1,
                     "planet_id": planet_id,
                     "name": "Sector Urbano (Emergencia)",
-                    "sector_type": "Urbano", 
+                    "sector_type": SECTOR_TYPE_URBAN, 
                     "max_slots": 5,
                     "is_known": True
                     # V6.0: Eliminado 'buildings_count'
@@ -870,3 +882,74 @@ def get_all_colonized_system_ids() -> List[int]:
     except Exception as e:
         log_event(f"Error obteniendo sistemas colonizados: {e}", is_error=True)
         return []
+
+# --- V7.3: INICIALIZACIÓN DE SECTORES (GENESIS) ---
+
+def initialize_planet_sectors(planet_id: int, biome: str, mass_class: str = 'Estándar') -> bool:
+    """
+    Garantiza que un planeta tenga sectores inicializados.
+    Crea siempre un sector Urbano y rellena el resto según tamaño y constantes.
+    """
+    try:
+        db = _get_db()
+        # 1. Verificar existencia
+        check = db.table("sectors").select("id").eq("planet_id", planet_id).limit(1).execute()
+        if check and check.data:
+            return True # Ya existen sectores
+
+        # 2. Calcular cantidad y configuración
+        num_sectors = PLANET_MASS_CLASSES.get(mass_class, 4)
+        sectors_data = []
+        
+        # Sector 0: Distrito Central (Urbano) - Siempre presente para HQs
+        urban_slots = SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_URBAN, 2)
+        sectors_data.append({
+            "planet_id": planet_id,
+            "name": "Distrito Central",
+            "sector_type": SECTOR_TYPE_URBAN,
+            "max_slots": urban_slots,
+            "is_known": False, 
+            "resource_category": "influencia"
+        })
+        
+        # Sectores Adicionales: Mezcla segura de tipos básicos
+        valid_types = [SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN]
+        
+        for i in range(1, num_sectors):
+            sType = random.choice(valid_types)
+            slots = SECTOR_SLOTS_CONFIG.get(sType, 3)
+            
+            # Ajuste simple de recursos según tipo
+            res_cat = "materiales" if sType == SECTOR_TYPE_MOUNTAIN else "componentes"
+            
+            sectors_data.append({
+                "planet_id": planet_id,
+                "name": f"Sector {i+1} ({sType})",
+                "sector_type": sType,
+                "max_slots": slots,
+                "is_known": False,
+                "resource_category": res_cat
+            })
+            
+        # 3. Inserción en lote
+        res = db.table("sectors").insert(sectors_data).execute()
+        return True if res else False
+
+    except Exception as e:
+        log_event(f"Error critical initializing sectors for planet {planet_id}: {e}", is_error=True)
+        return False
+
+def claim_genesis_sector(sector_id: int, player_id: int) -> bool:
+    """
+    Asigna la propiedad explícita de un sector para el aterrizaje inicial (Génesis).
+    Actualiza owner_id y has_outpost en la tabla de sectores.
+    """
+    try:
+        _get_db().table("sectors").update({
+            "owner_id": player_id,
+            "has_outpost": True
+        }).eq("id", sector_id).execute()
+        return True
+    except Exception as e:
+        log_event(f"Error claiming genesis sector {sector_id}: {e}", player_id, is_error=True)
+        return False
