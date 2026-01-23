@@ -11,6 +11,9 @@ Corrección V6.0: Fix de persistencia de seguridad (Race Condition con Triggers 
 Corrección V6.1: Filtro estricto de Biomas Habitables en selección de planeta inicial.
 Actualizado V7.2: Soporte para Niebla de Superficie (Descubrimiento automático de sector base).
 Actualizado V7.3: Garantía de Inicialización de Sectores y Asignación de Distrito Central.
+Actualizado V7.4: Construcción automática de Comando Central (HQ) en sector urbano inicial.
+                  Fix claim_genesis_sector: Eliminadas columnas inexistentes (owner_id, has_outpost).
+                  Recuperación de planet_asset_id para vinculación correcta de edificios.
 """
 
 import random
@@ -18,12 +21,12 @@ import traceback
 from typing import Dict, Any, List
 from data.database import get_supabase
 from data.log_repository import log_event
-# Importación actualizada para V7.3
+# Importación actualizada para V7.4
 from data.planet_repository import (
-    grant_sector_knowledge, 
-    get_planet_sectors_status, 
-    initialize_planet_sectors, 
-    claim_genesis_sector
+    grant_sector_knowledge,
+    initialize_planet_sectors,
+    claim_genesis_sector,
+    add_initial_building
 )
 from core.world_constants import STAR_TYPES, ECONOMY_RATES, HABITABLE_BIRTH_BIOMES, SECTOR_TYPE_URBAN
 from core.constants import MIN_ATTRIBUTE_VALUE
@@ -148,8 +151,14 @@ def genesis_protocol(player_id: int) -> bool:
             "infraestructura_defensiva": 0
         }
 
-        # Insertar Asset
-        db.table("planet_assets").insert(asset_data).execute()
+        # Insertar Asset y recuperar ID generado (V7.4)
+        asset_response = db.table("planet_assets").insert(asset_data).execute()
+        if not asset_response or not asset_response.data:
+            log_event("❌ Error crítico: No se pudo crear el asset planetario.", player_id, is_error=True)
+            return False
+
+        planet_asset_id = asset_response.data[0]['id']
+        log_event(f"Asset planetario creado con ID: {planet_asset_id}", player_id)
         
         # Actualizar Planeta (Source of Truth de Seguridad y Población)
         # FIX V6.0: Separación de updates para evitar race condition con triggers DB
@@ -172,36 +181,52 @@ def genesis_protocol(player_id: int) -> bool:
         apply_genesis_inventory(player_id)
         initialize_fog_of_war(player_id, system_id)
 
-        # --- V7.3: Descubrimiento y Asignación de Sector Inicial ---
+        # --- V7.4: Descubrimiento, Asignación de Sector y Edificio Inicial ---
         try:
             # A. Garantizar existencia de sectores (Inicialización Lazy)
             # Usamos mass_class del select anterior, default a 'Estándar' si falta
             p_mass = target_planet.get('mass_class') or 'Estándar'
-            initialize_planet_sectors(target_planet['id'], target_planet.get('biome', 'Templado'), p_mass)
-            
-            # B. Recuperar sectores
-            sectors = get_planet_sectors_status(target_planet['id'])
-            
-            # C. Identificar Sector Urbano (Distrito Central)
+            sectors = initialize_planet_sectors(target_planet['id'], target_planet.get('biome', 'Templado'), p_mass)
+
+            # B. Identificar Sector Urbano (Distrito Central)
             landing_sector = next((s for s in sectors if s.get('sector_type') == SECTOR_TYPE_URBAN), None)
-            
+
             if landing_sector:
-                # D. Reclamar Sector (Asignar propiedad y flag has_outpost)
-                claim_result = claim_genesis_sector(landing_sector['id'], player_id)
-                
-                # E. Descubrir Sector (Niebla)
-                grant_sector_knowledge(player_id, landing_sector['id'])
-                
-                if claim_result:
-                    log_event(f"Sector Urbano {landing_sector['id']} asignado como zona de aterrizaje principal para el jugador {player_id}", player_id)
+                landing_sector_id = landing_sector['id']
+
+                # C. Reclamar Sector (Marca is_known=True)
+                claim_result = claim_genesis_sector(landing_sector_id, player_id)
+
+                # D. Descubrir Sector (Niebla - player_sector_knowledge)
+                grant_sector_knowledge(player_id, landing_sector_id)
+
+                # E. Construir Edificio Inicial (HQ - Comando Central)
+                building_result = add_initial_building(
+                    player_id=player_id,
+                    planet_asset_id=planet_asset_id,
+                    sector_id=landing_sector_id,
+                    building_type='hq'
+                )
+
+                if claim_result and building_result:
+                    log_event(
+                        f"✅ Sector Urbano {landing_sector_id} asignado con Comando Central "
+                        f"para jugador {player_id} (Asset: {planet_asset_id})",
+                        player_id
+                    )
                 else:
-                    log_event(f"Advertencia: Fallo al reclamar sector {landing_sector['id']}", player_id, is_error=True)
+                    log_event(
+                        f"⚠ Advertencia: Sector {landing_sector_id} parcialmente configurado "
+                        f"(claim={claim_result}, building={building_result})",
+                        player_id,
+                        is_error=True
+                    )
             else:
                 # Error Crítico: initialize_planet_sectors debería haber creado uno
                 log_event("❌ CRITICAL: No se encontró Sector Urbano tras inicialización.", player_id, is_error=True)
-                
+
         except Exception as e:
-            log_event(f"Error inicializando niebla/sectores: {e}", player_id, is_error=True)
+            log_event(f"Error inicializando sectores/edificio inicial: {e}", player_id, is_error=True)
             traceback.print_exc()
 
         # 5. Generación de Tripulación Inicial (Opcional/Manual en UI)

@@ -21,6 +21,9 @@ Corrección v6.2: Mapeo explícito de 'population' en assets para el motor econ�
 Actualizado v6.3: Implementación de Soberanía Dinámica y Control de Construcción (Slots/Bloqueos).
 Actualizado v7.2: Soporte para Niebla de Superficie (grant_sector_knowledge).
 Actualizado v7.3: Inicialización garantizada de Sectores Urbanos para Protocolo Génesis.
+Actualizado v7.4: Nueva función add_initial_building() para edificio inicial en Génesis.
+                  Fix claim_genesis_sector: Eliminadas columnas inexistentes (owner_id, has_outpost).
+                  initialize_planet_sectors ahora retorna List[Dict] con sectores creados/existentes.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -885,22 +888,31 @@ def get_all_colonized_system_ids() -> List[int]:
 
 # --- V7.3: INICIALIZACIÓN DE SECTORES (GENESIS) ---
 
-def initialize_planet_sectors(planet_id: int, biome: str, mass_class: str = 'Estándar') -> bool:
+def initialize_planet_sectors(planet_id: int, biome: str, mass_class: str = 'Estándar') -> List[Dict[str, Any]]:
     """
     Garantiza que un planeta tenga sectores inicializados.
     Crea siempre un sector Urbano y rellena el resto según tamaño y constantes.
+
+    Args:
+        planet_id: ID del planeta
+        biome: Bioma del planeta (para nombres temáticos)
+        mass_class: Clase de masa del planeta (determina cantidad de sectores)
+
+    Returns:
+        List[Dict]: Lista de sectores creados/existentes con sus IDs.
+                    Lista vacía en caso de error crítico.
     """
     try:
         db = _get_db()
         # 1. Verificar existencia
-        check = db.table("sectors").select("id").eq("planet_id", planet_id).limit(1).execute()
+        check = db.table("sectors").select("*").eq("planet_id", planet_id).execute()
         if check and check.data:
-            return True # Ya existen sectores
+            return check.data  # Retornar sectores existentes
 
         # 2. Calcular cantidad y configuración
         num_sectors = PLANET_MASS_CLASSES.get(mass_class, 4)
         sectors_data = []
-        
+
         # Sector 0: Distrito Central (Urbano) - Siempre presente para HQs
         urban_slots = SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_URBAN, 2)
         sectors_data.append({
@@ -908,20 +920,20 @@ def initialize_planet_sectors(planet_id: int, biome: str, mass_class: str = 'Est
             "name": "Distrito Central",
             "sector_type": SECTOR_TYPE_URBAN,
             "max_slots": urban_slots,
-            "is_known": False, 
+            "is_known": False,
             "resource_category": "influencia"
         })
-        
+
         # Sectores Adicionales: Mezcla segura de tipos básicos
         valid_types = [SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN]
-        
+
         for i in range(1, num_sectors):
             sType = random.choice(valid_types)
             slots = SECTOR_SLOTS_CONFIG.get(sType, 3)
-            
+
             # Ajuste simple de recursos según tipo
             res_cat = "materiales" if sType == SECTOR_TYPE_MOUNTAIN else "componentes"
-            
+
             sectors_data.append({
                 "planet_id": planet_id,
                 "name": f"Sector {i+1} ({sType})",
@@ -930,26 +942,96 @@ def initialize_planet_sectors(planet_id: int, biome: str, mass_class: str = 'Est
                 "is_known": False,
                 "resource_category": res_cat
             })
-            
-        # 3. Inserción en lote
+
+        # 3. Inserción en lote con retorno de datos
         res = db.table("sectors").insert(sectors_data).execute()
-        return True if res else False
+
+        if res and res.data:
+            return res.data  # Retornar sectores recién creados con sus IDs
+
+        # Fallback: Intentar recuperar lo insertado
+        fallback = db.table("sectors").select("*").eq("planet_id", planet_id).execute()
+        return fallback.data if fallback and fallback.data else []
 
     except Exception as e:
         log_event(f"Error critical initializing sectors for planet {planet_id}: {e}", is_error=True)
-        return False
+        return []
 
 def claim_genesis_sector(sector_id: int, player_id: int) -> bool:
     """
-    Asigna la propiedad explícita de un sector para el aterrizaje inicial (Génesis).
-    Actualiza owner_id y has_outpost en la tabla de sectores.
+    Marca un sector como conocido para el aterrizaje inicial (Génesis).
+    NOTA V7.4: La tabla 'sectors' no tiene owner_id ni has_outpost.
+    La propiedad se deriva de la presencia de edificios en el sector.
+    Esta función solo asegura que el sector sea visible (is_known=True).
     """
     try:
         _get_db().table("sectors").update({
-            "owner_id": player_id,
-            "has_outpost": True
+            "is_known": True
         }).eq("id", sector_id).execute()
         return True
     except Exception as e:
         log_event(f"Error claiming genesis sector {sector_id}: {e}", player_id, is_error=True)
+        return False
+
+
+def add_initial_building(
+    player_id: int,
+    planet_asset_id: int,
+    sector_id: int,
+    building_type: str = 'hq'
+) -> bool:
+    """
+    Inserta el edificio inicial (HQ por defecto) para el Protocolo Génesis.
+    Usa los valores de BUILDING_TYPES para pops_required y energy_consumption.
+
+    Args:
+        player_id: ID del jugador propietario
+        planet_asset_id: ID del asset planetario (planet_assets.id)
+        sector_id: ID del sector donde construir
+        building_type: Tipo de edificio (default: 'hq')
+
+    Returns:
+        bool: True si la inserción fue exitosa, False en caso contrario
+    """
+    try:
+        db = _get_db()
+
+        # Obtener definición del edificio
+        building_def = BUILDING_TYPES.get(building_type)
+        if not building_def:
+            log_event(f"Tipo de edificio desconocido: {building_type}", player_id, is_error=True)
+            return False
+
+        # Obtener tick actual para built_at_tick
+        world = get_world_state()
+        current_tick = world.get("current_tick", 1) if world else 1
+
+        # Preparar datos del edificio
+        building_data = {
+            "planet_asset_id": planet_asset_id,
+            "player_id": player_id,
+            "building_type": building_type,
+            "building_tier": 1,
+            "sector_id": sector_id,
+            "is_active": True,
+            "pops_required": building_def.get("pops_required", 0),
+            "energy_consumption": building_def.get("maintenance", {}).get("celulas_energia", 0),
+            "built_at_tick": current_tick
+        }
+
+        response = db.table("planet_buildings").insert(building_data).execute()
+
+        if response and response.data:
+            log_event(
+                f"Edificio inicial '{building_def.get('name', building_type)}' "
+                f"construido en sector {sector_id} para jugador {player_id}",
+                player_id
+            )
+            return True
+
+        log_event(f"Fallo al insertar edificio inicial en sector {sector_id}", player_id, is_error=True)
+        return False
+
+    except Exception as e:
+        log_event(f"Error crítico en add_initial_building: {e}", player_id, is_error=True)
         return False
