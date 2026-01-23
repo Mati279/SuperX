@@ -16,6 +16,7 @@ Refactor v5.7: Estandarización de nomenclatura 'population' (Fix poblacion).
 Refactor v5.8: Limpieza integral de consultas y campos expandidos.
 Corrección v5.9: Fix columna 'sector_type' en tabla sectors.
 Refactor v6.0: Eliminación de columna redundante 'buildings_count' en sectors (Cálculo dinámico).
+Corrección v6.1: Fix crítico de tipos en seguridad (soporte Dict/Float) y persistencia de breakdown.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -222,10 +223,19 @@ def create_planet_asset(
         response = db.table("planet_assets").insert(asset_data).execute()
         
         if response and response.data:
-            # Sincronizar tabla PLANETS
+            # --- FIX CRÍTICO V6.1: Soporte dual para Float/Dict en Security ---
+            sec_value = initial_security
+            sec_breakdown = {}
+            
+            if isinstance(initial_security, dict):
+                sec_value = initial_security.get("total", 20.0)
+                sec_breakdown = initial_security
+            
+            # Sincronizar tabla PLANETS con desglose explícito
             db.table("planets").update({
                 "surface_owner_id": player_id,
-                "security": initial_security,
+                "security": sec_value,
+                "security_breakdown": sec_breakdown,
                 "population": initial_population
             }).eq("id", planet_id).execute()
             
@@ -246,7 +256,7 @@ def create_planet_asset(
                 db.table("sectors").insert(emergency_sector).execute()
                 log_event(f"Sector de emergencia creado para {planet_id}", player_id, is_error=True)
 
-            log_event(f"Planeta colonizado: {settlement_name} (Seguridad inicial: {initial_security:.1f})", player_id)
+            log_event(f"Planeta colonizado: {settlement_name} (Seguridad inicial: {sec_value:.1f})", player_id)
             return response.data[0]
         return None
     except Exception as e:
@@ -592,8 +602,10 @@ def update_planet_security_value(planet_id: int, value: float) -> bool:
 def update_planet_security_data(planet_id: int, security: float, breakdown: Dict[str, Any]) -> bool:
     """Actualiza la seguridad en la tabla 'planets'."""
     try:
+        # V6.1: Persistencia explícita de breakdown
         response = _get_db().table("planets").update({
-            "security": security
+            "security": security,
+            "security_breakdown": breakdown
         }).eq("id", planet_id).execute()
         return True if response else False
     except Exception as e:
