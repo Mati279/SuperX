@@ -14,6 +14,7 @@ Corrección v5.5: Persistencia de 'poblacion' en tabla global 'planets'.
 Corrección v5.6: Join con tabla 'planets' para obtener seguridad real.
 Refactor v5.7: Estandarización de nomenclatura 'population' (Fix poblacion).
 Refactor v5.8: Limpieza integral de consultas y campos expandidos.
+Corrección v5.9: Fix columna 'sector_type' en tabla sectors.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -97,6 +98,7 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
     """
     Obtiene planetas del jugador con edificios y datos de sectores precargados.
     Refactor V5.7: Actualizado a 'population'.
+    Fix V5.9: Corrección de nombre de columna 'sector_type'.
     """
     try:
         db = _get_db()
@@ -120,8 +122,9 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
         buildings = buildings_response.data if buildings_response and buildings_response.data else []
 
         # Obtener Sectores
+        # Fix: 'type' -> 'sector_type'
         sectors_response = db.table("sectors")\
-            .select("id, type, planet_id, max_slots, buildings_count, resource_category, is_known")\
+            .select("id, sector_type, planet_id, max_slots, buildings_count, resource_category, is_known")\
             .in_("planet_id", planet_ids)\
             .execute()
         sectors_data = sectors_response.data if sectors_response and sectors_response.data else []
@@ -141,7 +144,8 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
             sec_id = building.get("sector_id")
             sector = sector_map.get(sec_id) if sec_id else None
             
-            building["sector_type"] = sector["type"] if sector else "Desconocido"
+            # Fix: sector["type"] -> sector.get("sector_type")
+            building["sector_type"] = sector.get("sector_type") if sector else "Desconocido"
             building["sector_info"] = sector
             
             buildings_by_asset[aid].append(building)
@@ -229,7 +233,7 @@ def create_planet_asset(
                     "id": (planet_id * 1000) + 1,
                     "planet_id": planet_id,
                     "name": "Sector Urbano (Emergencia)",
-                    "type": "Urbano",
+                    "sector_type": "Urbano", # Fix: 'type' -> 'sector_type'
                     "max_slots": 5,
                     "buildings_count": 0,
                     "is_known": True
@@ -277,8 +281,9 @@ def get_base_slots_info(planet_asset_id: int) -> Dict[str, int]:
 def get_planet_sectors_status(planet_id: int) -> List[Dict[str, Any]]:
     """Consulta el estado actual de los sectores de un planeta."""
     try:
+        # Fix: 'type' -> 'sector_type'
         response = _get_db().table("sectors")\
-            .select("id, type, max_slots, buildings_count, resource_category, is_known")\
+            .select("id, sector_type, max_slots, buildings_count, resource_category, is_known")\
             .eq("planet_id", planet_id)\
             .execute()
         
@@ -408,7 +413,8 @@ def build_structure(
             for s in sectors:
                 if 'max_slots' in s: s['slots'] = s['max_slots']
             
-            urban = [s for s in sectors if s["type"] == 'Urbano' and s["buildings_count"] < s["slots"]]
+            # Fix: s["type"] -> s.get("sector_type")
+            urban = [s for s in sectors if s.get("sector_type") == 'Urbano' and s["buildings_count"] < s["slots"]]
             others = [s for s in sectors if s["buildings_count"] < s["slots"]]
             target_sector = urban[0] if urban else (others[0] if others else None)
 
@@ -435,7 +441,7 @@ def build_structure(
                 "buildings_count": target_sector["buildings_count"] + 1
             }).eq("id", target_sector["id"]).execute()
             
-            log_event(f"Construido {definition['name']} en {target_sector['type']}", player_id)
+            log_event(f"Construido {definition['name']} en {target_sector.get('sector_type', 'Sector')}", player_id)
             return response.data[0]
         return None
     except Exception as e:
