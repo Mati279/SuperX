@@ -7,6 +7,7 @@ Actualizado V4.5: Soporte para Modo Omnisciencia (Debug) y modernización UI.
 Refactor V5.8: Estandarización a 'population' y métricas mejoradas.
 Corrección V6.0: Adaptación a 'sector_type' para consistencia con DB.
 Refactor V7.0: Modo Observador, Navegación de Sistema, Sección Orbital y Estilo de Recursos estricto.
+Mejora V7.1: Navegación contextual (Volver al Sistema del planeta actual).
 """
 
 import streamlit as st
@@ -37,21 +38,27 @@ def render_planet_surface(planet_id: int):
         st.error("Error: Sesión de jugador no detectada. Por favor, reincie sesión.")
         return
 
-    # --- Navegación ---
-    if st.button("⬅ Volver al Sistema"):
-        st.session_state.map_view = "system"
-        st.rerun()
-
-    # 1. Carga de Datos
+    # 1. Carga de Datos (Prioritaria para navegación)
     planet = get_planet_by_id(planet_id)
-    asset = get_planet_asset(planet_id, player_id)
-    
-    # Validar modo Omnisciencia (Debug)
-    debug_mode = st.session_state.get("debug_omniscience", False)
     
     if not planet:
         st.error("Datos del planeta no encontrados.")
+        if st.button("⬅ Volver al Mapa"):
+            st.session_state.map_view = "galaxy"
+            st.rerun()
         return
+
+    asset = get_planet_asset(planet_id, player_id)
+
+    # --- Navegación ---
+    if st.button("⬅ Volver al Sistema"):
+        # Actualizamos el contexto del sistema para asegurar el retorno correcto
+        st.session_state.selected_system = planet['system_id']
+        st.session_state.map_view = "system"
+        st.rerun()
+    
+    # Validar modo Omnisciencia (Debug)
+    debug_mode = st.session_state.get("debug_omniscience", False)
 
     # Lógica de Modo Observador: Ya no retornamos si no hay asset
     is_observer = asset is None and not debug_mode
