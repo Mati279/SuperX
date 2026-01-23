@@ -62,7 +62,7 @@ ORBITAL_ZONE_WEIGHTS = {
 SECTOR_NAMES_BY_CATEGORY = {
     "materiales": "Macizo de Estratos Densos",
     "componentes": "Geoda de Elementos Cristalinos",
-    "energia": "Falla de Emanación Radiante",
+    "celulas_energia": "Falla de Emanación Radiante",
     "influencia": "Cuna de Identidad Primigenia",
     "datos": "Cuenca de Ecos Magnéticos"
 }
@@ -82,7 +82,7 @@ INHOSPITABLE_BIOME_NAMES = {
 LUXURY_RESOURCES_BY_CATEGORY = {
     "materiales": ["Wolframio", "Neodimio", "Paladio", "Platino", "Iridio"],
     "componentes": ["Sensores de Precisión", "Nanobots", "Circuitos Cuánticos"],
-    "energia": ["Cristales de Foco", "Plasma Estable", "Materia Oscura"],
+    "celulas_energia": ["Cristales de Foco", "Plasma Estable", "Materia Oscura"],
     "influencia": ["Archivos Diplomáticos", "Reliquias Culturales"],
     "datos": ["Códigos de Encriptación", "Matrices de IA", "Núcleos de Datos Crípticos"]
 }
@@ -97,19 +97,19 @@ RESOURCE_PROB_NONE = 0.0
 PLANET_BIOMES = {
     "Volcánico": {
         "habitability": 0.3,
-        "common_resources": ["materiales", "energia"],
+        "common_resources": ["materiales", "celulas_energia"],
         "preferred_rings": [1, 2],
         "resource_matrix": {
-            "materiales": "ALTA", "energia": "ALTA", "componentes": "MEDIA", "influencia": "BAJA", "datos": "MEDIA"
+            "materiales": "ALTA", "celulas_energia": "ALTA", "componentes": "MEDIA", "influencia": "BAJA", "datos": "MEDIA"
         },
         "description": "Actividad tectónica extrema y ríos de lava."
     },
     "Tóxico": {
         "habitability": 0.2,
-        "common_resources": ["datos", "energia"],
+        "common_resources": ["datos", "celulas_energia"],
         "preferred_rings": [1, 2], # Ajustado V4.7
         "resource_matrix": {
-            "datos": "ALTA", "energia": "MEDIA", "materiales": "BAJA", "componentes": "MEDIA", "influencia": "ALTA"
+            "datos": "ALTA", "celulas_energia": "MEDIA", "materiales": "BAJA", "componentes": "MEDIA", "influencia": "ALTA"
         },
         "description": "Atmósfera corrosiva rica en compuestos químicos raros."
     },
@@ -118,7 +118,7 @@ PLANET_BIOMES = {
         "common_resources": ["materiales", "componentes"],
         "preferred_rings": [2, 3, 4],
         "resource_matrix": {
-            "materiales": "ALTA", "energia": "MEDIA", "componentes": "ALTA", "influencia": "MEDIA", "datos": "MEDIA"
+            "materiales": "ALTA", "celulas_energia": "MEDIA", "componentes": "ALTA", "influencia": "MEDIA", "datos": "MEDIA"
         },
         "description": "Vastas extensiones de arena y formaciones rocosas. Escasez de agua."
     },
@@ -127,7 +127,7 @@ PLANET_BIOMES = {
         "common_resources": ["influencia", "materiales"],
         "preferred_rings": [3, 4],
         "resource_matrix": {
-            "materiales": "MEDIA", "energia": "BAJA", "componentes": "BAJA", "influencia": "ALTA", "datos": "ALTA"
+            "materiales": "MEDIA", "celulas_energia": "BAJA", "componentes": "BAJA", "influencia": "ALTA", "datos": "ALTA"
         },
         "description": "Clima estable y ecosistemas diversos. Ideal para la vida."
     },
@@ -136,25 +136,25 @@ PLANET_BIOMES = {
         "common_resources": ["influencia", "componentes"],
         "preferred_rings": [3, 4], # Ajustado V4.7
         "resource_matrix": {
-            "materiales": "BAJA", "energia": "ALTA", "componentes": "MEDIA", "influencia": "ALTA", "datos": "MEDIA"
+            "materiales": "BAJA", "celulas_energia": "ALTA", "componentes": "MEDIA", "influencia": "ALTA", "datos": "MEDIA"
         },
         "description": "Superficie cubierta casi totalmente por agua líquida."
     },
     "Glacial": {
         "habitability": 0.5, # Ajustado V4.7
-        "common_resources": ["datos", "energia"],
+        "common_resources": ["datos", "celulas_energia"],
         "preferred_rings": [5, 6],
         "resource_matrix": {
-            "materiales": "MEDIA", "energia": "BAJA", "componentes": "ALTA", "influencia": "MEDIA", "datos": "ALTA"
+            "materiales": "MEDIA", "celulas_energia": "BAJA", "componentes": "ALTA", "influencia": "MEDIA", "datos": "ALTA"
         },
         "description": "Temperaturas bajo cero con depósitos minerales congelados."
     },
     "Gaseoso": {
         "habitability": 0.0,
-        "common_resources": ["energia", "datos"],
+        "common_resources": ["celulas_energia", "datos"],
         "preferred_rings": [5, 6],
         "resource_matrix": {
-            "materiales": "NULA", "energia": "ALTA", "componentes": "MEDIA", "influencia": "BAJA", "datos": "MEDIA"
+            "materiales": "NULA", "celulas_energia": "ALTA", "componentes": "MEDIA", "influencia": "BAJA", "datos": "MEDIA"
         },
         "description": "Gigante sin superficie sólida."
     }
@@ -241,7 +241,7 @@ BUILDING_TYPES = {
         "maintenance": {"creditos": 5},
         "description": "Generación de energía pasiva.",
         "pops_required": 20,
-        "category": "energia",
+        "category": "celulas_energia",
         "production": {"celulas_energia": 15}
     },
     "fusion_reactor": {
@@ -251,7 +251,7 @@ BUILDING_TYPES = {
         "description": "Generación masiva de energía (Tier 2).",
         "pops_required": 50,
         "min_tier": 2,
-        "category": "energia",
+        "category": "celulas_energia",
         "production": {"celulas_energia": 50}
     },
     "factory": {
@@ -270,7 +270,7 @@ BUILDING_SHUTDOWN_PRIORITY = {
     "industria": 3,
     "tecnologia": 2,
     "defensa": 1,
-    "energia": 0,
+    "celulas_energia": 0,
     "administracion": 0
 }
 
