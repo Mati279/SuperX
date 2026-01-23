@@ -173,11 +173,41 @@ def place_market_order(player_id: int, resource: str, amount: int, is_buy: bool)
             return False, f"Créditos insuficientes. Requieres {total_cost} Cr."
         updates["creditos"] = current_credits - total_cost
     else:
-        # Venta: Necesita el Recurso (Funciona igual para Base y Lujo)
-        current_res = player_resources.get(resource, 0)
-        if current_res < amount:
-            return False, f"Stock insuficiente de {resource}."
-        updates[resource] = current_res - amount # Descontamos recurso ya
+        # Venta: Diferenciar entre Base y Lujo
+        if resource in LUXURY_PRICES:
+            # Lógica para Recursos de Lujo (Nested JSON)
+            luxe_storage = player_resources.get("recursos_lujo") or {}
+            
+            found_category = None
+            current_stock = 0
+            
+            # Buscar en qué categoría está el recurso
+            for category, items in luxe_storage.items():
+                if resource in items:
+                    current_stock = items[resource]
+                    found_category = category
+                    break
+            
+            if current_stock < amount:
+                return False, f"Stock insuficiente de {resource} ({current_stock})."
+            
+            # Actualizar stock en el JSON
+            if found_category:
+                luxe_storage[found_category][resource] = current_stock - amount
+                # Limpieza: si queda en 0, lo quitamos para limpiar el JSON
+                if luxe_storage[found_category][resource] <= 0:
+                    del luxe_storage[found_category][resource]
+                
+                updates["recursos_lujo"] = luxe_storage
+            else:
+                return False, f"Error: No se encuentra el recurso {resource} en inventario."
+
+        else:
+            # Lógica para Recursos Base (Columnas)
+            current_res = player_resources.get(resource, 0)
+            if current_res < amount:
+                return False, f"Stock insuficiente de {resource}."
+            updates[resource] = current_res - amount
     
     # 4. Persistir Orden
     try:

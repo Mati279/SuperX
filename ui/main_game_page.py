@@ -3,12 +3,11 @@ import streamlit as st
 import time
 from .state import logout_user, get_player, get_commander
 from data.log_repository import get_recent_logs, log_event
-from data.planet_repository import get_all_player_planets # Importación Nueva V5.8
+from data.planet_repository import get_all_player_planets
 from services.gemini_service import resolve_player_action
-# Importación del servicio de generación para herramientas de Debug
 from services.character_generation_service import generate_character_pool
 
-# --- Imports para STRT (Sistema de Tiempo) ---
+# --- Imports para STRT ---
 from core.time_engine import get_world_status_display, check_and_trigger_tick, debug_force_tick
 from data.world_repository import get_commander_location_display
 from data.player_repository import get_player_finances, delete_player_account, add_player_credits, reset_player_progress
@@ -24,7 +23,7 @@ from .faction_roster import render_faction_roster
 from .recruitment_center import show_recruitment_center
 from .galaxy_map_page import show_galaxy_map_page
 from .ship_status_page import show_ship_status_page
-from .planet_surface_view import render_planet_surface # Vista de Superficie conectada
+from .planet_surface_view import render_planet_surface
 
 # --- IMPORTACIÓN NUEVA: Widget de Resolución MRG ---
 from .mrg_resolution_widget import render_full_mrg_resolution
@@ -58,7 +57,6 @@ def render_main_game_page(cookie_manager):
         st.session_state.current_page = "Puente de Mando"
         
     # --- LÓGICA DE LIMPIEZA MRG POR CAMBIO DE PÁGINA ---
-    # Si cambiamos de página, limpiamos cualquier resultado MRG pendiente
     if 'previous_page' not in st.session_state:
         st.session_state.previous_page = st.session_state.current_page
     
@@ -75,11 +73,9 @@ def render_main_game_page(cookie_manager):
         "Centro de Reclutamiento": show_recruitment_center,
         "Mapa de la Galaxia": show_galaxy_map_page,
         "Flota": show_ship_status_page,
-        # Nueva Página de Superficie (Render condicional)
         "Superficie": lambda: render_planet_surface(st.session_state.selected_planet_id) if st.session_state.get("selected_planet_id") else st.warning("⚠️ Selecciona un planeta desde el Mapa o Accesos Directos.")
     }
     
-    # Contenedor principal con margen superior para no quedar bajo el HUD
     with st.container():
         st.write("") # Espaciador
         st.write("") 
@@ -88,31 +84,22 @@ def render_main_game_page(cookie_manager):
 
 
 def _render_sticky_top_hud(player, commander):
-    """
-    Renderiza la barra superior STICKY (siempre visible).
-    Layout: Recursos CENTRADOS con DELTAS de proyección.
-    """
+    """Renderiza la barra superior STICKY."""
     finances = get_player_finances(player.id)
     projection = get_player_projected_economy(player.id)
 
-    # Helper para evitar crash por NoneType
     def safe_val(key):
         val = finances.get(key) if finances else None
         return val if val is not None else 0
     
-    # Helper para formatear delta (proyección)
     def fmt_delta(key):
         val = projection.get(key, 0)
         if val == 0:
             return ""
-        
-        # Verde para positivo, Rojo para negativo
         color = "#4caf50" if val > 0 else "#ff5252"
-        sign = "+" if val > 0 else "" # El negativo ya viene en el número
-        
+        sign = "+" if val > 0 else ""
         return f'<span style="color: {color}; font-size: 0.7em; margin-left: 5px;">{sign}{val:,}</span>'
 
-    # Preparar valores para el HTML (evita problemas de interpolación)
     creditos = f"{safe_val('creditos'):,}"
     delta_creditos = fmt_delta('creditos')
 
@@ -128,7 +115,6 @@ def _render_sticky_top_hud(player, commander):
     influencia = f"{safe_val('influencia'):,}"
     delta_influencia = fmt_delta('influencia')
 
-    # CSS separado para mayor claridad
     hud_css = """
     <style>
     .top-hud-sticky {
@@ -146,14 +132,12 @@ def _render_sticky_top_hud(player, commander):
         padding: 0 20px;
         box-shadow: 0 4px 10px rgba(0,0,0,0.5);
     }
-
     .hud-resource-group {
         display: flex;
         gap: 40px;
         align-items: center;
         height: 100%;
     }
-
     .hud-metric {
         display: flex;
         align-items: center;
@@ -162,17 +146,14 @@ def _render_sticky_top_hud(player, commander):
         padding: 2px 8px;
         border-radius: 4px;
     }
-
     .hud-metric:hover {
         background-color: rgba(255,255,255,0.05);
     }
-
     .hud-icon {
         font-size: 1.1em;
         line-height: 1;
         opacity: 0.8;
     }
-
     .hud-value {
         font-family: 'Source Code Pro', monospace;
         font-weight: 600;
@@ -182,7 +163,6 @@ def _render_sticky_top_hud(player, commander):
         display: flex;
         align-items: center; 
     }
-
     @media (max-width: 800px) {
         .hud-value { font-size: 0.8em; }
         .hud-icon { font-size: 1.0em; }
@@ -192,7 +172,6 @@ def _render_sticky_top_hud(player, commander):
     </style>
     """
 
-    # HTML con valores ya interpolados
     hud_html = f"""
     <div class="top-hud-sticky">
         <div class="hud-resource-group">
@@ -218,10 +197,8 @@ def _render_sticky_top_hud(player, commander):
             </div>
         </div>
     </div>
-
     <div style="height: 60px;"></div>
     """
-
     st.markdown(hud_css + hud_html, unsafe_allow_html=True)
 
 
@@ -229,7 +206,6 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
     """Sidebar con reloj galáctico, identidad y menú de navegación."""
     status = get_world_status_display()
     
-    # Obtener ubicación real (Base Principal)
     loc_data = get_commander_location_display(commander.id)
     loc_system = loc_data.get("system", "Desconocido")
     loc_planet = loc_data.get("planet", "---")
@@ -346,7 +322,7 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
                 with st.spinner("Avanzando tiempo..."):
                     for _ in range(10):
                         debug_force_tick()
-                        time.sleep(0.1) # Pequeña pausa para evitar lock de DB
+                        time.sleep(0.1)
                 st.rerun()
 
         st.divider()
@@ -358,32 +334,27 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 
         st.caption(f"Comandante {commander.nombre}")
 
-        # --- SECCIÓN: NAVEGACIÓN ---
         st.divider()
         
         pages = ["Puente de Mando", "Mapa de la Galaxia", 
                  "Cuadrilla", "Centro de Reclutamiento", "Flota"]
         
         for p in pages:
-            # Los botones siguen usando use_container_width (correcto para widgets)
             if st.button(p, use_container_width=True, type="primary" if st.session_state.current_page == p else "secondary"):
                 st.session_state.current_page = p
                 st.rerun()
 
-        # --- NUEVA SECCIÓN: ACCESOS DIRECTOS COLONIAS ---
         st.divider()
         st.caption("📍 Accesos Directos: Colonias")
         
         my_planets = get_all_player_planets(player.id)
         if my_planets:
             for p_asset in my_planets:
-                # Nombre del asentamiento o planeta
                 p_name = p_asset.get("nombre_asentamiento") or "Colonia Sin Nombre"
                 sys_name = p_asset.get("planets", {}).get("name", "Sistema Desc.")
                 
                 label = f"🏠 {p_name}"
                 
-                # Al hacer click, configuramos el estado y cambiamos la página
                 if st.button(label, key=f"nav_col_{p_asset['id']}", use_container_width=True, help=f"Ir a {sys_name}"):
                     st.session_state.selected_planet_id = p_asset["planet_id"]
                     st.session_state.selected_system_id = p_asset["system_id"]
@@ -397,13 +368,11 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             logout_user(cookie_manager)
             st.rerun()
 
-        # --- DEBUG ZONE ---
         st.write("")
         st.write("")
         st.markdown("---")
         st.caption("🛠️ DEBUG TOOLS")
 
-        # 1. Toggle de Omnisciencia
         st.toggle("🔭 Omnisciencia (Debug)", key="debug_omniscience", help="Permite ver todos los sistemas y superficies sin exploración ni colonias.")
 
         if st.button("💰 +5000 Créditos", use_container_width=True):
@@ -413,22 +382,16 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             else:
                 st.error("Error al añadir créditos.")
 
-        if st.button("🧪 Generar Candidato Elite (Lvl 10, Skills 99)", use_container_width=True, help="Genera un candidato de nivel 10 con todas las habilidades al 99."):
+        if st.button("🧪 Generar Candidato Elite (Lvl 10, Skills 99)", use_container_width=True):
             try:
-                generate_character_pool(
-                    player_id=player.id, 
-                    pool_size=1,
-                    min_level=10,
-                    max_level=10,
-                    force_max_skills=True
-                )
-                st.toast("✅ Candidato Elite (Lvl 10, Skills 99) enviado al Centro de Reclutamiento.")
+                generate_character_pool(player.id, 1, 10, 10, True)
+                st.toast("✅ Candidato Elite enviado al Centro de Reclutamiento.")
                 time.sleep(1)
                 st.rerun()
             except Exception as e:
-                st.error(f"Error generando candidato de elite: {e}")
+                st.error(f"Error generando candidato: {e}")
 
-        if st.button("🗑️ ELIMINAR CUENTA", type="secondary", use_container_width=True, help="Elimina permanentemente el jugador y todos sus datos."):
+        if st.button("🗑️ ELIMINAR CUENTA", type="secondary", use_container_width=True):
             if delete_player_account(player.id):
                 st.success("Cuenta eliminada.")
                 logout_user(cookie_manager)
@@ -436,7 +399,7 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
             else:
                 st.error("Error al eliminar cuenta.")
 
-        if st.button("🔄 REINICIAR CUENTA (Debug)", type="secondary", use_container_width=True, help="Reinicia el progreso del jugador manteniendo la cuenta (Soft Reset)."):
+        if st.button("🔄 REINICIAR CUENTA (Debug)", type="secondary", use_container_width=True):
             if reset_player_progress(player.id):
                 st.success("✅ Cuenta reiniciada exitosamente.")
                 st.rerun()
@@ -449,16 +412,11 @@ def _render_war_room_page():
     player = get_player()
     if not player: return
 
-    # --- Layout Principal: Operaciones (70%) | Monitor (30%) ---
     col_left, col_right = st.columns([0.7, 0.3], gap="medium")
 
-    # --- COLUMNA IZQUIERDA: ÁREA OPERATIVA ---
     with col_left:
-        # 1. Cabecera (Título)
         st.markdown("### 📟 Enlace Neuronal de Mando")
         
-        # 2. Botonera de Acción (Toolbar arriba del chat)
-        # Separamos en columnas para que no ocupen todo el ancho innecesariamente
         col_btn_market, col_btn_stock, col_spacer = st.columns([0.25, 0.25, 0.5])
         
         with col_btn_market:
@@ -495,7 +453,6 @@ def _render_war_room_page():
                             st.divider()
                 if not has_items: st.info("No hay stock disponible.")
 
-        # 3. Chat Principal (Debajo de la botonera)
         chat_box = st.container(height=500, border=True)
         logs = get_recent_logs(player.id, limit=30) 
 
@@ -517,7 +474,6 @@ def _render_war_room_page():
                                 else:
                                     url_part = remainder
                                     post_text = ""
-                                
                                 if pre_text: st.markdown(pre_text)
                                 if url_part: st.image(url_part.strip(), width="stretch")
                                 if post_text: st.markdown(post_text)
@@ -526,29 +482,23 @@ def _render_war_room_page():
                         else:
                             st.markdown(clean_msg)
 
-        # 4. Input de Chat con Status (UX MEJORADA)
         action = st.chat_input("Escriba sus órdenes...")
         if action:
             log_event(f"[PLAYER] {action}", player.id)
             
-            # --- FEEDBACK VISUAL MEJORADO ---
             with st.status("🛰️ Enlace Neuronal Activo...", expanded=True) as status:
                 st.write("Analizando telemetría y protocolos...")
-                # Llamada principal al servicio
                 response_data = resolve_player_action(action, player.id)
                 status.update(label="✅ Órdenes procesadas", state="complete", expanded=False)
             
-            # Actualizar estado MRG
             if response_data and "mrg_result" in response_data:
                 st.session_state.last_mrg_result = response_data["mrg_result"]
             else:
                 st.session_state.last_mrg_result = None
             
-            # Pequeña pausa para permitir que el usuario vea el check verde antes de recargar
             time.sleep(0.5)
             st.rerun()
 
-    # --- COLUMNA DERECHA: MONITOR MRG ---
     with col_right:
         st.caption("🎯 Monitor de Operaciones")
         if "last_mrg_result" in st.session_state and st.session_state.last_mrg_result:
@@ -556,7 +506,6 @@ def _render_war_room_page():
             if hasattr(mrg_res, 'roll') and mrg_res.roll is not None:
                 render_full_mrg_resolution(mrg_res)
         else:
-            # Espacio vacío o placeholder cuando no hay acción activa
             st.empty()
 
 
@@ -605,22 +554,46 @@ def _render_market_ui(player):
                 st.error(msg)
                 
     with tab_sell:
-        res_sell = st.selectbox("Recurso a Vender", resources, key="mkt_sell_res")
+        # Lista base
+        sellable_options = resources.copy()
+        
+        # Agregar recursos de lujo disponibles
+        luxe_storage = getattr(player, "recursos_lujo", {}) or {}
+        for cat, items in luxe_storage.items():
+            if isinstance(items, dict):
+                 for res_name, qty in items.items():
+                     if qty > 0 and res_name in prices: # Validación cruzada: que tenga precio y stock
+                         sellable_options.append(res_name)
+
+        res_sell = st.selectbox("Recurso a Vender", sellable_options, key="mkt_sell_res")
         price_info = prices.get(res_sell, {})
         unit_price = price_info.get("sell", 0)
         
         st.info(f"Oferta de Compra: **{unit_price} Cr** / unidad")
         
         # Mostrar stock actual para referencia
-        current_stock = getattr(player, res_sell, 0)
+        if res_sell in resources:
+            current_stock = getattr(player, res_sell, 0)
+        else:
+            # Buscar en lujo
+            current_stock = 0
+            for items in luxe_storage.values():
+                if res_sell in items:
+                    current_stock = items[res_sell]
+                    break
+        
         st.caption(f"Tu Stock: {current_stock:,}")
         
-        amount_sell = st.number_input("Cantidad", min_value=1, max_value=max(1, current_stock), value=min(100, max(1, current_stock)), step=10, key="mkt_sell_amount")
+        # Aseguramos que el max_value sea al menos 1 para evitar errores de widget, pero si es 0 el stock, amount será 1 e invalidaremos abajo
+        max_val = max(1, current_stock)
+        amount_sell = st.number_input("Cantidad", min_value=1, max_value=max_val, value=min(100, max_val), step=10, key="mkt_sell_amount")
         total_gain = amount_sell * unit_price
         
         st.caption(f"Ganancia Estimada: `{total_gain:,} Cr`")
         
-        if st.button("Confirmar Venta", type="primary", use_container_width=True, key="btn_sell", disabled=(used >= total)):
+        btn_disabled = (used >= total) or (current_stock <= 0)
+        
+        if st.button("Confirmar Venta", type="primary", use_container_width=True, key="btn_sell", disabled=btn_disabled):
             success, msg = place_market_order(player.id, res_sell, amount_sell, is_buy=False)
             if success:
                 st.success(msg)
