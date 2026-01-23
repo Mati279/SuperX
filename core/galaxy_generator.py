@@ -226,8 +226,8 @@ class GalaxyGenerator:
     def _generate_sectors_for_planet(self, planet: Planet, force_visible: bool = False) -> List[Sector]:
         """
         Genera los sectores validando habitabilidad y recursos.
-        Refactor V5.3: Solo instancia sectores útiles (habitables o con recursos).
-        Descarta sectores inhóspitos vacíos para ahorrar espacio en DB.
+        Refactor V6.0: Instancia TODOS los sectores teóricos (planet.max_sectors).
+        Los sectores no habitables se generan como inhóspitos (slots=0).
         
         Args:
             planet: Objeto planeta.
@@ -238,19 +238,18 @@ class GalaxyGenerator:
         biome_habitability = biome_data.get('habitability', 0.0)
         prob_map = {"ALTA": RESOURCE_PROB_HIGH, "MEDIA": RESOURCE_PROB_MEDIUM, "BAJA": RESOURCE_PROB_LOW, "NULA": RESOURCE_PROB_NONE}
         
+        viable_sectors_count = 0
+
         # Iteramos sobre el potencial físico del planeta (max_sectors)
         for k in range(planet.max_sectors):
             sector_index = k + 1
             sector_id = (planet.id * 1000) + sector_index
             
-            # Probabilidad de ser sector útil (habitable o con recursos explotables)
-            is_viable_sector = False
-            
             # 1. Check de Habitabilidad Física (para construir)
             is_physically_habitable = random.random() < biome_habitability
             
             # Garantía para el último sector si no hay ninguno habitable en planetas no gaseosos
-            if planet.biome != "Gaseoso" and k == (planet.max_sectors - 1) and not sectors:
+            if planet.biome != "Gaseoso" and k == (planet.max_sectors - 1) and viable_sectors_count == 0:
                  is_physically_habitable = True
             
             sec_type = None
@@ -259,7 +258,6 @@ class GalaxyGenerator:
             luxury_res = None
             
             if is_physically_habitable:
-                is_viable_sector = True
                 resource_found = False
                 
                 # Check de Anillo
@@ -290,35 +288,38 @@ class GalaxyGenerator:
                     sec_type = random.choice([SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN])
 
                 slots = SECTOR_SLOTS_CONFIG.get(sec_type, 2)
+            else:
+                # Caso Inhóspito: No es habitable, se asigna nombre temático y 0 slots
+                sec_type = INHOSPITABLE_BIOME_NAMES.get(planet.biome, SECTOR_TYPE_INHOSPITABLE)
+                slots = 0
             
-            # Si NO es físicamente habitable, ¿tiene recursos extremos? (Futuro: Minería en zonas hostiles)
-            # Por ahora, si no es habitable, lo consideramos "Inhóspito vacío" y lo descartamos 
-            # salvo que la lógica cambie.
-            
-            # Regla de Urbanismo Forzado (Solo si ya se determinó población antes, o es el primer sector viable)
-            if planet.population > 0 and not sectors and is_viable_sector:
+            # Regla de Urbanismo Forzado
+            # Si hay población, el primer sector debe ser Urbano (si no se ha generado uno viable antes, el k=0 se fuerza)
+            if planet.population > 0 and k == 0:
                 sec_type = SECTOR_TYPE_URBAN
                 slots = SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_URBAN, 2)
                 resource_category = None
                 luxury_res = None
             
-            # Solo añadimos el sector si es viable (tiene slots > 0 y tipo válido)
-            if is_viable_sector and slots > 0:
-                # Fix Task 2: Lógica de visibilidad mejorada
-                # Es conocido si: Se fuerza visibilidad OR es el primer sector de la lista generada
-                is_known_flag = force_visible or (len(sectors) == 0)
+            # Contabilizamos si es un sector útil para construcción
+            if slots > 0:
+                viable_sectors_count += 1
+            
+            # Lógica de visibilidad
+            # Es conocido si: Se fuerza visibilidad OR es el primer sector generado
+            is_known_flag = force_visible or (k == 0)
 
-                sectors.append(Sector(
-                    id=sector_id,
-                    planet_id=planet.id,
-                    name=f"Sector {len(sectors) + 1}", # Renombrar secuencialmente
-                    type=sec_type,
-                    resource_category=resource_category,
-                    luxury_resource=luxury_res,
-                    max_slots=slots,
-                    buildings=[],
-                    is_known=is_known_flag
-                ))
+            sectors.append(Sector(
+                id=sector_id,
+                planet_id=planet.id,
+                name=f"Sector {len(sectors) + 1}", # Renombrar secuencialmente
+                type=sec_type,
+                resource_category=resource_category,
+                luxury_resource=luxury_res,
+                max_slots=slots,
+                buildings=[],
+                is_known=is_known_flag
+            ))
                 
         return sectors
 
