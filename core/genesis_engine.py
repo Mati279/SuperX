@@ -7,6 +7,7 @@ Actualizado: Generación de Tripulación Inicial (Level 5 + 2x Level 3) con cono
 Corrección V4.4: Escritura de seguridad en tabla 'planets' usando fórmula centralizada.
 Corrección V4.5: Persistencia de 'population' en tabla global 'planets'.
 Corrección V5.9: Fix crítico de nomenclatura 'poblacion' a 'population' en planet_assets.
+Corrección V6.0: Fix de persistencia de seguridad (Race Condition con Triggers DB).
 """
 
 import random
@@ -88,7 +89,8 @@ def genesis_protocol(player_id: int) -> bool:
             base_stat=base_stat,
             pop_count=initial_pop,
             infrastructure_defense=0, # Génesis empieza sin edificios
-            orbital_ring=orbital_ring
+            orbital_ring=orbital_ring,
+            is_player_owned=True
         )
         
         # Generar breakdown inicial para UI
@@ -115,11 +117,19 @@ def genesis_protocol(player_id: int) -> bool:
         db.table("planet_assets").insert(asset_data).execute()
         
         # Actualizar Planeta (Source of Truth de Seguridad y Población)
-        # FIX V4.5: Se agrega 'population' al update para mantener consistencia global
+        # FIX V6.0: Separación de updates para evitar race condition con triggers DB
+        
+        # Paso 1: Asignar Población y Dueño (Trigger puede dispararse aquí)
         db.table("planets").update({
             "surface_owner_id": player_id,
-            "security": initial_security,
-            "population": initial_pop,
+            "population": initial_pop
+        }).eq("id", target_planet['id']).execute()
+        
+        log_event(f"Persisting calculated security override for planet {target_planet['id']}...", player_id)
+
+        # Paso 2: Forzar Seguridad Calculada (Sobreescribe Trigger)
+        db.table("planets").update({
+            "security": float(initial_security),
             "security_breakdown": security_breakdown
         }).eq("id", target_planet['id']).execute()
         
