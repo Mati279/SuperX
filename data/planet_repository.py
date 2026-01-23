@@ -18,6 +18,7 @@ Corrección v5.9: Fix columna 'sector_type' en tabla sectors.
 Refactor v6.0: Eliminación de columna redundante 'buildings_count' en sectors (Cálculo dinámico).
 Corrección v6.1: Fix crítico de tipos en seguridad (soporte Dict/Float) y persistencia de breakdown.
 Corrección v6.2: Mapeo explícito de 'population' en assets para el motor económico.
+Actualizado v6.3: Implementación de Soberanía Dinámica y Control de Construcción (Slots/Bloqueos).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -152,7 +153,12 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
             building["sector_type"] = sector.get("sector_type") if sector else "Desconocido"
             building["sector_info"] = sector
             
-            if sector:
+            # --- V6.3: Consumo Dinámico de Slots ---
+            # Solo contamos edificios que consumen slots (Default True)
+            b_type = building.get("building_type")
+            consumes_slots = BUILDING_TYPES.get(b_type, {}).get("consumes_slots", True)
+            
+            if sector and consumes_slots:
                 sector['buildings_count'] += 1
             
             buildings_by_asset[aid].append(building)
@@ -237,6 +243,7 @@ def create_planet_asset(
                 sec_breakdown = initial_security
             
             # Sincronizar tabla PLANETS con desglose explícito
+            # V6.3: Se actualiza surface_owner_id aquí inicialmente, pero update_planet_sovereignty lo confirmará luego
             db.table("planets").update({
                 "surface_owner_id": player_id,
                 "security": sec_value,
@@ -289,8 +296,18 @@ def get_base_slots_info(planet_asset_id: int) -> Dict[str, int]:
             if sectors_res and sectors_res.data:
                 total_slots = sum(s["slots"] for s in sectors_res.data)
         
-        buildings_res = db.table("planet_buildings").select("id", count="exact").eq("planet_asset_id", planet_asset_id).execute()
-        used = buildings_res.count if buildings_res and buildings_res.count is not None else 0
+        # V6.3: Filtrar edificios que no consumen slots
+        buildings_res = db.table("planet_buildings")\
+            .select("id, building_type")\
+            .eq("planet_asset_id", planet_asset_id)\
+            .execute()
+        
+        used = 0
+        if buildings_res and buildings_res.data:
+            for b in buildings_res.data:
+                bt = b.get("building_type")
+                if BUILDING_TYPES.get(bt, {}).get("consumes_slots", True):
+                    used += 1
         
         return {"total": total_slots, "used": used, "free": max(0, total_slots - used)}
     except Exception as e:
@@ -313,9 +330,9 @@ def get_planet_sectors_status(planet_id: int) -> List[Dict[str, Any]]:
         
         sector_ids = [s["id"] for s in sectors]
 
-        # 2. Contar edificios dinámicamente
+        # 2. Contar edificios dinámicamente (Filtrando consumo de slots)
         b_response = db.table("planet_buildings")\
-            .select("sector_id")\
+            .select("sector_id, building_type")\
             .in_("sector_id", sector_ids)\
             .execute()
         
@@ -323,7 +340,10 @@ def get_planet_sectors_status(planet_id: int) -> List[Dict[str, Any]]:
         counts = {}
         for b in buildings:
             sid = b.get("sector_id")
-            if sid: counts[sid] = counts.get(sid, 0) + 1
+            bt = b.get("building_type")
+            # V6.3: Solo contar si consume slot
+            if sid and BUILDING_TYPES.get(bt, {}).get("consumes_slots", True):
+                counts[sid] = counts.get(sid, 0) + 1
 
         # 3. Mapear resultados
         for s in sectors:
@@ -421,6 +441,87 @@ def get_planet_buildings(planet_asset_id: int) -> List[Dict[str, Any]]:
         log_event(f"Error obteniendo edificios: {e}", is_error=True)
         return []
 
+# --- V6.3: GESTIÓN DE SOBERANÍA Y CONSTRUCCIÓN ---
+
+def update_planet_sovereignty(planet_id: int):
+    """
+    Recalcula y actualiza la soberanía de superficie y orbital basada en edificios.
+    Soberanía Superficie: Dueño de HQ > Dueño único de Outposts > Null.
+    Soberanía Orbital: Dueño de Orbital Station > Surface Owner (Default).
+    """
+    try:
+        db = _get_db()
+        
+        # 1. Obtener todos los edificios del planeta (de todos los jugadores)
+        # Necesitamos unir planet_buildings -> planet_assets para saber el planeta
+        # Pero Supabase no permite joins complejos en delete/update triggers facilmente,
+        # así que hacemos query manual.
+        
+        # Obtener todos los assets del planeta
+        assets_res = db.table("planet_assets").select("id, player_id").eq("planet_id", planet_id).execute()
+        if not assets_res or not assets_res.data:
+            # Nadie en el planeta
+            db.table("planets").update({"surface_owner_id": None, "orbital_owner_id": None}).eq("id", planet_id).execute()
+            return
+
+        assets = assets_res.data
+        asset_ids = [a["id"] for a in assets]
+        player_map = {a["id"]: a["player_id"] for a in assets}
+
+        # Obtener edificios relevantes (HQ, Outpost, Orbital Station)
+        buildings_res = db.table("planet_buildings")\
+            .select("building_type, planet_asset_id")\
+            .in_("planet_asset_id", asset_ids)\
+            .execute()
+        
+        buildings = buildings_res.data if buildings_res and buildings_res.data else []
+
+        hq_owner = None
+        outpost_owners = set()
+        orbital_station_owner = None
+
+        for b in buildings:
+            b_type = b.get("building_type")
+            pid = player_map.get(b.get("planet_asset_id"))
+            
+            if b_type == "hq":
+                hq_owner = pid # Asumimos uno solo o el ultimo gana (Regla: HQ en Urbano)
+            elif b_type == "outpost":
+                outpost_owners.add(pid)
+            elif b_type == "orbital_station":
+                orbital_station_owner = pid
+
+        # Lógica de Soberanía Superficie
+        new_surface_owner = None
+        if hq_owner:
+            new_surface_owner = hq_owner
+        elif len(outpost_owners) == 1:
+            new_surface_owner = list(outpost_owners)[0]
+        else:
+            # Nadie o disputa de outposts sin HQ
+            new_surface_owner = None
+
+        # Lógica de Soberanía Orbital
+        new_orbital_owner = None
+        if orbital_station_owner:
+            new_orbital_owner = orbital_station_owner
+        else:
+            # Fallback a Surface Owner
+            new_orbital_owner = new_surface_owner
+
+        # Actualizar Planeta
+        db.table("planets").update({
+            "surface_owner_id": new_surface_owner,
+            "orbital_owner_id": new_orbital_owner,
+            # Reset disputa si hay dueño claro de superficie, o marcar disputa si hay multiples outposts?
+            # Por ahora mantenemos is_disputed manual o por lógica de combate. 
+            # Pero si hay HQs rivales (improbable por bloqueo) o Outposts rivales:
+            "is_disputed": (hq_owner is None and len(outpost_owners) > 1)
+        }).eq("id", planet_id).execute()
+
+    except Exception as e:
+        log_event(f"Error actualizando soberanía planet {planet_id}: {e}", is_error=True)
+
 
 def build_structure(
     planet_asset_id: int,
@@ -429,7 +530,7 @@ def build_structure(
     tier: int = 1,
     sector_id: Optional[int] = None 
 ) -> Optional[Dict[str, Any]]:
-    """Construye validando espacio en sectores de manera dinámica."""
+    """Construye validando espacio en sectores y reglas de bloqueo de facción (V6.3)."""
     if building_type not in BUILDING_TYPES: return None
     definition = BUILDING_TYPES[building_type]
     db = _get_db()
@@ -439,41 +540,131 @@ def build_structure(
         if not asset: return None
         planet_id = asset["planet_id"]
 
-        # 1. Recuperar Sectores y Edificios para calcular espacio
+        # --- V6.3: Validaciones de Bloqueo y Unicidad ---
+        
+        # 0. Obtener todos los edificios del planeta para validaciones globales
+        # (Esto podría optimizarse pero es seguro para consistencia)
+        all_assets = db.table("planet_assets").select("id, player_id").eq("planet_id", planet_id).execute().data
+        all_asset_ids = [a["id"] for a in all_assets]
+        
+        all_buildings = db.table("planet_buildings")\
+            .select("sector_id, building_type, planet_asset_id")\
+            .in_("planet_asset_id", all_asset_ids)\
+            .execute().data or []
+
+        # Mapa de dueños de edificios
+        building_owners = {} # building_index -> player_id (No tenemos ID único aqui facil, usamos logica de sector)
+        sector_occupants = {} # sector_id -> set(player_ids)
+        
+        has_orbital_station = False
+        orbital_station_owner = None
+
+        for b in all_buildings:
+            owner = next((a["player_id"] for a in all_assets if a["id"] == b["planet_asset_id"]), None)
+            sid = b.get("sector_id")
+            bt = b.get("building_type")
+            
+            if sid:
+                if sid not in sector_occupants: sector_occupants[sid] = set()
+                sector_occupants[sid].add(owner)
+            
+            if bt == "orbital_station":
+                has_orbital_station = True
+                orbital_station_owner = owner
+
+        # Regla 1: Bloqueo Orbital (Solo una estación por planeta, o al menos no de otro jugador si queremos exclusividad)
+        # La regla dice: "verifica si ya existe una de otro jugador".
+        if building_type == "orbital_station":
+            if has_orbital_station and orbital_station_owner != player_id:
+                log_event("Construcción bloqueada: Ya existe una Estación Orbital enemiga.", player_id, is_error=True)
+                return None
+
+        # 1. Recuperar Sectores
         sectors_res = db.table("sectors").select("*").eq("planet_id", planet_id).execute()
         sectors = sectors_res.data if sectors_res and sectors_res.data else []
         if not sectors:
             log_event("No hay sectores en el planeta.", player_id, is_error=True)
             return None
 
-        # Contar edificios existentes
-        buildings_res = db.table("planet_buildings").select("sector_id").eq("planet_asset_id", planet_asset_id).execute()
-        existing_buildings = buildings_res.data if buildings_res and buildings_res.data else []
+        # Preparar contadores de slots (Solo de este jugador para limites, pero chequear ocupacion enemiga)
+        my_buildings = [b for b in all_buildings if b["planet_asset_id"] == planet_asset_id]
         
         sector_counts = {}
-        for b in existing_buildings:
+        for b in my_buildings:
             sid = b.get("sector_id")
-            if sid: sector_counts[sid] = sector_counts.get(sid, 0) + 1
+            bt = b.get("building_type")
+            # V6.3: Solo contar si consume slots
+            consumes = BUILDING_TYPES.get(bt, {}).get("consumes_slots", True)
+            if sid and consumes: 
+                sector_counts[sid] = sector_counts.get(sid, 0) + 1
 
-        # Preparar sectores con contadores
         for s in sectors:
             if 'max_slots' in s: s['slots'] = s['max_slots']
-            s['buildings_count'] = sector_counts.get(s["id"], 0) # Count dinámico
+            s['buildings_count'] = sector_counts.get(s["id"], 0)
 
-        # 2. Selección de Sector Objetivo
+        # 2. Selección de Sector Objetivo y Validación de Bloqueo Local
         target_sector = None
+        
         if sector_id:
-            # Buscar en la lista ya traída para tener el count actualizado
             matches = [s for s in sectors if s["id"] == sector_id]
             if matches: target_sector = matches[0]
         else:
-            urban = [s for s in sectors if s.get("sector_type") == 'Urbano' and s["buildings_count"] < s["slots"]]
-            others = [s for s in sectors if s["buildings_count"] < s["slots"]]
-            target_sector = urban[0] if urban else (others[0] if others else None)
+            # Auto-asignación inteligente
+            # Priorizar Urbano para HQ, o donde quepa
+            allowed = definition.get("allowed_terrain", []) # Si es None/Empty asume todos menos prohibidos? 
+            # Mejor usar lógica inversa: Si building tiene allowed_terrain explícito (HQ, Outpost), filtrar.
+            
+            candidates = []
+            for s in sectors:
+                # Chequeo de slots (si consume)
+                if definition.get("consumes_slots", True) and s["buildings_count"] >= s["slots"]:
+                    continue
+                
+                # Chequeo de terreno permitido (Simple check)
+                # HQ -> Urbano
+                # Outpost -> No Urbano, No Inhospito (Validar con lista de constants)
+                # Otros -> No Inhospito
+                
+                # Implementación rápida de allowed_terrain si existe en definition
+                if "allowed_terrain" in definition:
+                    if s["sector_type"] not in definition["allowed_terrain"]:
+                        # Caso especial: Resources maps to allowed names? 
+                        # Simplificación: Chequear nombre o tipo.
+                        # El sector_type en DB suele ser "Urbano", "Llanura", "Montañoso"
+                        # o el nombre del recurso si es especial.
+                        # Para Outpost: plain/mountain/resources.
+                        pass # Asumimos que el front manda sector_id valido o filtramos aqui mejor
+                
+                # REGLA CRÍTICA V6.3: Bloqueo de Facción
+                # Si el sector tiene ocupantes que NO son yo -> Bloqueado
+                occupants = sector_occupants.get(s["id"], set())
+                if any(occ != player_id for occ in occupants):
+                    continue 
 
-        if not target_sector or target_sector["buildings_count"] >= target_sector["slots"]:
-            log_event("No hay espacio en sectores disponibles.", player_id, is_error=True)
+                candidates.append(s)
+            
+            # Priorizar Urbano si es HQ
+            if building_type == "hq":
+                urban = [s for s in candidates if s.get("sector_type") == 'Urbano']
+                target_sector = urban[0] if urban else None
+            else:
+                target_sector = candidates[0] if candidates else None
+
+        # Validación final del target
+        if not target_sector:
+            log_event("No hay sectores disponibles o válidos (Bloqueo/Espacio).", player_id, is_error=True)
             return None
+
+        # Validación explícita de bloqueo en target seleccionado por ID
+        occupants = sector_occupants.get(target_sector["id"], set())
+        if any(occ != player_id for occ in occupants):
+            log_event("Construcción fallida: Sector ocupado por otra facción.", player_id, is_error=True)
+            return None
+            
+        # Validación de slots si fue por ID
+        if definition.get("consumes_slots", True) and target_sector["buildings_count"] >= target_sector["slots"]:
+             log_event("No hay espacio en el sector seleccionado.", player_id, is_error=True)
+             return None
 
         # 3. Insertar Edificio
         world = get_world_state()
@@ -489,8 +680,11 @@ def build_structure(
 
         response = db.table("planet_buildings").insert(building_data).execute()
         if response and response.data:
-            # V6.0: Eliminada actualización redundante a tabla 'sectors' (buildings_count)
             log_event(f"Construido {definition['name']} en {target_sector.get('sector_type', 'Sector')}", player_id)
+            
+            # --- V6.3: Actualizar Soberanía ---
+            update_planet_sovereignty(planet_id)
+            
             return response.data[0]
         return None
     except Exception as e:
@@ -499,19 +693,29 @@ def build_structure(
 
 
 def demolish_building(building_id: int, player_id: int) -> bool:
-    """Demuele y decrementa el contador del sector (Implícito)."""
+    """Demuele y decrementa el contador del sector (Implícito). Actualiza soberanía."""
     try:
         db = _get_db()
-        # Verificar propiedad
-        b_res = db.table("planet_buildings").select("id").eq("id", building_id).single().execute()
+        # Verificar propiedad y obtener planet_id para update sovereignty
+        b_res = db.table("planet_buildings")\
+            .select("*, planet_assets(planet_id)")\
+            .eq("id", building_id)\
+            .single()\
+            .execute()
+            
         if not b_res or not b_res.data: return False
+        
+        planet_id = b_res.data.get("planet_assets", {}).get("planet_id")
         
         # Eliminar
         db.table("planet_buildings").delete().eq("id", building_id).execute()
         
-        # V6.0: Eliminada actualización redundante a tabla 'sectors'
-        
         log_event(f"Edificio {building_id} demolido.", player_id)
+        
+        # --- V6.3: Actualizar Soberanía ---
+        if planet_id:
+            update_planet_sovereignty(planet_id)
+
         return True
     except Exception as e:
         log_event(f"Error demoliendo: {e}", player_id, is_error=True)

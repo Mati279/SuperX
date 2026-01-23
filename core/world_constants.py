@@ -11,6 +11,7 @@ Actualizado v4.8.0: Correcciones de Reglas (Habitabilidad, Economía Logarítmic
 Actualizado v4.8.2: Limpieza de constantes de seguridad obsoletas.
 Actualizado v5.2.0: Definición de Biomas de Nacimiento Habitables.
 Actualizado v5.3.0: Integración de Precios Base para Recursos de Lujo.
+Actualizado v6.3.0: Definición de Puestos de Avanzada, Estaciones Orbitales y Soberanía.
 """
 from typing import Dict, List
 
@@ -206,16 +207,59 @@ INFRASTRUCTURE_MODULES = {
     }
 }
 
+# --- SECTORES Y GENERACIÓN V4.2.0 (ADELANTADO PARA REFERENCIA EN BUILDINGS) ---
+
+SECTOR_TYPE_URBAN = "Urbano"
+SECTOR_TYPE_PLAIN = "Llanura"
+SECTOR_TYPE_MOUNTAIN = "Montañoso"
+SECTOR_TYPE_INHOSPITABLE = "Inhospito"
+
+VALID_SECTOR_TYPES = [
+    SECTOR_TYPE_URBAN,
+    SECTOR_TYPE_PLAIN,
+    SECTOR_TYPE_MOUNTAIN,
+    SECTOR_TYPE_INHOSPITABLE
+]
+
+# Definición de sectores válidos para Outposts (Todo menos Urbano e Inhóspito)
+OUTPOST_ALLOWED_TERRAIN = [SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN] + list(SECTOR_NAMES_BY_CATEGORY.values())
+
 BUILDING_TYPES = {
     "hq": {
         "name": "Comando Central",
         "material_cost": 0,
         "maintenance": {"creditos": 50},
-        "description": "Sede administrativa. Nivel 3 permite Multitasking.",
+        "description": "Sede administrativa. Establece control territorial.",
         "max_tier": 5,
         "pops_required": 0,
         "category": "administracion",
+        "allowed_terrain": [SECTOR_TYPE_URBAN],
+        "consumes_slots": True,
         "production": {}
+    },
+    "outpost": {
+        "name": "Puesto de Avanzada",
+        "material_cost": 100,
+        "maintenance": {"creditos": 10, "materiales": 5},
+        "description": "Establece presencia sin urbanizar. Costo reducido.",
+        "max_tier": 1,
+        "pops_required": 10,
+        "category": "expansion",
+        "allowed_terrain": OUTPOST_ALLOWED_TERRAIN,
+        "consumes_slots": False,
+        "production": {}
+    },
+    "orbital_station": {
+        "name": "Estación Orbital",
+        "material_cost": 500,
+        "maintenance": {"creditos": 50, "celulas_energia": 20},
+        "description": "Base en órbita geoestacionaria. Controla el espacio.",
+        "max_tier": 3,
+        "pops_required": 20,
+        "category": "orbital",
+        "is_orbital": True,
+        "consumes_slots": False,
+        "production": {"datos": 5}
     },
     "barracks": {
         "name": "Barracas",
@@ -224,6 +268,7 @@ BUILDING_TYPES = {
         "description": "Alojamiento militar. Aumenta límite de reclutas.",
         "pops_required": 50,
         "category": "defensa",
+        "consumes_slots": True,
         "production": {}
     },
     "mine_basic": {
@@ -233,6 +278,7 @@ BUILDING_TYPES = {
         "description": "Extracción básica de minerales locales.",
         "pops_required": 100,
         "category": "extraccion",
+        "consumes_slots": True,
         "production": {"materiales": 10}
     },
     "solar_plant": {
@@ -242,6 +288,7 @@ BUILDING_TYPES = {
         "description": "Generación de energía pasiva.",
         "pops_required": 20,
         "category": "celulas_energia",
+        "consumes_slots": True,
         "production": {"celulas_energia": 15}
     },
     "fusion_reactor": {
@@ -252,6 +299,7 @@ BUILDING_TYPES = {
         "pops_required": 50,
         "min_tier": 2,
         "category": "celulas_energia",
+        "consumes_slots": True,
         "production": {"celulas_energia": 50}
     },
     "factory": {
@@ -261,6 +309,7 @@ BUILDING_TYPES = {
         "description": "Procesa minerales en aleaciones.",
         "pops_required": 200,
         "category": "industria",
+        "consumes_slots": True,
         "production": {"componentes": 5}
     }
 }
@@ -271,7 +320,9 @@ BUILDING_SHUTDOWN_PRIORITY = {
     "tecnologia": 2,
     "defensa": 1,
     "celulas_energia": 0,
-    "administracion": 0
+    "administracion": 0,
+    "orbital": 0,
+    "expansion": 5
 }
 
 ECONOMY_RATES = {
@@ -319,20 +370,6 @@ LUXURY_PRICES = {
     "Matrices de IA": 98,
     "Núcleos de Datos Crípticos": 132
 }
-
-# --- SECTORES Y GENERACIÓN V4.2.0 ---
-
-SECTOR_TYPE_URBAN = "Urbano"
-SECTOR_TYPE_PLAIN = "Llanura"
-SECTOR_TYPE_MOUNTAIN = "Montañoso"
-SECTOR_TYPE_INHOSPITABLE = "Inhospito"
-
-VALID_SECTOR_TYPES = [
-    SECTOR_TYPE_URBAN,
-    SECTOR_TYPE_PLAIN,
-    SECTOR_TYPE_MOUNTAIN,
-    SECTOR_TYPE_INHOSPITABLE
-]
 
 # Configuración de Slots por Tipo de Sector (V4.6.0)
 # Define la capacidad de construcción según geografía
