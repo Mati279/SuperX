@@ -10,6 +10,7 @@ Actualizado v4.7.0: Alineación con Reglas Definitivas (Biomas y Nomenclatura).
 Actualizado v4.8.0: Correcciones de Reglas (Habitabilidad, Economía Logarítmica, Pesos).
 Actualizado v4.8.2: Limpieza de constantes de seguridad obsoletas.
 Actualizado v5.2.0: Definición de Biomas de Nacimiento Habitables.
+Actualizado v5.3.0: Integración de Precios Base para Recursos de Lujo.
 """
 from typing import Dict, List
 
@@ -292,6 +293,31 @@ BROKER_PRICES = {
     "celulas_energia": 30,
     "influencia": 50,
     "datos": 20
+}
+
+# Precios Base de Recursos de Lujo (V5.3.0)
+LUXURY_PRICES = {
+    # Metales
+    "Wolframio": 65,
+    "Neodimio": 78,
+    "Paladio": 92,
+    "Platino": 115,
+    "Iridio": 138,
+    # Componentes
+    "Sensores de Precisión": 85,
+    "Nanobots": 110,
+    "Circuitos Cuánticos": 145,
+    # Energía
+    "Cristales de Foco": 82,
+    "Plasma Estable": 118,
+    "Materia Oscura": 165,
+    # Influencia
+    "Archivos Diplomáticos": 140,
+    "Reliquias Culturales": 185,
+    # Datos
+    "Códigos de Encriptación": 72,
+    "Matrices de IA": 98,
+    "Núcleos de Datos Crípticos": 132
 }
 
 # --- SECTORES Y GENERACIÓN V4.2.0 ---

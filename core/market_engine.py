@@ -1,8 +1,9 @@
-# core/market_engine.py
+# core/market_engine.py (Completo)
 """
-Motor de Mercado y Logística - V4.2
+Motor de Mercado y Logística - V5.3
 Gestiona precios dinámicos, validación de órdenes y procesamiento diferido.
 Spec 4.2: Influencia del Prestigio y Broker Dinámico.
+Spec 5.3: Integración de Recursos de Lujo (Solo Venta) y Ajuste Logístico.
 """
 
 from typing import Dict, List, Tuple, Any
@@ -11,7 +12,7 @@ import math
 from core.models import MarketOrder, MarketOrderStatus, PlayerData
 from core.time_engine import get_current_tick
 from core.prestige_engine import get_player_prestige_level
-from core.world_constants import ECONOMY_RATES
+from core.world_constants import ECONOMY_RATES, LUXURY_PRICES
 
 from data.market_repository import (
     create_market_order, 
@@ -35,14 +36,15 @@ BASE_PRICES = {
 MARKET_FEE_PERCENT = 0.20 # Markup base del 20%
 PRESTIGE_BASELINE = 14    # Nivel de prestigio neutral (14%)
 
-def calculate_market_prices(player_id: int) -> Dict[str, Dict[str, int]]:
+def calculate_market_prices(player_id: int) -> Dict[str, Dict[str, Any]]:
     """
     Calcula precios de compra y venta personalizados según el prestigio.
-    Retorna: { "recurso": { "buy": int, "sell": int } }
+    Retorna: { "recurso": { "buy": int/None, "sell": int } }
     
-    Lógica V4.2:
+    Lógica V4.2 + V5.3:
     - Base Markup: 20%
     - Ajuste: +/- 1% de markup por cada 1% de prestigio de diferencia con Baseline (14).
+    - Lujo: Solo Venta disponible.
     """
     prestige = get_player_prestige_level(player_id)
     
@@ -65,6 +67,7 @@ def calculate_market_prices(player_id: int) -> Dict[str, Dict[str, int]]:
     
     prices = {}
     
+    # 1. Recursos Base (Compra y Venta)
     for resource, base_price in BASE_PRICES.items():
         # Precio Compra = Base * (1 + fee)
         buy_price = math.ceil(base_price * (1 + buy_fee))
@@ -79,7 +82,22 @@ def calculate_market_prices(player_id: int) -> Dict[str, Dict[str, int]]:
             "buy": buy_price,
             "sell": sell_price,
             "base": base_price,
-            "fee_rate": buy_fee # Debug info
+            "fee_rate": buy_fee, # Debug info
+            "type": "basic"
+        }
+
+    # 2. Recursos de Lujo (Solo Venta)
+    for resource, base_price in LUXURY_PRICES.items():
+        # Precio Venta = Base * (1 - markdown)
+        sell_price = math.floor(base_price * (1 - sell_markdown))
+        
+        if sell_price < 1: sell_price = 1
+        
+        prices[resource] = {
+            "buy": None, # No se pueden comprar
+            "sell": sell_price,
+            "base": base_price,
+            "type": "luxury"
         }
         
     return prices
@@ -88,17 +106,18 @@ def get_market_limits(player_id: int) -> Tuple[int, int]:
     """
     Calcula límites de operación por tick.
     Returns: (operaciones_usadas, operaciones_totales)
+    V5.3: Ajuste de capacidad a 2 por planeta.
     """
     current_tick = get_current_tick()
     
-    # Capacidad: 5 por cada planeta activo
+    # Capacidad: 2 por cada planeta activo
     planets = get_all_player_planets(player_id)
     # Consideramos 'activo' si tiene población > 0, o simplemente si existe el asset
     active_planets = len([p for p in planets if p.get("poblacion", 0) > 0])
     # Mínimo 1 planeta (el inicial siempre cuenta aunque esté en 0 pop temporalmente)
     active_planets = max(1, active_planets)
     
-    total_capacity = active_planets * 5
+    total_capacity = active_planets * 2
     
     # Usados este tick
     orders_this_tick = get_orders_by_tick(player_id, current_tick)
@@ -116,8 +135,13 @@ def place_market_order(player_id: int, resource: str, amount: int, is_buy: bool)
     if amount <= 0:
         return False, "La cantidad debe ser mayor a 0."
         
-    if resource not in BASE_PRICES:
+    # Validación V5.3: El recurso debe existir en Base o Lujo
+    if resource not in BASE_PRICES and resource not in LUXURY_PRICES:
         return False, "Recurso no válido."
+
+    # Validación V5.3: No se permite comprar Lujo
+    if is_buy and resource in LUXURY_PRICES:
+        return False, "Los recursos de lujo no pueden ser comprados en el mercado."
 
     # 1. Validar Límites Logísticos
     used, total = get_market_limits(player_id)
@@ -139,17 +163,17 @@ def place_market_order(player_id: int, resource: str, amount: int, is_buy: bool)
         
     # 3. Validar Recursos y Cobrar (Instantáneo)
     player_resources = get_player_resources(player_id)
-    current_credits = player_resources.get("creditos", 0)
     
     updates = {}
     
     if is_buy:
         # Compra: Necesita Créditos
+        current_credits = player_resources.get("creditos", 0)
         if current_credits < total_cost:
             return False, f"Créditos insuficientes. Requieres {total_cost} Cr."
         updates["creditos"] = current_credits - total_cost
     else:
-        # Venta: Necesita el Recurso
+        # Venta: Necesita el Recurso (Funciona igual para Base y Lujo)
         current_res = player_resources.get(resource, 0)
         if current_res < amount:
             return False, f"Stock insuficiente de {resource}."
@@ -197,8 +221,9 @@ def process_pending_market_orders(player_id: int) -> int:
     processed_count = 0
     completed_ids = []
     
-    # Recursos a acreditar
-    resource_delta = {k: 0 for k in ["creditos", "materiales", "componentes", "celulas_energia", "influencia", "datos"]}
+    # Recursos a acreditar (Inicializamos con base, pero agregamos dinámicos si es necesario)
+    resource_delta = {k: 0 for k in BASE_PRICES.keys()}
+    resource_delta["creditos"] = 0
     
     for order in pending:
         # Solo procesar si fue creada ANTES del tick actual (Entrega tick + 1)
@@ -206,6 +231,9 @@ def process_pending_market_orders(player_id: int) -> int:
             
             if order.amount > 0:
                 # Era COMPRA: Ya pagó créditos, recibe recurso
+                # Asegurar que la key existe en el delta
+                if order.resource_type not in resource_delta:
+                    resource_delta[order.resource_type] = 0
                 resource_delta[order.resource_type] += order.amount
             else:
                 # Era VENTA: Ya entregó recurso, recibe créditos
