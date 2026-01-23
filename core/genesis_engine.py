@@ -9,6 +9,7 @@ Corrección V4.5: Persistencia de 'population' en tabla global 'planets'.
 Corrección V5.9: Fix crítico de nomenclatura 'poblacion' a 'population' en planet_assets.
 Corrección V6.0: Fix de persistencia de seguridad (Race Condition con Triggers DB).
 Corrección V6.1: Filtro estricto de Biomas Habitables en selección de planeta inicial.
+Actualizado V7.2: Soporte para Niebla de Superficie (Descubrimiento automático de sector base).
 """
 
 import random
@@ -16,6 +17,8 @@ import traceback
 from typing import Dict, Any, List
 from data.database import get_supabase
 from data.log_repository import log_event
+# Importación actualizada para V7.2
+from data.planet_repository import grant_sector_knowledge, get_planet_sectors_status
 from core.world_constants import STAR_TYPES, ECONOMY_RATES, HABITABLE_BIRTH_BIOMES
 from core.constants import MIN_ATTRIBUTE_VALUE
 from core.models import KnowledgeLevel
@@ -161,6 +164,27 @@ def genesis_protocol(player_id: int) -> bool:
         # 4. Inventario y FOW
         apply_genesis_inventory(player_id)
         initialize_fog_of_war(player_id, system_id)
+
+        # --- V7.2: Descubrimiento del Sector Inicial (Niebla de Superficie) ---
+        try:
+            # Recuperar sectores recién creados (o existentes)
+            sectors = get_planet_sectors_status(target_planet['id'])
+            
+            # Priorizar sector urbano para el "aterrizaje"
+            landing_sector = next((s for s in sectors if s.get('sector_type') == 'Urbano'), None)
+            
+            # Si no hay urbano, usar el primero
+            if not landing_sector and sectors:
+                landing_sector = sectors[0]
+            
+            if landing_sector:
+                grant_sector_knowledge(player_id, landing_sector['id'])
+                log_event(f"Sector de aterrizaje identificado: {landing_sector.get('name', 'Sector Base')}", player_id)
+            else:
+                log_event("Advertencia: No se encontraron sectores para establecer zona de aterrizaje.", player_id)
+                
+        except Exception as e:
+            log_event(f"Error inicializando niebla de superficie: {e}", player_id, is_error=True)
 
         # 5. Generación de Tripulación Inicial (Opcional/Manual en UI)
         # _deploy_starting_crew(player_id, target_planet['id'])

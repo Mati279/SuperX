@@ -8,6 +8,7 @@ Refactor V5.8: Estandarización a 'population' y métricas mejoradas.
 Corrección V6.0: Adaptación a 'sector_type' para consistencia con DB.
 Refactor V7.0: Modo Observador, Navegación de Sistema, Sección Orbital y Estilo de Recursos estricto.
 Mejora V7.1: Navegación contextual (Volver al Sistema del planeta actual).
+Actualizado V7.2: Implementación de Niebla de Superficie (Exploración de Sectores).
 """
 
 import streamlit as st
@@ -18,7 +19,8 @@ from data.planet_repository import (
     get_planet_sectors_status,
     get_planet_buildings,
     build_structure,
-    demolish_building
+    demolish_building,
+    grant_sector_knowledge
 )
 from core.rules import calculate_planet_habitability
 from core.world_constants import BUILDING_TYPES, PLANET_BIOMES
@@ -133,7 +135,8 @@ def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_
     """Renderiza el grid de sectores y sus opciones interactivas."""
     st.subheader("Distribución de Sectores")
     
-    sectors = get_planet_sectors_status(planet['id'])
+    # V7.2: Pasar player_id para resolver niebla de superficie
+    sectors = get_planet_sectors_status(planet['id'], player_id=player_id)
     
     if debug_mode:
         st.info(f"🐛 Debug Sectores: Encontrados {len(sectors)} registros en DB para PlanetID {planet['id']}")
@@ -155,11 +158,36 @@ def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_
         for idx, sector in enumerate(row_sectors):
             with cols[idx]:
                 with st.container(border=True):
-                    _render_sector_card(sector, buildings, asset_id, player_id)
+                    _render_sector_card(sector, buildings, asset_id, player_id, debug_mode)
 
 
-def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id: int):
-    """Renderiza una tarjeta individual para un sector específico con estilo estricto."""
+def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id: int, debug_mode: bool):
+    """
+    Renderiza una tarjeta individual para un sector específico con estilo estricto.
+    V7.2: Manejo de Niebla de Superficie.
+    """
+    # --- LÓGICA DE NIEBLA DE SUPERFICIE (V7.2) ---
+    is_explored = sector.get('is_explored_by_player', False)
+    
+    if not is_explored and not debug_mode:
+        # Renderizado Oculto
+        st.markdown(f"### 🌫️ Sector Desconocido ({sector['id']})")
+        st.caption("Zona no cartografiada. Sensores bloqueados.")
+        st.write("**Terreno:** ???")
+        st.write("**Recursos:** ???")
+        
+        st.markdown("---")
+        # Botón de Exploración Temporal
+        if st.button("🔭 Iniciar Exploración", key=f"btn_explore_{sector['id']}", use_container_width=True):
+            if grant_sector_knowledge(player_id, sector['id']):
+                st.toast("¡Exploración completada! Datos del sector actualizados.")
+                st.rerun()
+            else:
+                st.error("Error al registrar la exploración.")
+        return # Salir temprano, no mostrar detalles
+    
+    # --- RENDERIZADO NORMAL (Explorado o Debug) ---
+    
     # Iconografía por tipo de sector
     icons = {
         "Urbano": "🏙️",

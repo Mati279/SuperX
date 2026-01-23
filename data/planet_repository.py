@@ -19,6 +19,7 @@ Refactor v6.0: Eliminación de columna redundante 'buildings_count' en sectors (
 Corrección v6.1: Fix crítico de tipos en seguridad (soporte Dict/Float) y persistencia de breakdown.
 Corrección v6.2: Mapeo explícito de 'population' en assets para el motor económico.
 Actualizado v6.3: Implementación de Soberanía Dinámica y Control de Construcción (Slots/Bloqueos).
+Actualizado v7.2: Soporte para Niebla de Superficie (grant_sector_knowledge).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -315,13 +316,16 @@ def get_base_slots_info(planet_asset_id: int) -> Dict[str, int]:
         return {"total": 0, "used": 0, "free": 0}
 
 
-def get_planet_sectors_status(planet_id: int) -> List[Dict[str, Any]]:
-    """Consulta el estado actual de los sectores de un planeta, calculando ocupación dinámica."""
+def get_planet_sectors_status(planet_id: int, player_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    Consulta el estado actual de los sectores de un planeta, calculando ocupación dinámica.
+    V7.2: Soporta filtrado por conocimiento de jugador (is_explored_by_player).
+    """
     try:
         db = _get_db()
         # 1. Obtener Sectores
         response = db.table("sectors")\
-            .select("id, sector_type, max_slots, resource_category, is_known")\
+            .select("id, sector_type, max_slots, resource_category, is_known, luxury_resource")\
             .eq("planet_id", planet_id)\
             .execute()
         
@@ -345,10 +349,26 @@ def get_planet_sectors_status(planet_id: int) -> List[Dict[str, Any]]:
             if sid and BUILDING_TYPES.get(bt, {}).get("consumes_slots", True):
                 counts[sid] = counts.get(sid, 0) + 1
 
-        # 3. Mapear resultados
+        # 3. Validar conocimiento del jugador (V7.2)
+        known_sector_ids = set()
+        if player_id:
+            try:
+                k_res = db.table("player_sector_knowledge")\
+                    .select("sector_id")\
+                    .eq("player_id", player_id)\
+                    .in_("sector_id", sector_ids)\
+                    .execute()
+                if k_res and k_res.data:
+                    known_sector_ids = {row["sector_id"] for row in k_res.data}
+            except Exception:
+                pass # Fail safe si la tabla no existe o error de conexión
+
+        # 4. Mapear resultados
         for s in sectors:
             s['slots'] = s.get('max_slots', 2)
             s['buildings_count'] = counts.get(s["id"], 0)
+            # Flag de UI para niebla
+            s['is_explored_by_player'] = (s["id"] in known_sector_ids)
             
         return sectors
     except Exception:
@@ -381,6 +401,20 @@ def get_sector_details(sector_id: int) -> Optional[Dict[str, Any]]:
         return sector
     except Exception:
         return None
+
+# --- V7.2: GESTIÓN DE NIEBLA DE SUPERFICIE ---
+
+def grant_sector_knowledge(player_id: int, sector_id: int) -> bool:
+    """Registra que un jugador ha explorado un sector específico."""
+    try:
+        _get_db().table("player_sector_knowledge").upsert(
+            {"player_id": player_id, "sector_id": sector_id},
+            on_conflict="player_id, sector_id"
+        ).execute()
+        return True
+    except Exception as e:
+        log_event(f"Error otorgando conocimiento de sector {sector_id}: {e}", player_id, is_error=True)
+        return False
 
 
 def upgrade_base_tier(planet_asset_id: int, player_id: int) -> bool:

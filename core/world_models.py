@@ -5,6 +5,7 @@ Define la jerarquía de cuerpos celestes, sectores y estructuras galácticas.
 Actualizado v4.8.1: Eliminación de recursos planetarios (migrados a Sectores).
 Actualizado v4.8.2: Refactorización de Sector (max_slots, resource_category) y validación de tipos.
 Refactorizado v5.3: Limpieza de redundancia 'slots' en Planeta. Fuente de verdad: total_sector_slots.
+Actualizado v7.2: Soporte para Niebla de Superficie (is_explored_by_player).
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, Optional
@@ -30,13 +31,14 @@ class Sector:
     buildings_count: int = 0
     
     # Propiedad y Exploración
-    explored_by: List[int] = field(default_factory=list) # IDs de jugadores
+    explored_by: List[int] = field(default_factory=list) # IDs de jugadores (Histórico/Lore)
+    is_explored_by_player: bool = False # V7.2: Flag dinámico para UI actual
     owner_id: Optional[int] = None # ID del jugador dueño de la base/puesto
     has_outpost: bool = False
-    is_known: bool = False # V4.3.0: Soporte para niebla de superficie
+    is_known: bool = False # V4.3.0: Soporte para niebla de superficie (Legacy/Global)
     
     def is_explored_by(self, player_id: int) -> bool:
-        return player_id in self.explored_by
+        return player_id in self.explored_by or self.is_explored_by_player
 
     def available_slots(self) -> int:
         # Actualizado para usar max_slots
