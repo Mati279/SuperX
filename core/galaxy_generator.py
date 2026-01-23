@@ -170,10 +170,26 @@ class GalaxyGenerator:
                     # Rango Natural Unificado: 1.0 - 10.0 Billones
                     p.population = round(random.uniform(1.0, 10.0), 2)
                     
-                    # Garantizar sector urbano si hay población
+                    # Fix: Garantizar sector urbano SIEMPRE si hay población
+                    # Si el planeta no generó sectores (por azar o bioma hostil), forzar creación de uno
+                    if not p.sectors:
+                         urban_sector = Sector(
+                             id=(p.id * 1000) + 1,
+                             planet_id=p.id,
+                             name="Sector Urbano (Generado)",
+                             type=SECTOR_TYPE_URBAN,
+                             resource_category=None,
+                             luxury_resource=None,
+                             max_slots=SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_URBAN, 2),
+                             buildings=[],
+                             is_known=True
+                         )
+                         p.sectors.append(urban_sector)
+                         p.max_sectors = max(p.max_sectors, 1)
+
                     # Verificar si ya existe sector urbano, si no, transformar el primero
                     has_urban = any(s.type == SECTOR_TYPE_URBAN for s in p.sectors)
-                    if not has_urban and p.sectors:
+                    if not has_urban:
                          p.sectors[0].type = SECTOR_TYPE_URBAN
                          p.sectors[0].max_slots = SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_URBAN, 2)
                          p.sectors[0].resource_category = None
