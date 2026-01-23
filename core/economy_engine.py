@@ -5,6 +5,7 @@ Gestiona toda la lógica de cálculo económico del juego.
 Refactorizado V4.2: Modelo Logarítmico y Penalización Orbital.
 Actualizado V4.4: Centralización de Seguridad y Transparencia (Breakdowns).
 Corrección V5.6: Estandarización de Modelos usando 'core.rules.calculate_planet_security'.
+Corrección V5.7: Estandarización de Fórmula Fiscal usando 'core.rules.calculate_fiscal_income'.
 """
 
 from typing import Dict, List, Any, Tuple, Optional
@@ -31,8 +32,12 @@ from core.world_constants import (
 )
 from core.models import ProductionSummary, EconomyTickResult
 from core.market_engine import process_pending_market_orders
-# Importamos la lógica centralizada (V5.6)
-from core.rules import calculate_and_update_system_security, calculate_planet_security as rules_calculate_planet_security
+# Importamos la lógica centralizada (V5.6 + V5.7)
+from core.rules import (
+    calculate_and_update_system_security, 
+    calculate_planet_security as rules_calculate_planet_security,
+    calculate_fiscal_income
+)
 
 
 # --- FUNCIONES DE CÁLCULO ECONÓMICO (PURAS) ---
@@ -86,18 +91,18 @@ def calculate_income(
 ) -> int:
     """
     Calcula el ingreso de créditos.
-    Formula V4.2: (RateBase * log10(Población)) * (Seguridad / 100).
+    Formula V4.2/V5.7: Delegado a core.rules.calculate_fiscal_income para asegurar
+    que se usa el logaritmo de la población TOTAL (unidades), no billones.
     """
     rate = ECONOMY_RATES.get("income_per_pop", 150.0)
     
-    # Crecimiento Logarítmico
-    pop_factor = math.log10(max(1.001, population)) 
+    # Delegación a Source of Truth (core.rules)
+    # Esto asegura que log10(1 Billon) sea 9.0, no 0.0
+    base_income = calculate_fiscal_income(rate, population, security)
     
-    efficiency = security / 100.0
+    final_income = base_income * penalty_multiplier
     
-    income = (rate * pop_factor) * efficiency * penalty_multiplier
-    
-    return max(0, int(income))
+    return max(0, int(final_income))
 
 
 @dataclass

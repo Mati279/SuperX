@@ -1,6 +1,6 @@
 # core/rules.py (Completo)
 import math
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, Union
 from core.constants import SKILL_MAPPING, ATTRIBUTE_COST_MULTIPLIER
 from core.world_constants import PLANET_BIOMES, SECTOR_TYPE_INHOSPITABLE
 from core.models import KnowledgeLevel
@@ -130,7 +130,7 @@ def calculate_planet_habitability(planet_id: int) -> int:
 
 # --- REGLAS DE ECONOMÍA (V4.8) ---
 
-def calculate_fiscal_income(rate_base: float, population_billions: float, security_score: int) -> float:
+def calculate_fiscal_income(rate_base: float, population_billions: float, security_score: Union[int, float]) -> float:
     """
     Calcula ingresos fiscales usando modelo logarítmico (Regla 3).
     Ingresos = (RateBase * log10(Población_Total)) * (Seguridad / 100)
@@ -139,18 +139,26 @@ def calculate_fiscal_income(rate_base: float, population_billions: float, securi
         rate_base: Multiplicador base de impuestos.
         population_billions: Población en miles de millones (ej. 1.5).
         security_score: Puntuación de seguridad del planeta (0-100).
+        
+    Corrección V5.7:
+    - Se asegura conversión a unidades totales para el Log10.
+    - log10(1,000,000,000) = 9.0
     """
     if population_billions <= 0:
         return 0.0
         
+    # Conversión explícita a Unidades (Source of Truth)
     pop_total = population_billions * 1_000_000_000
+    
+    # Evitar dominio inválido para log10
     if pop_total < 1: return 0.0
     
     # log10 de la población total
+    # Ej: 1.5B -> 1,500,000,000 -> log10 ≈ 9.176
     log_pop = math.log10(pop_total)
     
     # Factor de seguridad (0.0 a 1.0)
-    sec_factor = max(0, min(100, security_score)) / 100.0
+    sec_factor = max(0.0, min(100.0, float(security_score))) / 100.0
     
     return (rate_base * log_pop) * sec_factor
 
