@@ -17,6 +17,7 @@ Refactor v5.8: Limpieza integral de consultas y campos expandidos.
 Corrección v5.9: Fix columna 'sector_type' en tabla sectors.
 Refactor v6.0: Eliminación de columna redundante 'buildings_count' en sectors (Cálculo dinámico).
 Corrección v6.1: Fix crítico de tipos en seguridad (soporte Dict/Float) y persistencia de breakdown.
+Corrección v6.2: Mapeo explícito de 'population' en assets para el motor económico.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -162,6 +163,10 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
             asset["surface_owner_id"] = planet_data.get("surface_owner_id")
             asset["is_disputed"] = planet_data.get("is_disputed", False)
             asset["biome"] = planet_data.get("biome", "Desconocido")
+            
+            # FIX V6.2: Mapeo explícito de population para el motor económico
+            asset["population"] = planet_data.get("population", 0.0)
+            
             # Ensure planet data is accessible
             if "security" in planet_data: asset["security_from_planet"] = planet_data["security"]
 

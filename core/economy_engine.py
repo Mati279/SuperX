@@ -6,6 +6,7 @@ Refactorizado V4.2: Modelo Logarítmico y Penalización Orbital.
 Actualizado V4.4: Centralización de Seguridad y Transparencia (Breakdowns).
 Corrección V5.6: Estandarización de Modelos usando 'core.rules.calculate_planet_security'.
 Corrección V5.7: Estandarización de Fórmula Fiscal usando 'core.rules.calculate_fiscal_income'.
+Corrección V5.8: Fix crítico de nomenclatura 'poblacion' a 'population'.
 """
 
 from typing import Dict, List, Any, Tuple, Optional
@@ -253,7 +254,12 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
         # 2. Procesar cada planeta
         for planet in planets:
             # A. Seguridad (V4.4: Centralizada en tabla planets con Breakdown)
-            pop = float(planet.get("poblacion", 0.0))
+            # FIX V5.8: Estandarización a 'population'
+            pop = float(planet.get("population", 0.0))
+            if pop <= 0:
+                # Debug log para rastrear posibles fallos de sincronización
+                log_event(f"⚠️ Alerta Economía: Planeta {planet.get('id')} reporta población 0.0", player_id)
+
             infra_def = planet.get("infraestructura_defensiva", 0)
             
             orbital_dist = planet.get("orbital_distance", 0) 
@@ -388,7 +394,8 @@ def get_player_projected_economy(player_id: int) -> Dict[str, int]:
             if (orbital_owner is not None and orbital_owner != surface_owner) or is_disputed:
                 penalty = DISPUTED_PENALTY_MULTIPLIER
 
-            pop = float(planet.get("poblacion", 0.0))
+            # FIX V5.8: Estandarización a 'population'
+            pop = float(planet.get("population", 0.0))
             infra = planet.get("infraestructura_defensiva", 0)
             
             orbital_dist = planet.get("orbital_distance", 0)
