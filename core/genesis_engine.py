@@ -8,6 +8,7 @@ Corrección V4.4: Escritura de seguridad en tabla 'planets' usando fórmula cent
 Corrección V4.5: Persistencia de 'population' en tabla global 'planets'.
 Corrección V5.9: Fix crítico de nomenclatura 'poblacion' a 'population' en planet_assets.
 Corrección V6.0: Fix de persistencia de seguridad (Race Condition con Triggers DB).
+Corrección V6.1: Filtro estricto de Biomas Habitables en selección de planeta inicial.
 """
 
 import random
@@ -15,7 +16,7 @@ import traceback
 from typing import Dict, Any, List
 from data.database import get_supabase
 from data.log_repository import log_event
-from core.world_constants import STAR_TYPES, ECONOMY_RATES
+from core.world_constants import STAR_TYPES, ECONOMY_RATES, HABITABLE_BIRTH_BIOMES
 from core.constants import MIN_ATTRIBUTE_VALUE
 from core.models import KnowledgeLevel
 from services.character_generation_service import recruit_character_with_ai
@@ -52,26 +53,50 @@ def genesis_protocol(player_id: int) -> bool:
         log_event("Iniciando Protocolo Génesis V4.2 (Fair Start)...", player_id)
         db = _get_db()
         
-        # 1. Encontrar sistema seguro
-        system_id = find_safe_starting_node()
+        target_planet = None
+        system_id = None
         
-        # 2. Seleccionar planeta aleatorio
-        response_planets = db.table("planets").select("id, name, biome, system_id, orbital_ring, base_defense").eq("system_id", system_id).execute()
-        
-        if not response_planets.data:
-            log_event(f"⚠ Sistema {system_id} vacío. Buscando respaldo...", player_id, is_error=True)
-            # Fallback: buscar cualquier planeta
-            fallback = db.table("planets").select("id, name, system_id, orbital_ring, base_defense").limit(1).execute()
+        # 1. Búsqueda de Sistema y Planeta Habitable (Retry Logic)
+        # Intentamos hasta 3 veces encontrar un sistema seguro que contenga planetas con biomas habitables.
+        max_retries = 3
+        for attempt in range(max_retries):
+            # A. Encontrar sistema seguro
+            candidate_system_id = find_safe_starting_node()
+            
+            # B. Obtener planetas del sistema
+            response_planets = db.table("planets").select("id, name, biome, system_id, orbital_ring, base_defense").eq("system_id", candidate_system_id).execute()
+            
+            # C. Filtrar candidatos por Bioma Habitable
+            candidates = []
+            if response_planets.data:
+                candidates = [p for p in response_planets.data if p.get('biome') in HABITABLE_BIRTH_BIOMES]
+            
+            if candidates:
+                # Éxito: Seleccionamos uno de los planetas válidos
+                target_planet = random.choice(candidates)
+                system_id = candidate_system_id
+                break 
+            else:
+                log_event(f"⚠ Sistema {candidate_system_id} descartado: Sin biomas habitables (Intento {attempt + 1}/{max_retries}).", player_id)
+
+        # 2. Fallback Global si falla la búsqueda segura
+        if not target_planet:
+            log_event(f"⚠ No se encontró sistema seguro con biomas válidos. Ejecutando Fallback Global...", player_id, is_error=True)
+            
+            # Fallback: buscar explícitamente cualquier planeta con bioma habitable en la BD
+            fallback = db.table("planets").select("id, name, biome, system_id, orbital_ring, base_defense")\
+                .in_("biome", HABITABLE_BIRTH_BIOMES)\
+                .limit(10).execute()
             
             if not fallback.data: 
-                print("❌ CRITICAL: No existen planetas en la base de datos.")
+                print("❌ CRITICAL: No existen planetas habitables en la base de datos.")
+                log_event("❌ CRITICAL: No existen planetas habitables en la base de datos.", player_id, is_error=True)
                 return False
                 
-            target_planet = fallback.data[0]
-            system_id = target_planet['system_id'] 
-        else:
-            target_planet = random.choice(response_planets.data)
+            target_planet = random.choice(fallback.data)
+            system_id = target_planet['system_id']
         
+        # Generar nombre de base
         base_name = f"{random.choice(BASE_NAMES_PREFIX)} {random.choice(BASE_NAMES_SUFFIX)}"
 
         # 3. Calcular Población y Seguridad
@@ -140,7 +165,7 @@ def genesis_protocol(player_id: int) -> bool:
         # 5. Generación de Tripulación Inicial (Opcional/Manual en UI)
         # _deploy_starting_crew(player_id, target_planet['id'])
         
-        log_event(f"✅ Protocolo Génesis completado. Base: {base_name}. Pob: {initial_pop}B. Seg: {initial_security}", player_id)
+        log_event(f"✅ Protocolo Génesis completado. Base: {base_name}. Pob: {initial_pop}B. Seg: {initial_security} (Bioma: {target_planet.get('biome', 'Unknown')})", player_id)
         return True
 
     except Exception as e:
