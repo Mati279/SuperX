@@ -1,12 +1,12 @@
 # ui/planet_surface_view.py (Completo)
 """
-Vista de Superficie Planetaria.
-Interfaz para la gestión de sectores y construcción de estructuras.
-Implementa la visualización de la Planetología Avanzada (V4.3).
-Actualizado V4.4: Desglose de seguridad transparente.
+Vista Planetaria.
+Interfaz para la gestión de sectores, visualización orbital y construcción.
+Implementa la visualización de la Planetología Avanzada.
 Actualizado V4.5: Soporte para Modo Omnisciencia (Debug) y modernización UI.
 Refactor V5.8: Estandarización a 'population' y métricas mejoradas.
 Corrección V6.0: Adaptación a 'sector_type' para consistencia con DB.
+Refactor V7.0: Modo Observador, Navegación de Sistema, Sección Orbital y Estilo de Recursos estricto.
 """
 
 import streamlit as st
@@ -26,7 +26,8 @@ from ui.state import get_player_id
 
 def render_planet_surface(planet_id: int):
     """
-    Renderiza la interfaz completa de gestión de superficie para un planeta.
+    Renderiza la interfaz completa de gestión y visualización para un planeta.
+    Soporta modo 'Observador' si no existe una colonia (asset).
     
     Args:
         planet_id: ID del planeta que se desea visualizar y gestionar.
@@ -36,56 +37,69 @@ def render_planet_surface(planet_id: int):
         st.error("Error: Sesión de jugador no detectada. Por favor, reincie sesión.")
         return
 
-    # 1. Carga de Datos (Sincronizada con V4.3)
+    # --- Navegación ---
+    if st.button("⬅ Volver al Sistema"):
+        st.session_state.map_view = "system"
+        st.rerun()
+
+    # 1. Carga de Datos
     planet = get_planet_by_id(planet_id)
     asset = get_planet_asset(planet_id, player_id)
     
-    # Validar modo Omnisciencia
+    # Validar modo Omnisciencia (Debug)
     debug_mode = st.session_state.get("debug_omniscience", False)
     
     if not planet:
         st.error("Datos del planeta no encontrados.")
         return
 
-    if not asset and not debug_mode:
-        st.warning("⚠️ No tienes una colonia establecida en este planeta o los datos no están disponibles.")
-        return
-
-    if not asset and debug_mode:
-        st.info("🔭 Modo Omnisciencia Activado: Visualizando superficie sin colonia establecida.")
+    # Lógica de Modo Observador: Ya no retornamos si no hay asset
+    is_observer = asset is None and not debug_mode
 
     # 2. Cabecera de Información General
     _render_info_header(planet, asset)
     
+    if is_observer:
+        st.info("🔭 Modo Observador: No hay colonia establecida en este planeta.")
+    elif not asset and debug_mode:
+        st.info("🔭 Modo Omnisciencia Activado: Visualizando superficie sin colonia establecida.")
+
     st.divider()
 
-    # 3. Grid de Sectores y Gestión de Edificios
+    # 3. Nueva Sección: Órbita
+    st.subheader("🛰️ Órbita")
+    with st.container(border=True):
+        st.caption("Espacio orbital despejado")
+        # Placeholder para futuras funcionalidades de astilleros/estaciones
+
+    st.divider()
+
+    # 4. Grid de Sectores y Gestión de Edificios
     _render_sectors_management(planet, asset, player_id, debug_mode)
 
 
 def _render_info_header(planet: dict, asset: dict):
-    """Muestra el resumen de habitabilidad, bioma y capacidad global."""
-    st.title(f"🌍 Superficie: {planet['name']}")
+    """Muestra el resumen del planeta, tamaño y capacidad global."""
+    st.title(f"Vista Planetaria: {planet['name']}")
     
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         biome = planet['biome']
-        st.metric("Bioma Planetario", biome)
-        st.caption(PLANET_BIOMES.get(biome, {}).get("description", "Entorno hostil."))
+        st.metric("Bioma", biome)
+        st.caption(PLANET_BIOMES.get(biome, {}).get("description", "Entorno."))
         
     with col2:
         # Refactor V5.8: Métrica de población estandarizada
         pop_val = planet.get('population', 0.0)
-        st.metric("Población Total", f"{pop_val:,.2f}B")
+        st.metric("Población", f"{pop_val:,.2f}B")
         st.caption("Ciudadanos registrados")
 
     with col3:
-        habitability = calculate_planet_habitability(planet['id'])
-        # Código de color basado en la hostilidad del entorno
-        hb_color = "green" if habitability > 35 else ("orange" if habitability > -15 else "red")
-        st.metric("Habitabilidad", f"{habitability}%", delta_color="normal" if habitability > 0 else "inverse")
-        st.progress(max(0.0, min(1.0, (habitability + 100) / 200)))
+        # Refactor V7.0: Reemplazo de Habitabilidad por Tamaño/Clase
+        mass_class = planet.get('mass_class', 'Estándar')
+        st.metric("Clase", mass_class)
+        st.caption("Tamaño Planetario")
 
     # V4.4: Visualización Transparente de Seguridad
     with col4:
@@ -98,8 +112,6 @@ def _render_info_header(planet: dict, asset: dict):
         if sec_breakdown and "text" in sec_breakdown:
             with st.expander("🔍 Desglose"):
                 st.caption(f"{sec_breakdown['text']}")
-        else:
-            st.caption("Calculando...")
     
     # Slots Info (Extra row)
     st.divider()
@@ -124,7 +136,7 @@ def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_
         return
 
     # Obtener edificios para filtrarlos por sector en la visualización
-    # Si asset es None (Debug), buildings será vacío
+    # Si asset es None (Observador), buildings será vacío
     buildings = get_planet_buildings(asset['id']) if asset else []
     asset_id = asset['id'] if asset else None
 
@@ -140,7 +152,7 @@ def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_
 
 
 def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id: int):
-    """Renderiza una tarjeta individual para un sector específico."""
+    """Renderiza una tarjeta individual para un sector específico con estilo estricto."""
     # Iconografía por tipo de sector
     icons = {
         "Urbano": "🏙️",
@@ -155,13 +167,28 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     
     st.markdown(f"### {icon} {s_type} (Sector {sector['id']})")
     
-    # V4.5: Visualización de Recursos
+    # V7.0: Visualización Estricta de Recursos
+    # Mapeo de colores según requerimiento
+    res_color_map = {
+        "Materiales": "grey",
+        "Energía": "orange",
+        "Datos": "blue",
+        "Influencia": "violet",
+        "Componentes": "red"
+    }
+
     res_cat = sector.get('resource_category')
     lux_res = sector.get('luxury_resource')
+    
     if res_cat:
-        st.caption(f"Recurso: **{res_cat}**")
+        # Color específico o gris por defecto
+        color = res_color_map.get(res_cat, "grey")
+        # Formato: :color[**TEXTO.**]
+        st.markdown(f":{color}[**{res_cat.upper()}.**]")
+        
     if lux_res:
-        st.caption(f"💎 Recurso de Lujo: **{lux_res}**")
+        # Recurso de lujo siempre magenta
+        st.markdown(f":magenta[**{lux_res.upper()}.**]")
 
     # Visualización de capacidad del sector
     # Nota: 'buildings_count' es inyectado dinámicamente por planet_repository V6.0
@@ -183,7 +210,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
             c1, c2 = st.columns([0.8, 0.2])
             c1.write(f"• {name} (Tier {b['building_tier']})")
             
-            # Opción de Demolición (Solo si hay asset)
+            # Opción de Demolición (Solo si hay asset/colonia)
             if asset_id and c2.button("🗑️", key=f"dem_{b['id']}", help=f"Demoler {name}"):
                 if demolish_building(b['id'], player_id):
                     st.toast(f"Estructura {name} demolida.")
