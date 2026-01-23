@@ -6,6 +6,7 @@ Implementa la visualización de la Planetología Avanzada (V4.3).
 Actualizado V4.4: Desglose de seguridad transparente.
 Actualizado V4.5: Soporte para Modo Omnisciencia (Debug) y modernización UI.
 Refactor V5.8: Estandarización a 'population' y métricas mejoradas.
+Corrección V6.0: Adaptación a 'sector_type' para consistencia con DB.
 """
 
 import streamlit as st
@@ -147,9 +148,12 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
         "Montañoso": "🏔️",
         "Inhospito": "🌋"
     }
-    icon = icons.get(sector['type'], "💠")
     
-    st.markdown(f"### {icon} {sector['type']} (Sector {sector['id']})")
+    # Fix V6.0: Uso seguro de 'sector_type' (DB) con fallback a 'type' (Legacy/Model)
+    s_type = sector.get('sector_type') or sector.get('type') or "Desconocido"
+    icon = icons.get(s_type, "💠")
+    
+    st.markdown(f"### {icon} {s_type} (Sector {sector['id']})")
     
     # V4.5: Visualización de Recursos
     res_cat = sector.get('resource_category')
@@ -160,10 +164,12 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
         st.caption(f"💎 Recurso de Lujo: **{lux_res}**")
 
     # Visualización de capacidad del sector
-    used = sector['buildings_count']
-    total = sector['slots']
+    # Nota: 'buildings_count' es inyectado dinámicamente por planet_repository V6.0
+    used = sector.get('buildings_count', 0)
+    total = sector.get('slots', 2)
+    
     st.write(f"Capacidad: {used} / {total}")
-    st.progress(used / total if total > 0 else 0)
+    st.progress(min(1.0, used / total) if total > 0 else 0)
     
     # Listado de edificios construidos
     sector_buildings = [b for b in buildings if b.get('sector_id') == sector['id']]
