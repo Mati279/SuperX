@@ -568,7 +568,8 @@ def _render_market_ui(player):
     
     # 1. Info de Capacidad
     used, total = get_market_limits(player.id)
-    perc = used / total if total > 0 else 1.0
+    raw_perc = used / total if total > 0 else 1.0
+    perc = min(1.0, max(0.0, raw_perc))
     st.progress(perc, text=f"Capacidad Logística: {used}/{total} envíos hoy")
     
     if used >= total:
