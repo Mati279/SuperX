@@ -15,6 +15,7 @@ Corrección v5.6: Join con tabla 'planets' para obtener seguridad real.
 Refactor v5.7: Estandarización de nomenclatura 'population' (Fix poblacion).
 Refactor v5.8: Limpieza integral de consultas y campos expandidos.
 Corrección v5.9: Fix columna 'sector_type' en tabla sectors.
+Refactor v6.0: Eliminación de columna redundante 'buildings_count' en sectors (Cálculo dinámico).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -99,6 +100,7 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
     Obtiene planetas del jugador con edificios y datos de sectores precargados.
     Refactor V5.7: Actualizado a 'population'.
     Fix V5.9: Corrección de nombre de columna 'sector_type'.
+    Refactor V6.0: Cálculo dinámico de 'buildings_count'.
     """
     try:
         db = _get_db()
@@ -121,32 +123,35 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
             .execute()
         buildings = buildings_response.data if buildings_response and buildings_response.data else []
 
-        # Obtener Sectores
-        # Fix: 'type' -> 'sector_type'
+        # Obtener Sectores (Sin buildings_count)
         sectors_response = db.table("sectors")\
-            .select("id, sector_type, planet_id, max_slots, buildings_count, resource_category, is_known")\
+            .select("id, sector_type, planet_id, max_slots, resource_category, is_known")\
             .in_("planet_id", planet_ids)\
             .execute()
         sectors_data = sectors_response.data if sectors_response and sectors_response.data else []
         
-        # Corrección de campo legacy 'slots' -> 'max_slots'
+        # Corrección de campo legacy 'slots' -> 'max_slots' e inicializar count
+        sector_map = {}
         for s in sectors_data:
             if 'slots' not in s and 'max_slots' in s:
                 s['slots'] = s['max_slots']
+            s['buildings_count'] = 0 # Inicializar contador dinámico
+            sector_map[s["id"]] = s
         
-        sector_map = {s["id"]: s for s in sectors_data}
-
         buildings_by_asset: Dict[int, List[Dict]] = {}
         for building in buildings:
             aid = building["planet_asset_id"]
             if aid not in buildings_by_asset: buildings_by_asset[aid] = []
             
             sec_id = building.get("sector_id")
-            sector = sector_map.get(sec_id) if sec_id else None
+            sector = sector_map.get(sec_id)
             
-            # Fix: sector["type"] -> sector.get("sector_type")
+            # Asignar info del sector y actualizar contador
             building["sector_type"] = sector.get("sector_type") if sector else "Desconocido"
             building["sector_info"] = sector
+            
+            if sector:
+                sector['buildings_count'] += 1
             
             buildings_by_asset[aid].append(building)
 
@@ -233,10 +238,10 @@ def create_planet_asset(
                     "id": (planet_id * 1000) + 1,
                     "planet_id": planet_id,
                     "name": "Sector Urbano (Emergencia)",
-                    "sector_type": "Urbano", # Fix: 'type' -> 'sector_type'
+                    "sector_type": "Urbano", 
                     "max_slots": 5,
-                    "buildings_count": 0,
                     "is_known": True
+                    # V6.0: Eliminado 'buildings_count'
                 }
                 db.table("sectors").insert(emergency_sector).execute()
                 log_event(f"Sector de emergencia creado para {planet_id}", player_id, is_error=True)
@@ -279,19 +284,38 @@ def get_base_slots_info(planet_asset_id: int) -> Dict[str, int]:
 
 
 def get_planet_sectors_status(planet_id: int) -> List[Dict[str, Any]]:
-    """Consulta el estado actual de los sectores de un planeta."""
+    """Consulta el estado actual de los sectores de un planeta, calculando ocupación dinámica."""
     try:
-        # Fix: 'type' -> 'sector_type'
-        response = _get_db().table("sectors")\
-            .select("id, sector_type, max_slots, buildings_count, resource_category, is_known")\
+        db = _get_db()
+        # 1. Obtener Sectores
+        response = db.table("sectors")\
+            .select("id, sector_type, max_slots, resource_category, is_known")\
             .eq("planet_id", planet_id)\
             .execute()
         
-        data = response.data if response and response.data else []
-        for s in data:
+        sectors = response.data if response and response.data else []
+        if not sectors: return []
+        
+        sector_ids = [s["id"] for s in sectors]
+
+        # 2. Contar edificios dinámicamente
+        b_response = db.table("planet_buildings")\
+            .select("sector_id")\
+            .in_("sector_id", sector_ids)\
+            .execute()
+        
+        buildings = b_response.data if b_response and b_response.data else []
+        counts = {}
+        for b in buildings:
+            sid = b.get("sector_id")
+            if sid: counts[sid] = counts.get(sid, 0) + 1
+
+        # 3. Mapear resultados
+        for s in sectors:
             s['slots'] = s.get('max_slots', 2)
+            s['buildings_count'] = counts.get(s["id"], 0)
             
-        return data
+        return sectors
     except Exception:
         return []
 
@@ -390,7 +414,7 @@ def build_structure(
     tier: int = 1,
     sector_id: Optional[int] = None 
 ) -> Optional[Dict[str, Any]]:
-    """Construye validando espacio en sectores y sincronizando el contador."""
+    """Construye validando espacio en sectores de manera dinámica."""
     if building_type not in BUILDING_TYPES: return None
     definition = BUILDING_TYPES[building_type]
     db = _get_db()
@@ -400,20 +424,34 @@ def build_structure(
         if not asset: return None
         planet_id = asset["planet_id"]
 
-        # 1. Selección de Sector
+        # 1. Recuperar Sectores y Edificios para calcular espacio
+        sectors_res = db.table("sectors").select("*").eq("planet_id", planet_id).execute()
+        sectors = sectors_res.data if sectors_res and sectors_res.data else []
+        if not sectors:
+            log_event("No hay sectores en el planeta.", player_id, is_error=True)
+            return None
+
+        # Contar edificios existentes
+        buildings_res = db.table("planet_buildings").select("sector_id").eq("planet_asset_id", planet_asset_id).execute()
+        existing_buildings = buildings_res.data if buildings_res and buildings_res.data else []
+        
+        sector_counts = {}
+        for b in existing_buildings:
+            sid = b.get("sector_id")
+            if sid: sector_counts[sid] = sector_counts.get(sid, 0) + 1
+
+        # Preparar sectores con contadores
+        for s in sectors:
+            if 'max_slots' in s: s['slots'] = s['max_slots']
+            s['buildings_count'] = sector_counts.get(s["id"], 0) # Count dinámico
+
+        # 2. Selección de Sector Objetivo
         target_sector = None
         if sector_id:
-            sec_res = db.table("sectors").select("*").eq("id", sector_id).single().execute()
-            if sec_res and sec_res.data:
-                target_sector = sec_res.data
-                if 'max_slots' in target_sector: target_sector['slots'] = target_sector['max_slots']
+            # Buscar en la lista ya traída para tener el count actualizado
+            matches = [s for s in sectors if s["id"] == sector_id]
+            if matches: target_sector = matches[0]
         else:
-            sectors_res = db.table("sectors").select("*").eq("planet_id", planet_id).execute()
-            sectors = sectors_res.data if sectors_res and sectors_res.data else []
-            for s in sectors:
-                if 'max_slots' in s: s['slots'] = s['max_slots']
-            
-            # Fix: s["type"] -> s.get("sector_type")
             urban = [s for s in sectors if s.get("sector_type") == 'Urbano' and s["buildings_count"] < s["slots"]]
             others = [s for s in sectors if s["buildings_count"] < s["slots"]]
             target_sector = urban[0] if urban else (others[0] if others else None)
@@ -422,7 +460,7 @@ def build_structure(
             log_event("No hay espacio en sectores disponibles.", player_id, is_error=True)
             return None
 
-        # 2. Insertar
+        # 3. Insertar Edificio
         world = get_world_state()
         building_data = {
             "planet_asset_id": planet_asset_id,
@@ -436,11 +474,7 @@ def build_structure(
 
         response = db.table("planet_buildings").insert(building_data).execute()
         if response and response.data:
-            # 3. Sincronización
-            db.table("sectors").update({
-                "buildings_count": target_sector["buildings_count"] + 1
-            }).eq("id", target_sector["id"]).execute()
-            
+            # V6.0: Eliminada actualización redundante a tabla 'sectors' (buildings_count)
             log_event(f"Construido {definition['name']} en {target_sector.get('sector_type', 'Sector')}", player_id)
             return response.data[0]
         return None
@@ -450,19 +484,17 @@ def build_structure(
 
 
 def demolish_building(building_id: int, player_id: int) -> bool:
-    """Demuele y decrementa el contador del sector."""
+    """Demuele y decrementa el contador del sector (Implícito)."""
     try:
         db = _get_db()
-        b_res = db.table("planet_buildings").select("sector_id").eq("id", building_id).single().execute()
+        # Verificar propiedad
+        b_res = db.table("planet_buildings").select("id").eq("id", building_id).single().execute()
         if not b_res or not b_res.data: return False
         
-        sid = b_res.data.get("sector_id")
+        # Eliminar
         db.table("planet_buildings").delete().eq("id", building_id).execute()
         
-        if sid:
-            s_res = db.table("sectors").select("buildings_count").eq("id", sid).single().execute()
-            if s_res and s_res.data:
-                db.table("sectors").update({"buildings_count": max(0, s_res.data["buildings_count"] - 1)}).eq("id", sid).execute()
+        # V6.0: Eliminada actualización redundante a tabla 'sectors'
         
         log_event(f"Edificio {building_id} demolido.", player_id)
         return True
