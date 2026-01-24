@@ -27,6 +27,7 @@ Actualizado v7.4: Nueva función add_initial_building() para edificio inicial en
 Actualizado v7.4.1: Fix de integridad en initialize_planet_sectors para inyectar sector Urbano si falta.
 Actualizado v7.5.0: Implementación de Sector Orbital y Lógica de Soberanía Espacial (V6.4 Specs).
 Actualizado v7.5.1: Fix Soberanía Inicial (Sincronización Orbital en Creación).
+Actualizado v7.6.0: Fix Crítico de IDs y Transformación de Sectores en initialize_planet_sectors.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -889,6 +890,7 @@ def get_all_colonized_system_ids() -> List[int]:
 def initialize_planet_sectors(planet_id: int, biome: str, mass_class: str = 'Estándar') -> List[Dict[str, Any]]:
     """
     Garantiza que un planeta tenga sectores inicializados, INCLUYENDO LA ÓRBITA.
+    Corrige IDs faltantes y transforma sectores existentes si es necesario.
     """
     try:
         db = _get_db()
@@ -897,61 +899,113 @@ def initialize_planet_sectors(planet_id: int, biome: str, mass_class: str = 'Est
         existing_sectors = check.data if check and check.data else []
         
         sectors_to_create = []
+        sectors_updated = False
 
-        # A. Verificar Urbano (Siempre necesario)
-        has_urban = any(s.get("sector_type") == SECTOR_TYPE_URBAN for s in existing_sectors)
-        if not has_urban:
+        # A. Verificar Urbano
+        urban_sector = next((s for s in existing_sectors if s.get("sector_type") == SECTOR_TYPE_URBAN), None)
+
+        if not urban_sector:
+            # CASO 1: Transformación (Planeta ya poblado de sectores pero sin Urbano)
+            if existing_sectors:
+                # Buscar candidato: Primer sector NO orbital
+                candidate = next((s for s in existing_sectors if s.get("sector_type") != SECTOR_TYPE_ORBITAL), None)
+                
+                if candidate:
+                    # Definir slots
+                    u_slots = SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_URBAN, 3)
+                    
+                    # Ejecutar Update
+                    try:
+                        res = db.table("sectors").update({
+                            "sector_type": SECTOR_TYPE_URBAN,
+                            "name": "Distrito Central",
+                            "max_slots": u_slots,
+                            # "is_known": True # Dejamos que claim_genesis_sector lo haga o lo forzamos? 
+                            # El prompt dice: "Actualiza el objeto en memoria".
+                        }).eq("id", candidate["id"]).execute()
+                        
+                        if res and res.data:
+                            # Actualizar en memoria
+                            candidate["sector_type"] = SECTOR_TYPE_URBAN
+                            candidate["name"] = "Distrito Central"
+                            candidate["max_slots"] = u_slots
+                            sectors_updated = True
+                            # log_event no tiene player_id aqui, usamos print o log genérico si existiera
+                    except Exception as e:
+                        print(f"Error transformando sector {candidate['id']}: {e}")
+            
+            # CASO 2: Inicialización desde cero (Planeta vacío)
+            else:
+                urban_id = (planet_id * 1000) + 1
+                sectors_to_create.append({
+                    "id": urban_id,
+                    "planet_id": planet_id,
+                    "name": "Distrito Central",
+                    "sector_type": SECTOR_TYPE_URBAN,
+                    "max_slots": SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_URBAN, 3),
+                    "is_known": False,
+                    "resource_category": "influencia"
+                })
+
+        # B. Verificar Orbital (Siempre debe existir con ID fijo 99)
+        orbital_sector = next((s for s in existing_sectors if s.get("sector_type") == SECTOR_TYPE_ORBITAL), None)
+        orbital_pending = next((s for s in sectors_to_create if s.get("sector_type") == SECTOR_TYPE_ORBITAL), None)
+
+        if not orbital_sector and not orbital_pending:
+            orbital_id = (planet_id * 1000) + 99
             sectors_to_create.append({
-                "planet_id": planet_id,
-                "name": "Distrito Central",
-                "sector_type": SECTOR_TYPE_URBAN,
-                "max_slots": SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_URBAN, 2),
-                "is_known": False,
-                "resource_category": "influencia"
-            })
-
-        # B. Verificar Orbital (V6.4 - Obligatorio)
-        has_orbital = any(s.get("sector_type") == SECTOR_TYPE_ORBITAL for s in existing_sectors)
-        if not has_orbital:
-             sectors_to_create.append({
+                "id": orbital_id,
                 "planet_id": planet_id,
                 "name": "Órbita Geoestacionaria",
                 "sector_type": SECTOR_TYPE_ORBITAL,
                 "max_slots": SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_ORBITAL, 1),
-                "is_known": True, # Siempre visible
+                "is_known": True,
                 "resource_category": None
             })
 
-        # C. Rellenar si está vacío (Generación completa inicial)
-        if not existing_sectors and not sectors_to_create: # Solo si no habia nada y no hemos añadido nada (raro)
-             # Logic normal de rellenar
-             pass 
-        elif not existing_sectors: # Si estaba vacío, añadir restos
-             num_sectors = PLANET_MASS_CLASSES.get(mass_class, 4)
-             valid_types = [SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN]
-             # Ya añadimos Urbano y Orbital en sectors_to_create, añadimos los intermedios
-             # Nota: La lógica de galaxy generator es más compleja, aqui hacemos fallback simple
-             for i in range(1, num_sectors): # -1 por Urbano
-                 sType = random.choice(valid_types)
-                 sectors_to_create.append({
+        # C. Rellenar resto de sectores si estaba vacío (Solo si creamos el Urbano nuevo)
+        # Si ya existían sectores (Caso 1), asumimos que la masa ya estaba cubierta.
+        if not existing_sectors and sectors_to_create:
+            target_count = PLANET_MASS_CLASSES.get(mass_class, 4)
+            # Tenemos Urbano (index 1) y Orbital (index 99). 
+            # Faltan (target_count - 1) sectores de superficie.
+            
+            valid_types = [SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN]
+            
+            # Generar IDs 2, 3, ...
+            for i in range(2, target_count + 1):
+                new_id = (planet_id * 1000) + i
+                sType = random.choice(valid_types)
+                sectors_to_create.append({
+                    "id": new_id,
                     "planet_id": planet_id,
-                    "name": f"Sector {i+1} ({sType})",
+                    "name": f"Sector {i} ({sType})",
                     "sector_type": sType,
                     "max_slots": SECTOR_SLOTS_CONFIG.get(sType, 3),
                     "is_known": False,
                     "resource_category": "materiales"
                 })
 
+        # Insertar nuevos
         if sectors_to_create:
             res = db.table("sectors").insert(sectors_to_create).execute()
             if res and res.data:
                 existing_sectors.extend(res.data)
-            
+                
+        # Re-fetch si hubo updates para asegurar consistencia
+        if sectors_updated:
+             check = db.table("sectors").select("*").eq("planet_id", planet_id).execute()
+             return check.data if check and check.data else []
+
         return existing_sectors
 
     except Exception as e:
         log_event(f"Error critical initializing sectors for planet {planet_id}: {e}", is_error=True)
-        return []
+        # Devolver lo que haya para no romper flujo
+        try:
+             return db.table("sectors").select("*").eq("planet_id", planet_id).execute().data or []
+        except:
+             return []
 
 def claim_genesis_sector(sector_id: int, player_id: int) -> bool:
     """
