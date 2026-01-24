@@ -9,6 +9,7 @@ Refactorizado V5.1: Protecciones 'NoneType' en respuestas de Supabase.
 Actualizado V5.2: Integración con Modo Omnisciencia (Debug).
 Refactor V5.8: Estandarización final a 'population' y navegación directa a Superficie.
 Feature: Visualización de Soberanía (Controlador de Sistema y Planetas).
+Actualizado V7.9.0: Actualización de etiquetas de interfaz para Soberanía.
 """
 import json
 import math
@@ -301,7 +302,9 @@ def _render_planet_view():
     # --- VISUALIZACIÓN DE SOBERANÍA ---
     s_owner = _resolve_faction_name(planet.get('surface_owner_id'))
     o_owner = _resolve_faction_name(planet.get('orbital_owner_id'))
-    st.markdown(f"**Soberanía de Superficie:** :orange[{s_owner}] | **Soberanía Orbital:** :cyan[{o_owner}]")
+    
+    # Actualización de etiquetas a 'Controlador' (V7.9.0)
+    st.markdown(f"**Controlador planetario:** :orange[{s_owner}] | **Controlador de la órbita:** :cyan[{o_owner}]")
     
     if st.button("← Volver al Sistema"):
         _reset_to_system_view()

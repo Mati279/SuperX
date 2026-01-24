@@ -13,6 +13,7 @@ Actualizado V7.6: Visualización Orbital Integrada y Filtro de Superficie.
 Feature: Visualización de Soberanía y Dueños de Sectores.
 Hotfix V7.7: Sincronización DB (nombre) y corrección de Slots Urbanos.
 Hotfix V7.8: Corrección visualización Soberanía (Join backend).
+Actualizado V7.9.0: Cambio de fuente de nombre de facción a 'players.faccion_nombre' y actualización de etiquetas UI.
 """
 
 import streamlit as st
@@ -46,10 +47,10 @@ def _get_faction_name_by_player(player_id):
     """Resuelve el nombre de la facción de un jugador específico."""
     if not player_id: return "Desconocido"
     try:
-        # DB Sync: Cambio de 'name' a 'nombre'
-        res = get_supabase().table("players").select("faction_id, factions(nombre)").eq("id", player_id).maybe_single().execute()
-        if res.data and res.data.get('factions'):
-            return res.data['factions']['nombre']
+        # DB Sync: Cambio de fuente a 'faccion_nombre' directo de la tabla players
+        res = get_supabase().table("players").select("faccion_nombre").eq("id", player_id).maybe_single().execute()
+        if res.data:
+            return res.data.get('faccion_nombre', "Sin Facción")
     except: pass
     return "Desconocido"
 
@@ -137,12 +138,13 @@ def _render_info_header(planet: dict, asset: dict):
     """Muestra el resumen del planeta, tamaño y capacidad global."""
     st.title(f"Vista Planetaria: {planet['name']}")
     
-    # --- VISUALIZACIÓN DE SOBERANÍA (FIX V7.8) ---
+    # --- VISUALIZACIÓN DE SOBERANÍA (FIX V7.9.0) ---
     # Usamos los datos enriquecidos directamente del repositorio
     s_owner = planet.get('surface_owner_name', "Desconocido")
     o_owner = planet.get('orbital_owner_name', "Desconocido")
     
-    st.markdown(f"**Soberanía de Superficie:** :orange[{s_owner}] | **Soberanía Orbital:** :cyan[{o_owner}]")
+    # Actualización de etiquetas a 'Controlador'
+    st.markdown(f"**Controlador planetario:** :orange[{s_owner}] | **Controlador de la órbita:** :cyan[{o_owner}]")
 
     col1, col2, col3, col4 = st.columns(4)
     

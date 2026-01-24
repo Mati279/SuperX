@@ -33,6 +33,7 @@ Actualizado v7.7.1: Restauración de updates secuenciales en create_planet_asset
 Actualizado v7.7.2: Fix PGRST204 delegando 'base_tier' al default de la base de datos.
 Actualizado v7.8.0: Join con Facciones para resolver nombres de Soberanía (Surface/Orbital) en get_planet_by_id.
 Hotfix v7.8.1: Estrategia Fail-Safe para get_planet_by_id (Recuperación en 2 pasos) para evitar errores de sintaxis PostgREST.
+Actualizado v7.9.0: Cambio de fuente de nombre de facción a 'players.faccion_nombre'.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -68,6 +69,7 @@ def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
     Obtiene información de un planeta de la tabla mundial 'planets'.
     Actualizado V7.8.1: Implementación ROBUSTA (Fail-Safe).
     Recupera datos crudos primero y resuelve nombres en query separada para evitar fallos de JOIN.
+    Actualizado V7.9.0: Uso de 'faccion_nombre' directo de la tabla players.
     """
     try:
         db = _get_db()
@@ -97,19 +99,21 @@ def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
         if ids_to_fetch:
             # Consultamos la tabla de jugadores y facciones de forma segura
             try:
-                # Nota: Asumimos que la relación players->factions está bien definida
+                # Nota: Ahora usamos 'faccion_nombre' directo de la tabla players
                 players_res = db.table("players")\
-                    .select("id, factions(nombre)")\
+                    .select("id, faccion_nombre")\
                     .in_("id", ids_to_fetch)\
                     .execute()
                 
                 if players_res and players_res.data:
-                    # Crear mapa {player_id: faction_name}
+                    # Crear mapa {player_id: faccion_nombre}
                     player_faction_map = {}
                     for p in players_res.data:
-                        f_data = p.get("factions")
-                        # Manejo robusto de diccionarios anidados
-                        f_name = f_data.get("nombre", "Desconocido") if f_data else "Sin Facción"
+                        # Obtenemos el nombre directo, con fallback si es None
+                        f_name = p.get("faccion_nombre")
+                        if not f_name:
+                            f_name = "Sin Facción"
+                        
                         player_faction_map[p["id"]] = f_name
                     
                     # Asignar nombres al objeto planeta
