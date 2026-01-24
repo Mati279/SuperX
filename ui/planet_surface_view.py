@@ -17,6 +17,7 @@ Actualizado V7.9.0: Cambio de fuente de nombre de facción a 'players.faccion_no
 Actualizado V8.1.0: Estandarización de Recursos (RESOURCE_UI_CONFIG) y Limpieza de UI (Remove ID, Fix Colors).
 Actualizado V8.2.0: Botón directo de Puesto de Avanzada (Debug Mode) en sectores no reclamados.
 Actualizado V8.3.0: Estandarización de Seguridad (Sp) - Base 30 para todos los planetas.
+Fix V8.3.1: Corrección de color en recursos de lujo (magenta no soportado -> violet).
 """
 
 import streamlit as st
@@ -296,8 +297,9 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
             st.markdown(f":gray[**{res_cat.capitalize()}.**]")
         
     if lux_res:
-        # Recurso de lujo con estilo genérico diamante magenta
-        st.markdown(f":magenta[**💎 {lux_res}.**]")
+        # Recurso de lujo con estilo genérico diamante violeta
+        # Fix V8.3.1: :magenta no es soportado por st.markdown, usamos :violet
+        st.markdown(f":violet[**💎 {lux_res}.**]")
 
     # Visualización de capacidad del sector
     # Nota: 'buildings_count' es inyectado dinámicamente por planet_repository V6.0
