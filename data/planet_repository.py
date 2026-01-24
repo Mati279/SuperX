@@ -36,6 +36,7 @@ Hotfix v7.8.1: Estrategia Fail-Safe para get_planet_by_id (Recuperación en 2 pa
 Actualizado v7.9.0: Cambio de fuente de nombre de facción a 'players.faccion_nombre'.
 Actualizado v8.1.0: Robustez en resolución de nombres de soberanía (Fail-Safe Desconocido).
 Actualizado v8.2.0: Fix build_structure (Ghost Buildings Check & ID types).
+Actualizado v8.2.1: Fix Not-Null Constraint (Inyección de pops_required y energy_consumption).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -816,6 +817,12 @@ def build_structure(
 
         # 3. Insertar Edificio
         world = get_world_state()
+        
+        # FIX V8.2.1: Inyección de datos requeridos por la base de datos (Not Null constraints)
+        b_def = BUILDING_TYPES.get(building_type, {})
+        pops_req = b_def.get("pops_required", 0)
+        energy_cons = b_def.get("maintenance", {}).get("celulas_energia", 0)
+        
         building_data = {
             "planet_asset_id": planet_asset_id,
             "player_id": player_id,
@@ -823,7 +830,9 @@ def build_structure(
             "building_tier": tier,
             "sector_id": target_sector["id"],
             "is_active": True,
-            "built_at_tick": world.get("current_tick", 1)
+            "built_at_tick": world.get("current_tick", 1),
+            "pops_required": pops_req,
+            "energy_consumption": energy_cons
         }
 
         response = db.table("planet_buildings").insert(building_data).execute()
