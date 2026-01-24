@@ -15,6 +15,7 @@ Hotfix V7.7: Sincronización DB (nombre) y corrección de Slots Urbanos.
 Hotfix V7.8: Corrección visualización Soberanía (Join backend).
 Actualizado V7.9.0: Cambio de fuente de nombre de facción a 'players.faccion_nombre' y actualización de etiquetas UI.
 Actualizado V8.1.0: Estandarización de Recursos (RESOURCE_UI_CONFIG) y Limpieza de UI (Remove ID, Fix Colors).
+Actualizado V8.2.0: Botón directo de Puesto de Avanzada (Debug Mode) en sectores no reclamados.
 """
 
 import streamlit as st
@@ -213,6 +214,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     V7.6: Soporte explícito para visualización Orbital y Bypass de Niebla.
     V7.7: Cálculo de Slots dinámico basado en World Constants.
     V8.1: Refactor UI (Recursos Estandarizados, Sin ID, Propiedad Destacada).
+    V8.2: Botón 'Puesto de Avanzada' directo en sectores no reclamados (Debug).
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE (V7.2) ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -221,7 +223,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     # La órbita siempre es visible, independientemente del flag (safety check)
     if not is_explored and not is_orbital and not debug_mode:
         # Renderizado Oculto
-        st.markdown(f"### 🌫️ Sector Desconocido") # V8.1: Quitamos el ID del titulo oculto tambien
+        st.markdown(f"### 🌫️ Sector Desconocido")
         st.caption("Zona no cartografiada. Sensores bloqueados.")
         st.write("**Terreno:** ???")
         st.write("**Recursos:** ???")
@@ -324,64 +326,84 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     else:
         st.caption("No hay estructuras en este sector.")
 
-    # --- PANEL DE CONSTRUCCIÓN (V8.1) ---
-    # REGLA: Solo mostrar si el sector está vacío (No Reclamado) 
-    # O si el dueño de los edificios actuales soy yo.
+    # --- PANEL DE CONSTRUCCIÓN (V8.2) ---
+    # REGLA 1: Sector VACÍO -> Mostrar Botón directo "Construir Puesto de Avanzada".
+    # REGLA 2: Sector PROPIO -> Mostrar Expander para construir otros edificios.
+    # REGLA 3: Sector AJENO -> Bloqueado.
     
     is_sector_empty = (not sector_buildings)
     is_my_sector = (current_sector_owner_id == player_id)
     
-    can_build_access = is_sector_empty or is_my_sector
-    
-    # Panel de Construcción (Solo si hay slots libres, asset existe y tengo acceso)
-    if asset_id and used < total and can_build_access:
-        # V8.1: Renombrado a "🏗️ Construir"
-        with st.expander("🏗️ Construir"):
-            available_types = list(BUILDING_TYPES.keys())
-            
-            # Regla de Negocio: Evitar múltiples HQ en la UI (el backend también lo valida)
-            has_hq = any(b['building_type'] == 'hq' for b in buildings)
-            if has_hq and 'hq' in available_types:
-                available_types.remove('hq')
-            
-            # Filtrar por terreno permitido para evitar errores visuales
-            # (Aunque build_structure valida, es mejor UX filtrar aquí)
-            filtered_types = []
-            for t in available_types:
-                b_def = BUILDING_TYPES[t]
-                allowed = b_def.get("allowed_terrain")
-                # Si no define allowed, asumimos permitido (salvo que sea orbital check)
-                if not allowed or s_type in allowed:
-                     filtered_types.append(t)
-
-            selected_type = st.selectbox(
-                "Tipo de Edificio",
-                filtered_types,
-                format_func=lambda x: BUILDING_TYPES[x]['name'],
-                key=f"sel_build_{sector['id']}"
-            )
-            
-            if selected_type:
-                st.info(BUILDING_TYPES[selected_type]['description'])
-                
-                # Mostrar costos básicos para referencia (Opcional, pero útil)
-                cost = BUILDING_TYPES[selected_type].get("material_cost", 0)
-                st.caption(f"Costo: {cost} Materiales")
-            
-                if st.button("Confirmar Construcción", key=f"btn_b_{sector['id']}", use_container_width=True):
-                    # Llamada atómica a la lógica de construcción V4.3
-                    new_struct = build_structure(
+    if asset_id and used < total:
+        if is_sector_empty:
+             # CASO 1: SECTOR NO RECLAMADO (Botón Outpost Debug)
+             # Verificar que el terreno sea válido para Outpost
+             outpost_def = BUILDING_TYPES.get("outpost", {})
+             allowed_terrain = outpost_def.get("allowed_terrain", [])
+             
+             # Si no hay restricción explícita o el tipo está en la lista:
+             if not allowed_terrain or s_type in allowed_terrain:
+                 if st.button("🏛 Construir Puesto de Avanzada (Debug)", key=f"btn_out_{sector['id']}", use_container_width=True, help="Coste: 0 (Debug Mode). Construcción inmediata."):
+                     # Modo Debug: Llamada directa sin validación de recursos en UI
+                     new_struct = build_structure(
                         planet_asset_id=asset_id,
                         player_id=player_id,
-                        building_type=selected_type,
+                        building_type="outpost",
                         sector_id=sector['id']
-                    )
-                    
-                    if new_struct:
-                        st.toast(f"Construcción de {BUILDING_TYPES[selected_type]['name']} iniciada.")
-                        st.rerun()
-                    else:
-                        st.error("Error en la construcción. Verifique recursos o requisitos.")
-    elif not can_build_access and asset_id:
-        # Feedback visual de por qué no se puede construir
-        st.warning("⛔ Sector controlado por otra facción.")
+                     )
+                     
+                     if new_struct:
+                         st.toast("✅ Puesto de Avanzada establecido (Debug Force).")
+                         st.rerun()
+                     else:
+                         st.error("❌ No se pudo construir (Restricción de terreno o bloqueo).")
+             else:
+                 st.caption("🔒 Terreno no apto para asentamientos.")
+
+        elif is_my_sector:
+             # CASO 2: MI SECTOR (Menú Completo)
+             with st.expander("🏗️ Construir"):
+                available_types = list(BUILDING_TYPES.keys())
+                
+                # Regla de Negocio: Evitar múltiples HQ
+                has_hq = any(b['building_type'] == 'hq' for b in buildings)
+                if has_hq and 'hq' in available_types:
+                    available_types.remove('hq')
+                
+                # Filtrar por terreno
+                filtered_types = []
+                for t in available_types:
+                    b_def = BUILDING_TYPES[t]
+                    allowed = b_def.get("allowed_terrain")
+                    if not allowed or s_type in allowed:
+                         filtered_types.append(t)
+
+                selected_type = st.selectbox(
+                    "Tipo de Edificio",
+                    filtered_types,
+                    format_func=lambda x: BUILDING_TYPES[x]['name'],
+                    key=f"sel_build_{sector['id']}"
+                )
+                
+                if selected_type:
+                    st.info(BUILDING_TYPES[selected_type]['description'])
+                    cost = BUILDING_TYPES[selected_type].get("material_cost", 0)
+                    st.caption(f"Costo: {cost} Materiales")
+                
+                    if st.button("Confirmar Construcción", key=f"btn_b_{sector['id']}", use_container_width=True):
+                        new_struct = build_structure(
+                            planet_asset_id=asset_id,
+                            player_id=player_id,
+                            building_type=selected_type,
+                            sector_id=sector['id']
+                        )
+                        
+                        if new_struct:
+                            st.toast(f"Construcción de {BUILDING_TYPES[selected_type]['name']} iniciada.")
+                            st.rerun()
+                        else:
+                            st.error("Error en la construcción.")
+
+        else:
+             # CASO 3: SECTOR AJENO
+             st.warning("⛔ Sector controlado por otra facción.")
