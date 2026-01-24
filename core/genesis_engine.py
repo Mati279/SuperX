@@ -15,6 +15,7 @@ Actualizado V7.4: Construcción automática de Comando Central (HQ) en sector ur
                   Fix claim_genesis_sector: Eliminadas columnas inexistentes (owner_id, has_outpost).
                   Recuperación de planet_asset_id para vinculación correcta de edificios.
 Actualizado V7.5: Fix Soberanía Inicial (Sincronización Orbital en Creación).
+Actualizado V7.6: Estandarización de Planeta Inicial (Mass Class: Estándar).
 """
 
 import random
@@ -80,10 +81,13 @@ def genesis_protocol(player_id: int) -> bool:
             # B. Obtener planetas del sistema (Updated V7.3: Include mass_class)
             response_planets = db.table("planets").select("id, name, biome, system_id, orbital_ring, base_defense, mass_class").eq("system_id", candidate_system_id).execute()
             
-            # C. Filtrar candidatos por Bioma Habitable
+            # C. Filtrar candidatos por Bioma Habitable y Masa Estándar (Updated V7.6)
             candidates = []
             if response_planets.data:
-                candidates = [p for p in response_planets.data if p.get('biome') in HABITABLE_BIRTH_BIOMES]
+                candidates = [
+                    p for p in response_planets.data 
+                    if p.get('biome') in HABITABLE_BIRTH_BIOMES and p.get('mass_class') == 'Estándar'
+                ]
             
             if candidates:
                 # Éxito: Seleccionamos uno de los planetas válidos
@@ -91,21 +95,24 @@ def genesis_protocol(player_id: int) -> bool:
                 system_id = candidate_system_id
                 break 
             else:
-                log_event(f"⚠ Sistema {candidate_system_id} descartado: Sin biomas habitables (Intento {attempt + 1}/{max_retries}).", player_id)
+                log_event(f"⚠ Sistema {candidate_system_id} descartado: Sin planetas habitables Estándar (Intento {attempt + 1}/{max_retries}).", player_id)
 
         # 2. Fallback Global si falla la búsqueda segura
         if not target_planet:
             log_event(f"⚠ No se encontró sistema seguro con biomas válidos. Ejecutando Fallback Global...", player_id, is_error=True)
             
-            # Fallback: buscar explícitamente cualquier planeta con bioma habitable en la BD
+            # Fallback: buscar explícitamente cualquier planeta con bioma habitable y masa Estándar en la BD
             # Updated V7.3: Include mass_class
+            # Updated V7.6: Added .eq("mass_class", "Estándar")
             fallback = db.table("planets").select("id, name, biome, system_id, orbital_ring, base_defense, mass_class")\
                 .in_("biome", HABITABLE_BIRTH_BIOMES)\
+                .eq("mass_class", "Estándar")\
                 .limit(10).execute()
             
             if not fallback.data: 
-                print("❌ CRITICAL: No existen planetas habitables en la base de datos.")
-                log_event("❌ CRITICAL: No existen planetas habitables en la base de datos.", player_id, is_error=True)
+                error_msg = "❌ CRITICAL: No existen planetas habitables de clase 'Estándar' en la base de datos."
+                print(error_msg)
+                log_event(error_msg, player_id, is_error=True)
                 return False
                 
             target_planet = random.choice(fallback.data)
