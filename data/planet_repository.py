@@ -35,6 +35,7 @@ Actualizado v7.8.0: Join con Facciones para resolver nombres de Soberanía (Surf
 Hotfix v7.8.1: Estrategia Fail-Safe para get_planet_by_id (Recuperación en 2 pasos) para evitar errores de sintaxis PostgREST.
 Actualizado v7.9.0: Cambio de fuente de nombre de facción a 'players.faccion_nombre'.
 Actualizado v8.1.0: Robustez en resolución de nombres de soberanía (Fail-Safe Desconocido).
+Actualizado v8.2.0: Fix build_structure (Ghost Buildings Check & ID types).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -702,7 +703,9 @@ def build_structure(
             sid = b.get("sector_id")
             if sid:
                 if sid not in sector_occupants: sector_occupants[sid] = set()
-                sector_occupants[sid].add(owner)
+                # V8.2 Fix: Solo agregar owners válidos (Ghost Building Protection)
+                if owner is not None:
+                    sector_occupants[sid].add(owner)
             
         # 1. Recuperar Sectores
         sectors_res = db.table("sectors").select("*").eq("planet_id", planet_id).execute()
@@ -729,8 +732,16 @@ def build_structure(
         target_sector = None
         
         if sector_id:
-            matches = [s for s in sectors if s["id"] == sector_id]
-            if matches: target_sector = matches[0]
+            # V8.2: Asegurar comparación de tipos (str vs int)
+            matches = [s for s in sectors if str(s["id"]) == str(sector_id)]
+            if matches: 
+                target_sector = matches[0]
+                
+                # V8.2: Re-validar Allowed Terrain si se pasa ID explícito (Consistency Check)
+                allowed = definition.get("allowed_terrain")
+                if allowed and target_sector["sector_type"] not in allowed:
+                    log_event(f"Terreno {target_sector['sector_type']} no válido para {building_type}.", player_id, is_error=True)
+                    return None
         else:
             # Auto-asignación inteligente
             # Priorizar Urbano para HQ, Orbital para Estación, etc.
