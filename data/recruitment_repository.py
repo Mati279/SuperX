@@ -30,19 +30,25 @@ def get_recruitment_candidates(player_id: int) -> List[Dict[str, Any]]:
     """
     Obtiene todos los personajes con estado 'Candidato' de un jugador.
     Adapta la estructura para que la UI la consuma fácilmente.
+
+    Nota V10: Los campos location_system_id, location_planet_id, location_sector_id
+    vienen directamente de las columnas SQL (Source of Truth) via select("*").
     """
     try:
         # CORRECCIÓN MMFR: Filtrar por estado_id numérico en lugar de texto
+        # select("*") incluye columnas de ubicación (location_system_id, etc.)
         response = _get_db().table("characters")\
             .select("*")\
             .eq("player_id", player_id)\
             .eq("estado_id", CANDIDATE_STATUS_ID)\
             .execute()
-        
+
         candidates = []
         if response.data:
             for char in response.data:
                 # Adaptador: Extraer datos de recruitment_data a nivel raíz para la UI
+                # Nota: location_system_id, location_planet_id, location_sector_id
+                # ya están en 'char' desde las columnas SQL
                 stats = char.get("stats_json", {})
                 rec_data = stats.get("recruitment_data", {})
                 

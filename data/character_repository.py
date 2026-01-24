@@ -505,45 +505,62 @@ def recruit_candidate_db(character_id: int, update_dict: Dict[str, Any]) -> Opti
     """
     Wrapper específico para reclutar: Convierte dict de alto nivel a columnas SQL validas.
     Soluciona error de columnas inexistentes ('estado', 'ubicacion') en update_character al reclutar.
+    Refactor V10: Incluye columnas de ubicación física (system_id, planet_id, sector_id).
     """
     try:
         char = get_character_by_id(character_id)
         if not char: return None
-        
+
         stats = char.get("stats_json", {})
-        
+
         # 1. Aplicar cambios al JSON
         new_rank = update_dict.get("rango", "Recluta")
         new_status_str = update_dict.get("estado", "Disponible")
-        new_location = update_dict.get("ubicacion_local") # Modificado v5.2.1
-        
+        new_location_local = update_dict.get("ubicacion_local")
+
+        # Extraer IDs de ubicación física (Refactor V10)
+        new_system_id = update_dict.get("location_system_id")
+        new_planet_id = update_dict.get("location_planet_id")
+        new_sector_id = update_dict.get("location_sector_id")
+
         if "progresion" not in stats: stats["progresion"] = {}
         stats["progresion"]["rango"] = new_rank
-        
+
         if "estado" not in stats: stats["estado"] = {}
         stats["estado"]["estados_activos"] = [new_status_str]
         stats["estado"]["rol_asignado"] = "Sin Asignar" # Reset rol logic
-        
-        # Manejo de Ubicación (Fix v5.2.1)
-        if new_location:
-            if "ubicacion" not in stats["estado"]:
-                stats["estado"]["ubicacion"] = {}
-            stats["estado"]["ubicacion"]["ubicacion_local"] = new_location
-        
+
+        # Manejo de Ubicación completa (Refactor V10)
+        if "ubicacion" not in stats["estado"]:
+            stats["estado"]["ubicacion"] = {}
+
+        # Actualizar estructura completa de ubicación en JSON
+        if new_system_id is not None:
+            stats["estado"]["ubicacion"]["system_id"] = new_system_id
+        if new_planet_id is not None:
+            stats["estado"]["ubicacion"]["planet_id"] = new_planet_id
+        if new_sector_id is not None:
+            stats["estado"]["ubicacion"]["sector_id"] = new_sector_id
+        if new_location_local:
+            stats["estado"]["ubicacion"]["ubicacion_local"] = new_location_local
+
         # 2. Preparar Payload SQL
         # Mapeo explicito de estado (texto -> ID)
         status_id = STATUS_ID_MAP.get(new_status_str, 1)
-        
+
         payload = {
             "stats_json": stats,
             "rango": new_rank,
             "estado_id": status_id,
             "rol": 0, # Sin Asignar
-            # location_system_id, etc. se mantienen igual (NULL o herencia)
+            # Columnas SQL de ubicación (Source of Truth - Refactor V10)
+            "location_system_id": new_system_id,
+            "location_planet_id": new_planet_id,
+            "location_sector_id": new_sector_id
         }
-        
+
         return update_character(character_id, payload)
-        
+
     except Exception as e:
         log_event(f"Error en recruit_candidate_db: {e}", is_error=True)
         return None

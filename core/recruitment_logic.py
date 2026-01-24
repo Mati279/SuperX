@@ -22,17 +22,23 @@ def can_recruit(player_credits: int, candidate_cost: int) -> Tuple[bool, str]:
         return False, f"Créditos insuficientes. Se necesitan {needed} más."
 
 def process_recruitment(
-    player_id: int, 
-    player_credits: int, 
-    candidate: Dict[str, Any]
+    player_id: int,
+    player_credits: int,
+    candidate: Dict[str, Any],
+    base_location_data: Optional[Dict[str, Any]] = None
 ) -> Tuple[int, Dict[str, Any]]:
     """
     Prepara la ACTUALIZACIÓN del personaje para convertirlo de Candidato a Activo.
-    
+
     Args:
         player_id: ID del jugador.
         player_credits: Créditos actuales.
         candidate: El diccionario del personaje (recuperado de characters DB).
+        base_location_data: Diccionario con los IDs de ubicación de la base activa:
+            - system_id: ID del sistema estelar
+            - planet_id: ID del planeta
+            - sector_id: ID del sector (urbano)
+            - nombre_asentamiento: Nombre de la base/colonia
 
     Returns:
         Tuple: (nuevos_creditos, update_data_para_db)
@@ -40,14 +46,14 @@ def process_recruitment(
     # 1. Validar fondos (UI debe pre-validar, pero por seguridad)
     # Nota: candidate["costo"] viene inyectado por el repositorio en el refactor
     costo = candidate.get("costo", 100)
-    
+
     can_afford, _ = can_recruit(player_credits, costo)
     if not can_afford:
         raise ValueError("Intento de reclutar sin créditos suficientes.")
 
     # 2. Calcular balance
     new_credits = player_credits - costo
-    
+
     # 3. Determinar conocimiento inicial (basado en si fue investigado)
     initial_knowledge = KnowledgeLevel.UNKNOWN
     outcome = candidate.get("investigation_outcome")
@@ -57,23 +63,32 @@ def process_recruitment(
     # 4. Preparar payload de ACTUALIZACIÓN (no creación)
     # Limpiamos la metadata de reclutamiento del JSON para no ensuciar,
     # o la dejamos como histórico. Preferiblemente limpiar o marcar como reclutado.
-    
+
     stats = candidate.get("stats_json", {}).copy()
     if "recruitment_data" in stats:
-        # Opcional: Podríamos borrar stats["recruitment_data"] 
+        # Opcional: Podríamos borrar stats["recruitment_data"]
         # o dejarlo como log. Vamos a actualizar ticks_reclutado.
         pass
-    
+
     # IMPORTANTE: La actualización del nivel de conocimiento se debe manejar
     # externamente (repo set_character_knowledge_level) ya que ahora es tabla relacional.
     # Aquí devolvemos los datos para actualizar la entidad Character.
 
+    # 5. Construir ubicación desde base_location_data (Refactor V10)
+    # Elimina uso de strings legacy ("Base Principal")
+    location_data = base_location_data or {}
+
     update_data = {
         "rango": DEFAULT_RECRUIT_RANK,
         "estado": DEFAULT_RECRUIT_STATUS, # "Disponible"
-        "ubicacion_local": "Base Principal", # Reemplazo literal de constante eliminada
+        # Columnas SQL de ubicación (Source of Truth)
+        "location_system_id": location_data.get("system_id"),
+        "location_planet_id": location_data.get("planet_id"),
+        "location_sector_id": location_data.get("sector_id"),
+        # ubicacion_local toma el nombre del asentamiento (no un string genérico)
+        "ubicacion_local": location_data.get("nombre_asentamiento", "Base"),
         # Señal para el controller/repo de que debe actualizar el conocimiento también
-        "initial_knowledge_level": initial_knowledge 
+        "initial_knowledge_level": initial_knowledge
     }
 
     return new_credits, update_data

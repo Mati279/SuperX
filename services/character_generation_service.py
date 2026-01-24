@@ -434,8 +434,10 @@ def generate_random_character_with_ai(
 
     # --- SELECCIÓN DE PLANETA DE ORIGEN Y UBICACIÓN ACTUAL ---
     # V9.0: Priorizamos coordenadas explícitas del contexto si existen (Hero Spawn)
+    # Refactor V10: Eliminado default "Barracones" - usar nombre del planeta
     location_system_id = context.location_system_id
-    location_name = "Barracones"
+    location_sector_id = context.location_sector_id
+    location_name = None  # Se asignará desde el planeta
     system_name = "Desconocido"
     planet_id_for_spawn = context.location_planet_id
 
@@ -443,11 +445,16 @@ def generate_random_character_with_ai(
         try:
             planet_info = get_planet_by_id(planet_id_for_spawn)
             if planet_info:
+                # Usar nombre del planeta como ubicación local (no string genérico)
                 location_name = planet_info.get("name", "Base")
                 if not location_system_id:
-                     location_system_id = planet_info.get("system_id")
+                    location_system_id = planet_info.get("system_id")
                 system_name = f"Sistema {location_system_id}"
         except Exception: pass
+
+    # Fallback: Si no hay nombre, usar "Centro de Reclutamiento" (contexto de pool)
+    if not location_name:
+        location_name = "Centro de Reclutamiento"
     
     # Determinar planeta de nacimiento válido (Habitable)
     # Puede ser distinto de la ubicación actual
@@ -540,10 +547,10 @@ def generate_random_character_with_ai(
             "ubicacion_local": location_name,
             "rol_asignado": CharacterRole.NONE.value,
             "accion_actual": "Esperando asignación",
-            "ubicacion": { # V9.0: Estructura explícita
+            "ubicacion": { # V9.0/V10: Estructura explícita con IDs de sector
                 "system_id": location_system_id,
                 "planet_id": context.location_planet_id,
-                "sector_id": context.location_sector_id,
+                "sector_id": location_sector_id,  # Refactor V10: Usar variable local
                 "ubicacion_local": location_name
             }
         }
@@ -557,7 +564,7 @@ def generate_random_character_with_ai(
         "es_comandante": False,
         "location_system_id": location_system_id, # Inyectado para DB
         "location_planet_id": context.location_planet_id, # Inyectado para DB
-        "location_sector_id": context.location_sector_id, # Inyectado para DB
+        "location_sector_id": location_sector_id, # Inyectado para DB (Refactor V10)
         "stats_json": stats_json
     }
 
@@ -605,14 +612,22 @@ def generate_character_pool(
     player_id: Optional[int],
     pool_size: int = 3,
     location_planet_id: Optional[int] = None,
+    location_system_id: Optional[int] = None,
+    location_sector_id: Optional[int] = None,
     predominant_race: Optional[str] = None,
     min_level: int = 1,
     max_level: int = 1,
     force_max_skills: bool = False
 ) -> List[Dict[str, Any]]:
+    """
+    Genera un pool de candidatos para reclutamiento.
+    Refactor V10: Soporta coordenadas completas de ubicación (system, planet, sector).
+    """
     context = RecruitmentContext(
         player_id=player_id,
         location_planet_id=location_planet_id,
+        location_system_id=location_system_id,
+        location_sector_id=location_sector_id,
         predominant_race=predominant_race,
         min_level=min_level,
         max_level=max_level
