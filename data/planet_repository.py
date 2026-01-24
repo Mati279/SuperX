@@ -32,6 +32,7 @@ Actualizado v7.6.1: Fix Crítico SQL en initialize_planet_sectors (sync planet_i
 Actualizado v7.7.1: Restauración de updates secuenciales en create_planet_asset para evitar Race Condition con Triggers.
 Actualizado v7.7.2: Fix PGRST204 delegando 'base_tier' al default de la base de datos.
 Actualizado v7.8.0: Join con Facciones para resolver nombres de Soberanía (Surface/Orbital) en get_planet_by_id.
+Hotfix v7.8.1: Estrategia Fail-Safe para get_planet_by_id (Recuperación en 2 pasos) para evitar errores de sintaxis PostgREST.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -65,60 +66,70 @@ def _get_db():
 def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
     """
     Obtiene información de un planeta de la tabla mundial 'planets'.
-    Actualizado V5.8: Recuperación explícita de population y breakdown.
-    Actualizado V7.8: Join con players->factions para obtener nombres de soberanía reales.
+    Actualizado V7.8.1: Implementación ROBUSTA (Fail-Safe).
+    Recupera datos crudos primero y resuelve nombres en query separada para evitar fallos de JOIN.
     """
     try:
-        # Construcción de la query con Joins anidados para resolver nombres de facción desde el ID de jugador
-        # Sintaxis: surface_player:players!surface_owner_id(factions(nombre))
-        select_query = (
-            "id, name, system_id, biome, mass_class, orbital_ring, is_habitable, "
-            "surface_owner_id, orbital_owner_id, is_disputed, security, population, "
-            "security_breakdown, base_defense, "
-            "surface_player:players!surface_owner_id(factions(nombre)), "
-            "orbital_player:players!orbital_owner_id(factions(nombre))"
-        )
-
-        response = _get_db().table("planets")\
-            .select(select_query)\
-            .eq("id", planet_id)\
-            .single()\
-            .execute()
+        db = _get_db()
+        
+        # 1. Recuperación Segura de Datos Base
+        # Volvemos a 'select(*)' para garantizar que no falle por sintaxis de embedding
+        response = db.table("planets").select("*").eq("id", planet_id).single().execute()
             
         if not response or not response.data:
             return None
             
         planet_data = response.data
         
-        # Procesamiento de nombres de soberanía (Flattening)
-        # Lógica: Si hay ID pero no datos -> "Desconocido". Si no hay ID -> "Neutral".
+        # 2. Resolución de Nombres de Soberanía (Query Auxiliar)
+        # Valores por defecto
+        planet_data["surface_owner_name"] = "Neutral"
+        planet_data["orbital_owner_name"] = "Neutral"
         
-        # 1. Soberanía Superficie
-        s_data = planet_data.get("surface_player")
-        s_name = "Neutral"
-        if planet_data.get("surface_owner_id"):
-            if s_data and s_data.get("factions"):
-                s_name = s_data["factions"].get("nombre", "Desconocido")
-            else:
-                s_name = "Desconocido"
-        planet_data["surface_owner_name"] = s_name
+        s_id = planet_data.get("surface_owner_id")
+        o_id = planet_data.get("orbital_owner_id")
         
-        # 2. Soberanía Orbital
-        o_data = planet_data.get("orbital_player")
-        o_name = "Neutral"
-        if planet_data.get("orbital_owner_id"):
-            if o_data and o_data.get("factions"):
-                o_name = o_data["factions"].get("nombre", "Desconocido")
-            else:
-                o_name = "Desconocido"
-        planet_data["orbital_owner_name"] = o_name
+        # Recopilar IDs únicos para consultar
+        ids_to_fetch = []
+        if s_id: ids_to_fetch.append(s_id)
+        if o_id: ids_to_fetch.append(o_id)
         
-        # Limpieza de campos auxiliares del join
-        planet_data.pop("surface_player", None)
-        planet_data.pop("orbital_player", None)
+        if ids_to_fetch:
+            # Consultamos la tabla de jugadores y facciones de forma segura
+            try:
+                # Nota: Asumimos que la relación players->factions está bien definida
+                players_res = db.table("players")\
+                    .select("id, factions(nombre)")\
+                    .in_("id", ids_to_fetch)\
+                    .execute()
+                
+                if players_res and players_res.data:
+                    # Crear mapa {player_id: faction_name}
+                    player_faction_map = {}
+                    for p in players_res.data:
+                        f_data = p.get("factions")
+                        # Manejo robusto de diccionarios anidados
+                        f_name = f_data.get("nombre", "Desconocido") if f_data else "Sin Facción"
+                        player_faction_map[p["id"]] = f_name
+                    
+                    # Asignar nombres al objeto planeta
+                    if s_id: planet_data["surface_owner_name"] = player_faction_map.get(s_id, "Desconocido")
+                    if o_id: planet_data["orbital_owner_name"] = player_faction_map.get(o_id, "Desconocido")
+            
+            except Exception as e:
+                # Si falla la resolución de nombres, NO bloqueamos la carga del planeta
+                print(f"Warning: Fallo resolución de nombres soberanía: {e}")
+                # Mantenemos los valores por defecto o IDs como fallback visual
+                if s_id and planet_data["surface_owner_name"] == "Neutral": 
+                    planet_data["surface_owner_name"] = f"Jugador {s_id}"
 
         return planet_data
-    except Exception:
+
+    except Exception as e:
+        # Logueo explícito del error para debug en UI
+        import streamlit as st
+        st.error(f"Error CRÍTICO cargando planeta {planet_id}: {e}")
+        traceback.print_exc()
         return None
 
 
