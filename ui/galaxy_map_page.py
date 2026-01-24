@@ -11,6 +11,7 @@ Refactor V5.8: Estandarización final a 'population' y navegación directa a Sup
 Feature: Visualización de Soberanía (Controlador de Sistema y Planetas).
 Actualizado V7.9.0: Actualización de etiquetas de interfaz para Soberanía.
 Actualizado V8.0: Visualización de Sectores Estelares y Megaestructuras.
+Refactor Debug V8.1: Control de Soberanía por Player ID (sin facción obligatoria).
 """
 import json
 import math
@@ -33,7 +34,8 @@ from data.world_repository import (
     get_all_systems_from_db,
     get_system_by_id,
     get_planets_by_system_id,
-    get_starlanes_from_db
+    get_starlanes_from_db,
+    update_system_controller
 )
 from ui.state import get_player
 
@@ -51,7 +53,7 @@ BIOME_COLORS = {
 }
 
 
-# --- Helpers de Facciones ---
+# --- Helpers de Facciones y Controladores ---
 @st.cache_data(ttl=600)
 def _get_faction_map():
     """Cache simple para nombres de facciones."""
@@ -61,10 +63,31 @@ def _get_faction_map():
     except:
         return {}
 
-def _resolve_faction_name(faction_id):
-    if faction_id is None: return "Neutral"
+def _get_player_name_by_id(player_id):
+    """Intenta resolver el nombre de un jugador si no es una facción."""
+    try:
+        # Intentamos buscar en characters primero (nombre de rol) o users
+        res = get_supabase().table("characters").select("name").eq("player_id", player_id).limit(1).maybe_single().execute()
+        if res and res.data:
+            return res.data['name']
+        return f"Jugador {player_id}"
+    except:
+        return "Desconocido"
+
+def _resolve_controller_name(controller_id):
+    """
+    Resuelve el nombre del controlador (Facción o Jugador).
+    Prioriza Facciones. Si no existe en facciones, asume que es un Jugador (Debug/Soberanía individual).
+    """
+    if controller_id is None: return "Neutral"
+    
+    # 1. Intentar resolver como Facción
     f_map = _get_faction_map()
-    return f_map.get(faction_id, "Desconocido")
+    if controller_id in f_map:
+        return f_map[controller_id]
+    
+    # 2. Si no es facción, intentar resolver como Jugador (Fallback para Debug/Independientes)
+    return _get_player_name_by_id(controller_id)
 
 
 def _render_stellar_sector_panel(system_id: int, system: dict, player):
@@ -170,38 +193,42 @@ def _render_stellar_sector_panel(system_id: int, system: dict, player):
 
 
 def _render_debug_control_button(system_id: int, system: dict, player):
-    """V8.0: Botón de debug para tomar control de un sistema."""
+    """
+    V8.1: Botón de debug para tomar control de un sistema.
+    Refactorizado para usar player_id directamente, sin requerir facción.
+    """
     st.markdown("#### 🔧 Debug: Control de Sistema")
 
-    current_controller = system.get('controlling_faction_id')
-    current_name = _resolve_faction_name(current_controller)
-    st.caption(f"Controlador actual: {current_name}")
+    current_controller_id = system.get('controlling_faction_id')
+    current_name = _resolve_controller_name(current_controller_id)
+    st.caption(f"Controlador actual: {current_name} (ID: {current_controller_id})")
 
     if player:
         col1, col2 = st.columns(2)
+        # Usamos update_system_controller del repositorio para consistencia
+        
         if col1.button("🏴 Tomar Control", key=f"debug_take_control_{system_id}", type="primary"):
             try:
-                # V8.0: Usar faction_id del jugador (controlling_faction_id referencia factions, no players)
-                faction_id = getattr(player, 'faction_id', None)
-                if not faction_id:
-                    st.error("❌ Tu jugador no tiene una facción asignada (faction_id)")
-                    return
-                # Actualizar el controlador del sistema
-                get_supabase().table("systems").update({
-                    "controlling_faction_id": faction_id
-                }).eq("id", system_id).execute()
-                st.success(f"✅ Tu facción ahora controla el sistema {system.get('name', system_id)}!")
-                st.rerun()
+                # V8.1: Usar ID directo del jugador. 
+                # NOTA: Requiere que la DB no tenga FK estricta a 'factions' en este campo.
+                success = update_system_controller(system_id, player.id)
+                
+                if success:
+                    st.success(f"✅ ¡Ahora controlas el sistema {system.get('name', system_id)}!")
+                    st.rerun()
+                else:
+                    st.error("❌ Falló la actualización de soberanía.")
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Error crítico: {e}")
 
         if col2.button("🏳️ Liberar Control", key=f"debug_release_control_{system_id}"):
             try:
-                get_supabase().table("systems").update({
-                    "controlling_faction_id": None
-                }).eq("id", system_id).execute()
-                st.success("✅ Sistema liberado (Neutral)")
-                st.rerun()
+                success = update_system_controller(system_id, None)
+                if success:
+                    st.success("✅ Sistema liberado (Neutral)")
+                    st.rerun()
+                else:
+                    st.error("❌ Error al liberar sistema.")
             except Exception as e:
                 st.error(f"Error: {e}")
     else:
@@ -324,7 +351,7 @@ def _render_system_view():
 
     # --- VISUALIZACIÓN DEL CONTROLADOR ---
     ctl_id = system.get('controlling_faction_id')
-    ctl_name = _resolve_faction_name(ctl_id)
+    ctl_name = _resolve_controller_name(ctl_id) # V8.1: Resolver nombre genérico
     st.subheader(f"Controlador del Sistema: :blue[{ctl_name}]")
     
     col_back, col_metrics = st.columns([4, 3])
@@ -448,8 +475,8 @@ def _render_planet_view():
     st.header(f"Planeta: {planet['name']}")
     
     # --- VISUALIZACIÓN DE SOBERANÍA ---
-    s_owner = _resolve_faction_name(planet.get('surface_owner_id'))
-    o_owner = _resolve_faction_name(planet.get('orbital_owner_id'))
+    s_owner = _resolve_controller_name(planet.get('surface_owner_id'))
+    o_owner = _resolve_controller_name(planet.get('orbital_owner_id'))
     
     # Actualización de etiquetas a 'Controlador' (V7.9.0)
     st.markdown(f"**Controlador planetario:** :orange[{s_owner}] | **Controlador de la órbita:** :cyan[{o_owner}]")
@@ -706,7 +733,7 @@ def _render_interactive_galaxy_map():
                 
                 # Mostrar Controlador en preview
                 p_ctl_id = preview_sys.get('controlling_faction_id')
-                p_ctl_name = _resolve_faction_name(p_ctl_id)
+                p_ctl_name = _resolve_controller_name(p_ctl_id) # V8.1: Generic resolve
                 st.write(f"**Controlador:** {p_ctl_name}")
 
                 if st.button("🚀 ENTRAR AL SISTEMA", type="primary", use_container_width=True):
