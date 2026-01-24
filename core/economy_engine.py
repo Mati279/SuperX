@@ -10,6 +10,7 @@ Corrección V5.8: Fix crítico de nomenclatura 'poblacion' a 'population'.
 Actualizado V6.3: Implementación de Restricciones de Soberanía y Bloqueos.
 Actualizado V6.4: Penalización por Bloqueo Orbital Enemigo en Producción Industrial.
 Actualizado V8.0: Control del Sistema (Nivel Estelar) - Bonos de Sistema y Producción Estelar.
+Actualizado V9.0: Logística de Transporte Automático (Unidades en Tránsito).
 """
 
 from typing import Dict, List, Any, Tuple, Optional
@@ -26,6 +27,8 @@ from data.planet_repository import (
     update_planet_asset,
     update_planet_security_data # Nueva función V4.4
 )
+# V9.0: Importar repositorio de unidades para coste logístico
+from data.unit_repository import get_troops_in_transit_count
 
 from core.world_constants import (
     BUILDING_TYPES,
@@ -399,20 +402,7 @@ def merge_luxury_resources(current: Dict[str, Any], extracted: Dict[str, int]) -
 def get_stellar_buildings_for_system(system_id: int, player_id: int) -> List[Dict[str, Any]]:
     """
     V8.0: Obtiene los edificios estelares de un sistema controlados por un jugador.
-
-    TODO: Esta función es un placeholder. Debe ser implementada en el repositorio
-    (data/planet_repository.py o data/world_repository.py) para consultar la tabla
-    de edificios estelares en la base de datos.
-
-    Args:
-        system_id: ID del sistema.
-        player_id: ID del jugador.
-
-    Returns:
-        Lista de edificios estelares del jugador en ese sistema.
     """
-    # PLACEHOLDER: Consultar tabla 'stellar_buildings' o 'system_sectors'
-    # Por ahora retorna lista vacía hasta que se implemente el repositorio
     try:
         from data.world_repository import get_stellar_buildings_by_system
         return get_stellar_buildings_by_system(system_id, player_id)
@@ -429,6 +419,7 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
     """
     Ejecuta el ciclo económico completo para un jugador.
     Actualizado V8.0: Soporte para bonos de sistema y estructuras estelares.
+    Actualizado V9.0: Soporte para Logística de Transporte (Unidades en tránsito).
     """
     result = EconomyTickResult(player_id=player_id)
 
@@ -439,10 +430,14 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             log_event(f"Error procesando mercado en tick: {e}", player_id, is_error=True)
 
         planets = get_all_player_planets_with_buildings(player_id)
-        if not planets:
-            return result
-
+        # Nota: Incluso si no hay planetas, puede haber unidades en tránsito o edificios estelares.
+        # Continuamos la ejecución aunque 'planets' esté vacío, pero necesitamos cargar finanzas.
+        
         finances = get_player_finances(player_id)
+        if not finances:
+             # Si no hay finanzas, no hay jugador válido (edge case)
+             return result
+
         luxury_sites = get_luxury_extraction_sites_for_player(player_id)
 
         player_resources = {
@@ -459,6 +454,8 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
 
         # --- V8.0: FASE 1 - Agrupar planetas por sistema y calcular bonos estelares ---
         systems_planets: Dict[int, List[Dict]] = {}
+        # Obtener lista de IDs de sistema únicos (planetas + assets conocidos)
+        # Por simplificación, usamos los de los planetas controlados
         for planet in planets:
             sys_id = planet.get("system_id")
             if sys_id not in systems_planets:
@@ -480,7 +477,6 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
                 system_bonuses_cache[sys_id] = system_bonuses
 
                 # Procesar mantenimiento de edificios estelares
-                # Nota: El logistics_hub reduce su propio mantenimiento también
                 stellar_maint = process_stellar_building_maintenance(
                     stellar_buildings,
                     player_resources,
@@ -518,11 +514,10 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             system_bonuses = system_bonuses_cache.get(sys_id, SystemBonuses())
 
             # A. Seguridad (V4.4: Centralizada en tabla planets con Breakdown)
-            # FIX V5.8: Estandarización a 'population'
             pop = float(planet.get("population", 0.0))
-            if pop <= 0:
-                # Debug log para rastrear posibles fallos de sincronización
-                log_event(f"⚠️ Alerta Economía: Planeta {planet.get('id')} reporta población 0.0", player_id)
+            if pop <= 0 and planet.get("buildings"):
+                # Debug log para rastrear posibles fallos de sincronización si hay edificios pero no pop
+                pass
 
             infra_def = planet.get("infraestructura_defensiva", 0)
 
@@ -560,7 +555,6 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
 
             # Regla de Soberanía V6.3:
             # Si no soy el surface owner, mis ingresos y producción son 0.
-            # (Se asume que la ocupación es total o que el surface owner recauda impuestos)
             is_sovereign = (surface_owner == player_id)
 
             # Regla de Bloqueo Orbital (V6.4):
@@ -586,14 +580,11 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             pops_avail = float(planet.get("pops_activos", pop))
 
             # V8.0: Aplicar reducción de mantenimiento de logistics_hub
-            # Nota: Creamos wrapper temporal que ajusta costes
             maint_res = process_building_maintenance(buildings, player_resources, pops_avail)
 
             # V8.0: Aplicar multiplicador de mantenimiento del sistema
-            adjusted_maintenance_cost: Dict[str, int] = {}
             for res, cost in maint_res.total_cost.items():
                 adjusted_cost = int(cost * system_bonuses.maintenance_multiplier)
-                adjusted_maintenance_cost[res] = adjusted_cost
                 result.maintenance_cost[res] = result.maintenance_cost.get(res, 0) + adjusted_cost
                 player_resources[res] -= adjusted_cost
 
@@ -607,22 +598,15 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
                 result.buildings_reactivated.append(bid)
 
             # E. Producción
-            # Si no soy soberano, la producción industrial también se detiene/incauta?
-            # La instrucción dice "sus ingresos proyectados y reales para ese planeta sean 0".
-            # Asumiremos que aplica a todo output económico.
             if is_sovereign:
                 # V6.4: Aplicar penalización de bloqueo a producción también
-                # V8.0: Aplicar multiplicadores de material_multiplier y data_multiplier
                 prod = calculate_planet_production(maint_res.paid_buildings, penalty_multiplier=penalty)
 
-                # Aplicar bonos de sistema a producción
+                # V8.0: Aplicar multiplicadores de material_multiplier y data_multiplier
                 prod.materiales = int(prod.materiales * system_bonuses.material_multiplier)
                 prod.datos = int(prod.datos * system_bonuses.data_multiplier)
 
                 result.production = result.production.add(prod)
-            else:
-                # Mantenimiento se paga (costo de ocupación fallida?), pero no se produce.
-                pass
 
         # V8.0: Añadir producción estelar al total
         result.production = result.production.add(stellar_production_total)
@@ -630,6 +614,23 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
         # 3. Recursos de Lujo
         luxury_extracted = calculate_luxury_extraction(luxury_sites)
         result.luxury_extracted = luxury_extracted
+
+        # --- V9.0: COSTO LOGÍSTICA DE TRANSPORTE (Unidades en Tránsito) ---
+        troops_in_transit = get_troops_in_transit_count(player_id)
+        transit_cost = troops_in_transit * 5  # Costo fijo por tropa en espacio
+        
+        if transit_cost > 0:
+            if player_resources["creditos"] >= transit_cost:
+                player_resources["creditos"] -= transit_cost
+                result.maintenance_cost["creditos"] = result.maintenance_cost.get("creditos", 0) + transit_cost
+                log_event(f"🚀 Logística de Flota: -{transit_cost} Cr ({troops_in_transit} tropas en tránsito).", player_id)
+            else:
+                # Falta de créditos para logística (implementación futura: varar tropas?)
+                # Por ahora, se cobra lo que se puede y se loguea warning
+                paid = player_resources["creditos"]
+                player_resources["creditos"] = 0
+                result.maintenance_cost["creditos"] = result.maintenance_cost.get("creditos", 0) + paid
+                log_event(f"⚠️ FALLO LOGÍSTICO: Fondos insuficientes para transporte de tropas.", player_id, is_error=True)
 
         # 4. Actualizar DB
         if building_status_updates:
@@ -690,6 +691,7 @@ def get_player_projected_economy(player_id: int) -> Dict[str, int]:
     """
     Calcula proyección (Delta) para UI sin modificar DB.
     Actualizado V8.0: Incluye bonos de sistema y producción estelar.
+    Actualizado V9.0: Incluye costo de logística de transporte proyectado.
     """
     projection = {k: 0 for k in ["creditos", "materiales", "componentes", "celulas_energia", "influencia", "datos"]}
 
@@ -755,7 +757,6 @@ def get_player_projected_economy(player_id: int) -> Dict[str, int]:
             if not is_sovereign:
                 penalty = 0.0
 
-            # FIX V5.8: Estandarización a 'population'
             pop = float(planet.get("population", 0.0))
             infra = planet.get("infraestructura_defensiva", 0)
 
@@ -771,7 +772,6 @@ def get_player_projected_economy(player_id: int) -> Dict[str, int]:
             sec = min(100.0, sec)
 
             # Ingresos proyectados con penalización
-            # V8.0: Aplicar multiplicador fiscal de trade_beacon
             fiscal_multiplier = system_bonuses.fiscal_multiplier * penalty
             income = calculate_income(pop, sec, penalty_multiplier=fiscal_multiplier)
             projection["creditos"] += income
@@ -781,10 +781,7 @@ def get_player_projected_economy(player_id: int) -> Dict[str, int]:
 
             # Solo sumar producción si es soberano
             if is_sovereign:
-                # V6.4: Proyectar con penalización
                 prod = calculate_planet_production(active_buildings, penalty_multiplier=penalty)
-
-                # V8.0: Aplicar multiplicadores de sistema
                 projection["materiales"] += int(prod.materiales * system_bonuses.material_multiplier)
                 projection["componentes"] += prod.componentes
                 projection["celulas_energia"] += prod.celulas_energia
@@ -793,13 +790,17 @@ def get_player_projected_economy(player_id: int) -> Dict[str, int]:
                 projection["creditos"] += prod.creditos
 
             # Mantenimiento siempre se resta (Costo operativo)
-            # V8.0: Aplicar reducción de mantenimiento de logistics_hub
             for b in active_buildings:
                 b_type = b.get("building_type")
                 maint = BUILDING_TYPES.get(b_type, {}).get("maintenance", {})
                 for res, cost in maint.items():
                     adjusted_cost = int(cost * system_bonuses.maintenance_multiplier)
                     projection[res] -= adjusted_cost
+
+        # V9.0: Proyectar costo logístico de transporte
+        troops_in_transit = get_troops_in_transit_count(player_id)
+        transit_cost = troops_in_transit * 5
+        projection["creditos"] -= transit_cost
 
     except Exception:
         pass

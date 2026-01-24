@@ -9,6 +9,7 @@ Actualizado V4.3: Enums de Conocimiento y Secretos.
 Corregido v5.1.5: Fix BiologicalSex Enum y defaults.
 Refactor v5.2: Seguridad movida a tabla 'planets'.
 Refactor v5.7: Estandarización de nomenclatura 'population' (Fix poblacion).
+Actualizado V9.0: Implementación de Unidades (Units) y Tropas (Troops).
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -33,6 +34,7 @@ class CharacterStatus(str, Enum):
     TRAINING = "Entrenando"
     TRANSIT = "En Tránsito"
     CANDIDATE = "Candidato"
+    ASSIGNED_TO_UNIT = "Asignado a Unidad" # V9.0
 
 class BiologicalSex(str, Enum):
     MALE = "Masculino"
@@ -70,6 +72,27 @@ class MarketOrderStatus(str, Enum):
     PENDING = "PENDING"
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
+
+# --- V9.0: ENUMS DE UNIDADES Y TROPAS ---
+
+class UnitStatus(str, Enum):
+    """Estado logístico de una unidad."""
+    GROUND = "GROUND"     # Desplegada en superficie/sector
+    SPACE = "SPACE"       # En órbita o espacio profundo
+    TRANSIT = "TRANSIT"   # Viajando entre nodos (genera upkeep logístico)
+
+class TroopType(str, Enum):
+    """Tipos de tropas estándar."""
+    INFANTRY = "INFANTRY"
+    MECH = "MECH"
+    AEROSPACE = "AEROSPACE"
+    ARMORED = "ARMORED"
+
+class ShipRole(str, Enum):
+    """Roles de naves espaciales."""
+    COMMAND = "Command"     # Asignable a personajes
+    COMBAT = "Combat"       # Naves de guerra
+    TRANSPORT = "Transport" # Logística (automática o manual)
 
 # --- SUB-MODELOS DE PERSONAJE (COMPOSICIÓN) ---
 
@@ -546,3 +569,57 @@ class EconomyTickResult(BaseModel):
     luxury_extracted: Dict[str, int] = Field(default_factory=dict)
     errors: List[str] = Field(default_factory=list)
     success: bool = True
+
+# --- V9.0: MODELOS DE TROPAS Y UNIDADES ---
+
+class TroopSchema(BaseModel):
+    """
+    Representación de una tropa (entidad de combate genérica).
+    Persistido en tabla 'troops'.
+    """
+    model_config = ConfigDict(extra='allow')
+    
+    id: int
+    player_id: int
+    name: str = "Escuadrón"
+    type: TroopType = TroopType.INFANTRY
+    level: int = Field(default=1, ge=1, le=4)
+    combats_at_current_level: int = 0
+    
+    @property
+    def combats_required_for_next_level(self) -> int:
+        """Regla V9.0: 2 * nivel actual."""
+        return 2 * self.level
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'TroopSchema':
+        return cls(**data)
+
+class UnitMemberSchema(BaseModel):
+    """Miembro asignado a un slot de unidad."""
+    slot_index: int
+    entity_type: str # 'character' o 'troop'
+    entity_id: int
+    name: str # Para UI rápida
+    details: Optional[Dict[str, Any]] = None # Snapshot de datos
+
+class UnitSchema(BaseModel):
+    """
+    Representación de una Unidad (Grupo de Combate).
+    Persistido en tabla 'units'.
+    """
+    model_config = ConfigDict(extra='allow')
+    
+    id: int
+    player_id: int
+    name: str
+    status: UnitStatus = UnitStatus.GROUND
+    location_system_id: Optional[int] = None
+    location_planet_id: Optional[int] = None
+    location_sector_id: Optional[int] = None
+    members: List[UnitMemberSchema] = Field(default_factory=list)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'UnitSchema':
+        # Los miembros suelen cargarse con join, aquí asumimos estructura básica
+        return cls(**data)

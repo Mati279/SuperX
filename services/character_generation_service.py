@@ -8,6 +8,7 @@ Actualizado v5.1.0: Biografía consolidada de 3 niveles y limpieza de campos leg
 Actualizado v5.1.6: Soporte para 'initial_knowledge_level' en reclutamiento directo.
 Actualizado v5.2.0: Restricción de Origen a Biomas Habitables y mejora de Lore.
 Corrección v5.2.1: Uso de cliente Supabase para consultas de planetas (Fix ImportError).
+Actualizado V9.0: Soporte para coordenadas precisas (Hero Spawn) en RecruitmentContext.
 """
 
 import random
@@ -102,6 +103,8 @@ REGLAS TÉCNICAS:
 class RecruitmentContext:
     player_id: Optional[int] # Puede ser None para pools globales/locales
     location_planet_id: Optional[int] = None
+    location_system_id: Optional[int] = None # V9.0: Coordenada explícita
+    location_sector_id: Optional[int] = None # V9.0: Coordenada explícita
     predominant_race: Optional[str] = None
     min_level: int = 1
     max_level: int = 1
@@ -429,21 +432,25 @@ def generate_random_character_with_ai(
     feats = random.sample(AVAILABLE_FEATS, min(num_feats, len(AVAILABLE_FEATS)))
     traits = random.sample(PERSONALITY_TRAITS, k=2)
 
-    # --- SELECCIÓN DE PLANETA DE ORIGEN ---
-    location_system_id = None
+    # --- SELECCIÓN DE PLANETA DE ORIGEN Y UBICACIÓN ACTUAL ---
+    # V9.0: Priorizamos coordenadas explícitas del contexto si existen (Hero Spawn)
+    location_system_id = context.location_system_id
     location_name = "Barracones"
     system_name = "Desconocido"
+    planet_id_for_spawn = context.location_planet_id
 
-    if context.location_planet_id:
+    if planet_id_for_spawn:
         try:
-            planet_info = get_planet_by_id(context.location_planet_id)
+            planet_info = get_planet_by_id(planet_id_for_spawn)
             if planet_info:
                 location_name = planet_info.get("name", "Base")
-                location_system_id = planet_info.get("system_id")
+                if not location_system_id:
+                     location_system_id = planet_info.get("system_id")
                 system_name = f"Sistema {location_system_id}"
         except Exception: pass
-
+    
     # Determinar planeta de nacimiento válido (Habitable)
+    # Puede ser distinto de la ubicación actual
     birth_planet, birth_biome = _select_birth_planet(location_system_id)
 
     identity = generate_identity_with_ai_sync(
@@ -532,7 +539,13 @@ def generate_random_character_with_ai(
             "sistema_actual": system_name,
             "ubicacion_local": location_name,
             "rol_asignado": CharacterRole.NONE.value,
-            "accion_actual": "Esperando asignación"
+            "accion_actual": "Esperando asignación",
+            "ubicacion": { # V9.0: Estructura explícita
+                "system_id": location_system_id,
+                "planet_id": context.location_planet_id,
+                "sector_id": context.location_sector_id,
+                "ubicacion_local": location_name
+            }
         }
     }
 
@@ -542,12 +555,17 @@ def generate_random_character_with_ai(
         "estado": "Disponible",
         "ubicacion": location_name,
         "es_comandante": False,
+        "location_system_id": location_system_id, # Inyectado para DB
+        "location_planet_id": context.location_planet_id, # Inyectado para DB
+        "location_sector_id": context.location_sector_id, # Inyectado para DB
         "stats_json": stats_json
     }
 
 def recruit_character_with_ai(
     player_id: int,
     location_planet_id: Optional[int] = None,
+    location_system_id: Optional[int] = None, # V9.0
+    location_sector_id: Optional[int] = None, # V9.0
     predominant_race: Optional[str] = None,
     min_level: int = 1,
     max_level: int = 1,
@@ -556,11 +574,13 @@ def recruit_character_with_ai(
 ) -> Optional[Dict[str, Any]]:
     """
     Recluta un personaje directamente (sin pasar por pool de candidatos).
-    Soporta initial_knowledge_level para tripulación inicial.
+    Soporta initial_knowledge_level para tripulación inicial y coordenadas precisas para Hero Spawn.
     """
     context = RecruitmentContext(
         player_id=player_id,
         location_planet_id=location_planet_id,
+        location_system_id=location_system_id,
+        location_sector_id=location_sector_id,
         predominant_race=predominant_race,
         min_level=min_level,
         max_level=max_level
