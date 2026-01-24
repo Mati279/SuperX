@@ -10,6 +10,7 @@ Corregido v5.1.5: Fix BiologicalSex Enum y defaults.
 Refactor v5.2: Seguridad movida a tabla 'planets'.
 Refactor v5.7: Estandarización de nomenclatura 'population' (Fix poblacion).
 Actualizado V9.0: Implementación de Unidades (Units) y Tropas (Troops).
+Actualizado V10.0: Motor de Movimiento, LocationRing, UnitLocation, campos de tránsito.
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -93,6 +94,20 @@ class ShipRole(str, Enum):
     COMMAND = "Command"     # Asignable a personajes
     COMBAT = "Combat"       # Naves de guerra
     TRANSPORT = "Transport" # Logística (automática o manual)
+
+class LocationRing(int, Enum):
+    """
+    V10.0: Anillos de ubicación jerárquica en un sistema.
+    Ring 0 = Sector Estelar (espacio profundo del sistema)
+    Ring 1-6 = Anillos planetarios (interior a exterior)
+    """
+    STELLAR = 0   # Sector Estelar (megaestructuras, espacio profundo)
+    RING_1 = 1    # Anillo planetario interior
+    RING_2 = 2
+    RING_3 = 3
+    RING_4 = 4
+    RING_5 = 5
+    RING_6 = 6    # Anillo planetario exterior
 
 # --- SUB-MODELOS DE PERSONAJE (COMPOSICIÓN) ---
 
@@ -603,23 +618,109 @@ class UnitMemberSchema(BaseModel):
     name: str # Para UI rápida
     details: Optional[Dict[str, Any]] = None # Snapshot de datos
 
-class UnitSchema(BaseModel):
+
+class UnitLocation(BaseModel):
     """
-    Representación de una Unidad (Grupo de Combate).
-    Persistido en tabla 'units'.
+    V10.0: Ubicación jerárquica de una unidad.
+    Jerarquía: Galaxy -> System -> Ring -> Planet/Orbit -> Sector
+
+    Cuando starlane_id no es None, la unidad está en tránsito interestelar
+    y system_id puede ser None (está entre sistemas).
     """
     model_config = ConfigDict(extra='allow')
-    
+
+    system_id: Optional[int] = None          # NULL si en starlane
+    ring: LocationRing = LocationRing.STELLAR
+    planet_id: Optional[int] = None          # NULL si en espacio/starlane
+    sector_id: Optional[int] = None          # Sector específico (superficie u órbita)
+    starlane_id: Optional[int] = None        # ID de starlane si en tránsito interestelar
+
+    # Metadata de tránsito
+    is_in_transit: bool = False
+    transit_origin_system_id: Optional[int] = None
+    transit_destination_system_id: Optional[int] = None
+
+    def is_same_location(self, other: 'UnitLocation') -> bool:
+        """Verifica si dos ubicaciones son iguales (para detección)."""
+        if self.is_in_transit and other.is_in_transit:
+            return self.starlane_id == other.starlane_id
+        if self.is_in_transit or other.is_in_transit:
+            return False
+        return (
+            self.system_id == other.system_id and
+            self.ring == other.ring and
+            self.planet_id == other.planet_id and
+            self.sector_id == other.sector_id
+        )
+
+
+class UnitSchema(BaseModel):
+    """
+    V10.0: Representación de una Unidad (Grupo de Combate).
+    Persistido en tabla 'units'.
+    Capacidad máxima: 8 slots. Mínimo 1 Character (líder).
+    """
+    model_config = ConfigDict(extra='allow')
+
     id: int
     player_id: int
     name: str
     status: UnitStatus = UnitStatus.GROUND
+
+    # V10.0: Ubicación jerárquica (para compatibilidad, mantenemos los campos legacy)
     location_system_id: Optional[int] = None
     location_planet_id: Optional[int] = None
     location_sector_id: Optional[int] = None
+
+    # V10.0: Nuevos campos de ubicación avanzada
+    ring: LocationRing = LocationRing.STELLAR
+    starlane_id: Optional[int] = None
+
+    # V10.0: Control de movimiento
+    movement_locked: bool = False           # True = acaba de moverse, no puede volver
+    transit_end_tick: Optional[int] = None  # Tick en que termina el viaje
+    transit_ticks_remaining: int = 0        # Ticks restantes de viaje
+    transit_origin_system_id: Optional[int] = None
+    transit_destination_system_id: Optional[int] = None
+
+    # Composición (máximo 8 slots)
     members: List[UnitMemberSchema] = Field(default_factory=list)
-    
+
+    @field_validator('members')
+    @classmethod
+    def validate_unit_composition(cls, v):
+        """Valida composición: máximo 8 slots, mínimo 1 character si hay miembros."""
+        if len(v) > 8:
+            raise ValueError("Unit cannot have more than 8 members")
+        if len(v) > 0:
+            characters = [m for m in v if m.entity_type == 'character']
+            if len(characters) == 0:
+                raise ValueError("Unit must have at least one character as leader")
+        return v
+
+    @property
+    def location(self) -> UnitLocation:
+        """Construye UnitLocation desde campos legacy + nuevos."""
+        return UnitLocation(
+            system_id=self.location_system_id,
+            ring=self.ring,
+            planet_id=self.location_planet_id,
+            sector_id=self.location_sector_id,
+            starlane_id=self.starlane_id,
+            is_in_transit=self.status == UnitStatus.TRANSIT,
+            transit_origin_system_id=self.transit_origin_system_id,
+            transit_destination_system_id=self.transit_destination_system_id
+        )
+
+    @property
+    def ship_count(self) -> int:
+        """Cuenta naves asignadas a la unidad (para cálculo de Warp)."""
+        # TODO: Implementar cuando se añadan naves a unidades
+        return 1
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'UnitSchema':
-        # Los miembros suelen cargarse con join, aquí asumimos estructura básica
+        # Convertir ring de int a enum si viene de DB
+        if 'ring' in data and isinstance(data['ring'], int):
+            data['ring'] = LocationRing(data['ring'])
         return cls(**data)

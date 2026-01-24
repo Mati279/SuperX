@@ -1,4 +1,5 @@
 # core/time_engine.py (Completo)
+# V10.0: Añadidas fases 1.5 (Llegadas de Tránsito) y 2.5 (Detección de Encuentros)
 from datetime import datetime, time
 import pytz
 import random
@@ -38,6 +39,11 @@ from core.prestige_engine import (
     calculate_friction,
     apply_prestige_changes
 )
+
+# IMPORT V10.0: Motores de Movimiento y Detección
+from core.movement_engine import process_transit_arrivals
+from core.detection_engine import process_detection_phase
+from data.unit_repository import reset_all_movement_locks
 
 # Forzamos la zona horaria a Argentina (GMT-3)
 SAFE_TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
@@ -141,8 +147,14 @@ def _execute_game_logic_tick(execution_time: datetime):
         # 1. Fase de Decremento (Countdowns y Persistencia)
         _phase_decrement_and_persistence()
 
+        # 1.5 V10.0: Fase de Llegadas de Tránsito (Movimiento)
+        _phase_movement_arrivals(current_tick)
+
         # 2. Resolución de Simultaneidad (Conflictos en el mismo Tick)
         _phase_concurrency_resolution()
+
+        # 2.5 V10.0: Fase de Detección de Encuentros
+        _phase_detection_encounters(current_tick)
 
         # 3. Fase de Prestigio (Fricción V4.3 y Hegemonía)
         _phase_prestige_calculation(current_tick)
@@ -225,6 +237,66 @@ def _phase_decrement_and_persistence():
 
     except Exception as e:
         logger.error(f"Error en fase de decremento: {e}")
+
+
+def _phase_movement_arrivals(current_tick: int):
+    """
+    V10.0: Fase 1.5 - Procesa llegadas de unidades en tránsito.
+    Ejecutado después de decrementos y antes de resolución de simultaneidad.
+    """
+    log_event("running phase 1.5: Llegadas de Tránsito...")
+
+    try:
+        # Resetear bloqueos de movimiento del tick anterior
+        unlocked = reset_all_movement_locks()
+        if unlocked > 0:
+            log_event(f"🔓 {unlocked} unidades desbloqueadas para movimiento")
+
+        # Procesar llegadas
+        arrivals = process_transit_arrivals(current_tick)
+
+        if arrivals:
+            log_event(f"🚀 {len(arrivals)} unidades han completado su tránsito")
+            for arrival in arrivals:
+                log_event(
+                    f"✅ '{arrival['unit_name']}' llegó a {arrival['destination']}",
+                    arrival['player_id']
+                )
+
+    except Exception as e:
+        logger.error(f"Error en fase de movimiento: {e}")
+        log_event(f"❌ Error procesando llegadas de tránsito: {e}", is_error=True)
+
+
+def _phase_detection_encounters(current_tick: int):
+    """
+    V10.0: Fase 2.5 - Procesa detecciones automáticas entre unidades.
+    Ejecutado después de resolución de simultaneidad y antes de prestigio.
+    """
+    log_event("running phase 2.5: Detección de Encuentros...")
+
+    try:
+        detections = process_detection_phase(current_tick)
+
+        # Contar detecciones exitosas
+        successful = sum(1 for d in detections if d.detected)
+
+        if successful > 0:
+            log_event(f"👁️ {successful} detecciones exitosas registradas")
+
+        # Notificar encuentros significativos (donde se puede interdecir)
+        interdiction_opportunities = [d for d in detections if d.can_interdict]
+        if interdiction_opportunities:
+            for det in interdiction_opportunities:
+                log_event(
+                    f"⚡ Oportunidad de interdicción detectada",
+                    det.detector_player_id
+                )
+
+    except Exception as e:
+        logger.error(f"Error en fase de detección: {e}")
+        log_event(f"❌ Error procesando detecciones: {e}", is_error=True)
+
 
 def _phase_concurrency_resolution():
     """Fase 2: Procesamiento de la Cola de Acciones y Conflictos."""
