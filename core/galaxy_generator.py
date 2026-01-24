@@ -59,6 +59,19 @@ class GalaxyGenerator:
 
         self.galaxy.systems = systems
         self._generate_starlanes() # Ahora este método existe
+        
+        # --- FASE FINAL: Cálculo de Seguridad de Sistema (Promedio) ---
+        # Se debe ejecutar después de generar todos los planetas y sus estadísticas
+        for sys_obj in self.galaxy.systems:
+            total_security = sum(p.security for p in sys_obj.planets)
+            planet_count = len(sys_obj.planets)
+            
+            # Promedio simple, inclusivo (cuenta planetas con seguridad 0)
+            if planet_count > 0:
+                sys_obj.security = round(total_security / planet_count, 2)
+            else:
+                sys_obj.security = 0.0
+
         return self.galaxy
 
     def _generate_random_star(self) -> Star:
