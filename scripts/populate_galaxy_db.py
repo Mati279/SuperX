@@ -51,7 +51,7 @@ def populate_galaxy():
             "y": sys_obj.y,
             "star_type": sys_obj.star.class_type,
             "description": sys_obj.description or "Sistema inexplorado",
-            "controlling_faction_id": sys_obj.controlling_faction_id
+            "controlling_player_id": sys_obj.controlling_player_id
         })
     
     if systems_data:

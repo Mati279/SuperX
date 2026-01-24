@@ -45,7 +45,7 @@ import random
 import traceback # Importado para debug crítico
 from .database import get_supabase
 from .log_repository import log_event
-from .world_repository import get_world_state
+from .world_repository import get_world_state, update_system_controller
 from core.world_constants import (
     BUILDING_TYPES, 
     BASE_TIER_COSTS, 
@@ -596,20 +596,29 @@ def get_planet_buildings(planet_asset_id: int) -> List[Dict[str, Any]]:
 def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int] = None):
     """
     Recalcula y actualiza la soberanía de superficie y orbital basada en edificios y flotas.
-    
+
     Reglas V6.4 (Prioridad Orbital):
     1. Dueño de 'orbital_station' activa.
     2. Si no hay estación, 'enemy_fleet_owner_id' (ocupación por flota).
     3. Si no hay estación ni flota enemiga, 'surface_owner_id' (herencia).
+
+    V9.0: Al final, recalcula automáticamente el controlador del sistema (cascada).
     """
     try:
         db = _get_db()
-        
+
+        # 0. Obtener system_id para recalcular control de sistema al final
+        planet_info_res = db.table("planets").select("system_id").eq("id", planet_id).single().execute()
+        system_id = planet_info_res.data.get("system_id") if planet_info_res and planet_info_res.data else None
+
         # 1. Obtener todos los edificios del planeta
         assets_res = db.table("planet_assets").select("id, player_id").eq("planet_id", planet_id).execute()
         if not assets_res or not assets_res.data:
             # Nadie en el planeta
             db.table("planets").update({"surface_owner_id": None, "orbital_owner_id": enemy_fleet_owner_id}).eq("id", planet_id).execute()
+            # V9.0: Recalcular control del sistema en cascada
+            if system_id:
+                recalculate_system_ownership(system_id)
             return
 
         assets = assets_res.data
@@ -621,7 +630,7 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
             .select("building_type, planet_asset_id, is_active")\
             .in_("planet_asset_id", asset_ids)\
             .execute()
-        
+
         buildings = buildings_res.data if buildings_res and buildings_res.data else []
 
         hq_owner = None
@@ -632,9 +641,9 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
             b_type = b.get("building_type")
             pid = player_map.get(b.get("planet_asset_id"))
             is_active = b.get("is_active", True)
-            
+
             if b_type == "hq":
-                hq_owner = pid 
+                hq_owner = pid
             elif b_type == "outpost":
                 outpost_owners.add(pid)
             elif b_type == "orbital_station" and is_active:
@@ -652,11 +661,11 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
         # Lógica de Soberanía Orbital (V6.4)
         new_orbital_owner = None
         if orbital_station_owner:
-            new_orbital_owner = orbital_station_owner # Prioridad 1
+            new_orbital_owner = orbital_station_owner  # Prioridad 1
         elif enemy_fleet_owner_id:
-            new_orbital_owner = enemy_fleet_owner_id # Prioridad 2
+            new_orbital_owner = enemy_fleet_owner_id  # Prioridad 2
         else:
-            new_orbital_owner = new_surface_owner # Prioridad 3 (Herencia)
+            new_orbital_owner = new_surface_owner  # Prioridad 3 (Herencia)
 
         # Actualizar Planeta
         db.table("planets").update({
@@ -665,6 +674,10 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
             # Disputa de superficie si hay HQs rivales (improbable) o multiples outposts
             "is_disputed": (hq_owner is None and len(outpost_owners) > 1)
         }).eq("id", planet_id).execute()
+
+        # V9.0: Recalcular control del sistema en cascada
+        if system_id:
+            recalculate_system_ownership(system_id)
 
     except Exception as e:
         log_event(f"Error actualizando soberanía planet {planet_id}: {e}", is_error=True)
@@ -938,28 +951,87 @@ def update_planet_asset(planet_asset_id: int, updates: Dict[str, Any]) -> bool:
         log_event(f"Error actualizando activo {planet_asset_id}: {e}", is_error=True)
         return False
 
-# --- V4.3: CONTROL DEL SISTEMA ESTELAR ---
+# --- V9.0: CONTROL DEL SISTEMA ESTELAR (Basado en Jugadores) ---
 
-def check_system_majority_control(system_id: int, faction_id: int) -> bool:
-    """Verifica si una facción tiene 'Control de Sistema'."""
+def recalculate_system_ownership(system_id: int) -> Optional[int]:
+    """
+    Recalcula y actualiza el controlador de un sistema basado en mayoría de planetas.
+
+    V9.0: Migración de Facciones a Jugadores.
+
+    Lógica:
+    1. Obtiene todos los planetas del sistema.
+    2. Cuenta cuántos planetas tiene cada surface_owner_id (ignora None).
+    3. Si un player_id posee > 50% de los planetas, es el nuevo controlador.
+    4. Si nadie cumple la condición, el controlador es None (Neutral/Disputado).
+    5. Actualiza la columna controlling_player_id en la tabla systems.
+
+    Returns:
+        El player_id del nuevo controlador o None si es neutral/disputado.
+    """
     try:
         db = _get_db()
-        
+
+        # 1. Obtener todos los planetas del sistema
+        planets_res = db.table("planets").select("id, surface_owner_id").eq("system_id", system_id).execute()
+        planets = planets_res.data if planets_res and planets_res.data else []
+
+        total_planets = len(planets)
+
+        # Si no hay planetas, el sistema es neutral
+        if total_planets == 0:
+            update_system_controller(system_id, None)
+            return None
+
+        # 2. Contar planetas por propietario (ignorando None)
+        owner_counts: Dict[int, int] = {}
+        for planet in planets:
+            owner_id = planet.get("surface_owner_id")
+            if owner_id is not None:
+                owner_counts[owner_id] = owner_counts.get(owner_id, 0) + 1
+
+        # 3. Determinar si alguien tiene mayoría (> 50%)
+        new_controller_id: Optional[int] = None
+        majority_threshold = total_planets / 2.0
+
+        for player_id, count in owner_counts.items():
+            if count > majority_threshold:
+                new_controller_id = player_id
+                break
+
+        # 4. Actualizar el controlador del sistema
+        update_system_controller(system_id, new_controller_id)
+
+        return new_controller_id
+
+    except Exception as e:
+        log_event(f"Error recalculando propiedad del sistema {system_id}: {e}", is_error=True)
+        return None
+
+
+def check_system_majority_control(system_id: int, player_id: int) -> bool:
+    """
+    Verifica si un jugador tiene 'Control de Sistema' (> 50% de planetas).
+    LEGACY: Usar recalculate_system_ownership para actualizar la DB automáticamente.
+    """
+    try:
+        db = _get_db()
+
         all_planets_res = db.table("planets").select("id").eq("system_id", system_id).execute()
         all_planets = all_planets_res.data if all_planets_res and all_planets_res.data else []
         total_planets = len(all_planets)
-        
+
         if total_planets == 0:
             return False
-            
+
         my_planets_res = db.table("planets").select("id")\
             .eq("system_id", system_id)\
-            .eq("surface_owner_id", faction_id)\
+            .eq("surface_owner_id", player_id)\
             .execute()
-            
+
         my_count = len(my_planets_res.data) if my_planets_res and my_planets_res.data else 0
         has_majority = my_count > (total_planets / 2.0)
-        
+
         return has_majority
 
     except Exception as e:

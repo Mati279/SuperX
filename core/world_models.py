@@ -145,7 +145,7 @@ class System:
     planets: List[Planet] = field(default_factory=list)
     neighbors: List[int] = field(default_factory=list)
     description: str = ""
-    controlling_faction_id: Optional[int] = None
+    controlling_player_id: Optional[int] = None
 
     # V8.0: Sectores Estelares para megaestructuras
     sectors: List[Sector] = field(default_factory=list)

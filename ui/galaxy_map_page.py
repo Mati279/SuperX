@@ -53,20 +53,18 @@ BIOME_COLORS = {
 }
 
 
-# --- Helpers de Facciones y Controladores ---
-@st.cache_data(ttl=600)
-def _get_faction_map():
-    """Cache simple para nombres de facciones."""
-    try:
-        factions = get_supabase().table("factions").select("id, name").execute().data
-        return {f['id']: f['name'] for f in factions}
-    except:
-        return {}
+# --- Helpers de Controladores (V9.0: Solo Jugadores) ---
+from typing import Optional
 
-def _get_player_name_by_id(player_id):
-    """Intenta resolver el nombre de un jugador si no es una facción."""
+
+def _get_player_name_by_id(player_id: Optional[int]) -> str:
+    """
+    Resuelve el nombre de un jugador por su ID.
+    V9.0: Busca en characters (nombre de personaje) o retorna un fallback genérico.
+    """
+    if player_id is None:
+        return "Neutral"
     try:
-        # Intentamos buscar en characters primero (nombre de rol) o users
         res = get_supabase().table("characters").select("name").eq("player_id", player_id).limit(1).maybe_single().execute()
         if res and res.data:
             return res.data['name']
@@ -74,19 +72,14 @@ def _get_player_name_by_id(player_id):
     except:
         return "Desconocido"
 
-def _resolve_controller_name(controller_id):
+
+def _resolve_controller_name(controller_id: Optional[int]) -> str:
     """
-    Resuelve el nombre del controlador (Facción o Jugador).
-    Prioriza Facciones. Si no existe en facciones, asume que es un Jugador (Debug/Soberanía individual).
+    Resuelve el nombre del controlador de un sistema o planeta.
+    V9.0: Migración completa a Jugadores (eliminación del concepto de Facciones).
     """
-    if controller_id is None: return "Neutral"
-    
-    # 1. Intentar resolver como Facción
-    f_map = _get_faction_map()
-    if controller_id in f_map:
-        return f_map[controller_id]
-    
-    # 2. Si no es facción, intentar resolver como Jugador (Fallback para Debug/Independientes)
+    if controller_id is None:
+        return "Neutral"
     return _get_player_name_by_id(controller_id)
 
 
@@ -199,7 +192,7 @@ def _render_debug_control_button(system_id: int, system: dict, player):
     """
     st.markdown("#### 🔧 Debug: Control de Sistema")
 
-    current_controller_id = system.get('controlling_faction_id')
+    current_controller_id = system.get('controlling_player_id')
     current_name = _resolve_controller_name(current_controller_id)
     st.caption(f"Controlador actual: {current_name} (ID: {current_controller_id})")
 
@@ -350,7 +343,7 @@ def _render_system_view():
     player = get_player()
 
     # --- VISUALIZACIÓN DEL CONTROLADOR ---
-    ctl_id = system.get('controlling_faction_id')
+    ctl_id = system.get('controlling_player_id')
     ctl_name = _resolve_controller_name(ctl_id) # V8.1: Resolver nombre genérico
     st.subheader(f"Controlador del Sistema: :blue[{ctl_name}]")
     
@@ -732,7 +725,7 @@ def _render_interactive_galaxy_map():
                 st.write(f"**Seguridad (Ss):** {sys_ss:.1f}/100")
                 
                 # Mostrar Controlador en preview
-                p_ctl_id = preview_sys.get('controlling_faction_id')
+                p_ctl_id = preview_sys.get('controlling_player_id')
                 p_ctl_name = _resolve_controller_name(p_ctl_id) # V8.1: Generic resolve
                 st.write(f"**Controlador:** {p_ctl_name}")
 

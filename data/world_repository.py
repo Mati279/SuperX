@@ -284,21 +284,18 @@ def get_starlanes_from_db() -> List[Dict[str, Any]]:
 
 def update_system_controller(system_id: int, controller_id: Optional[int]) -> bool:
     """
-    Actualiza la entidad (Facción o Jugador) que controla el sistema en la base de datos.
+    Actualiza el jugador que controla el sistema en la base de datos.
     Se usa para marcar el dominio > 50% de los planetas o para asignaciones Debug.
-    
-    Nota V8.1: 'controller_id' puede ser un faction_id o un player_id, dependiendo
-    de si la DB tiene la constraint FK deshabilitada.
+
+    Actualizado V9.0: Migración completa a controlling_player_id (eliminación de Facciones).
     """
     try:
-        # Se usa 'controlling_faction_id' por legado, pero puede contener player_id
-        # si se ha removido la FK constraint.
         response = _get_db().table("systems").update({
-            "controlling_faction_id": controller_id
+            "controlling_player_id": controller_id
         }).eq("id", system_id).execute()
-        
+
         if response:
-            status = f"Entidad {controller_id}" if controller_id else "Neutral/Disputado"
+            status = f"Jugador {controller_id}" if controller_id else "Neutral/Disputado"
             log_event(f"Control del Sistema {system_id} actualizado a: {status}", event_type="GALAXY_CONTROL")
             return True
         return False

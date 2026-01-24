@@ -1,7 +1,7 @@
 -- db_update_stellar_sectors.sql
 -- V8.0: Soporte para Sectores Estelares (Megaestructuras a nivel de sistema)
 --
--- NOTA: El "dueño" de un sector estelar se infiere de systems.controlling_faction_id
+-- NOTA: El "dueño" de un sector estelar se infiere de systems.controlling_player_id
 -- Los edificios individuales rastrean su propietario via stellar_buildings.player_id
 
 -- 1. Añadir columna system_id a la tabla sectors
