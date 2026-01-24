@@ -17,17 +17,11 @@ import json
 import math
 import streamlit as st
 import streamlit.components.v1 as components
-from core.world_constants import BUILDING_TYPES, INFRASTRUCTURE_MODULES, ECONOMY_RATES, SECTOR_TYPE_STELLAR
+from core.world_constants import BUILDING_TYPES
 from data.database import get_supabase
 from data.planet_repository import (
-    get_all_player_planets, 
-    build_structure, 
-    get_planet_buildings, 
-    get_base_slots_info,
-    upgrade_base_tier,
-    upgrade_infrastructure_module,
-    demolish_building,
-    get_planet_by_id, 
+    get_all_player_planets,
+    get_planet_by_id,
     get_planet_asset
 )
 from data.world_repository import (
@@ -416,9 +410,11 @@ def show_galaxy_map_page():
         st.rerun()
 
     # Router de Vistas
-    if st.session_state.map_view == "galaxy": _render_interactive_galaxy_map()
-    elif st.session_state.map_view == "system": _render_system_view()
-    elif st.session_state.map_view == "planet": _render_planet_view()
+    if st.session_state.map_view == "galaxy":
+        _render_interactive_galaxy_map()
+    elif st.session_state.map_view == "system":
+        _render_system_view()
+    # Nota: map_view == "planet" eliminado - navegación ahora va a página "Superficie"
 
 
 def _render_player_domains_panel():
@@ -509,15 +505,10 @@ def _render_system_view():
     ctl_name = _resolve_controller_name(ctl_id) # V8.1: Resolver nombre genérico
     st.subheader(f"Controlador del Sistema: :blue[{ctl_name}]")
     
-    col_back, col_metrics = st.columns([4, 3])
-    
-    if col_back.button("← Volver al mapa", type="primary"):
-        _reset_to_galaxy_view()
-    
-    with col_metrics:
-        m1, m2 = st.columns(2)
-        m1.metric("Seguridad (Ss)", f"{ss:.1f}/100", help="Promedio de seguridad del sistema.")
-        m2.metric("Población Total", f"{total_pop:,.1f}B")
+    # Métricas del sistema (navegación por breadcrumb global)
+    m1, m2 = st.columns(2)
+    m1.metric("Seguridad (Ss)", f"{ss:.1f}/100", help="Promedio de seguridad del sistema.")
+    m2.metric("Población Total", f"{total_pop:,.1f}B")
     
     # Mostrar Desglose de Sistema si existe
     sys_breakdown = system.get('security_breakdown')
@@ -584,176 +575,13 @@ def _render_system_view():
             # Botón siempre visible, el detalle interno manejará si se puede ver o no la superficie
             if c3.button("Ver Detalles", key=f"pl_det_{planet['id']}"):
                 st.session_state.selected_planet_id = planet['id']
-                st.session_state.map_view = "planet"
+                st.session_state.current_page = "Superficie"  # Navegar a vista unificada
                 st.rerun()
-
-
-def _render_planet_view():
-    player = get_player()
-    planet_id = st.session_state.selected_planet_id
-    
-    # --- FIX V4.4.1 & V5.1: Consultas seguras y guards contra NoneType ---
-    try:
-        # 1. Planeta (Debe existir, usamos single)
-        planet_res = get_supabase().table("planets").select("*, security, security_breakdown").eq("id", planet_id).single().execute()
-        
-        # Guard Crítico
-        if not planet_res:
-            st.error("Error de comunicación con el servidor central de datos.")
-            if st.button("Reintentar"): st.rerun()
-            if st.button("Volver"): _reset_to_system_view()
-            return
-
-        planet = planet_res.data
-        
-        # 2. Asset (Puede NO existir, usamos maybe_single)
-        asset_res = get_supabase().table("planet_assets")\
-            .select("*")\
-            .eq("planet_id", planet_id)\
-            .eq("player_id", player.id)\
-            .maybe_single()\
-            .execute()
-        
-        # Guard para asset opcional
-        asset = asset_res.data if asset_res else None
-        
-    except Exception as e:
-        st.error(f"Error recuperando datos del planeta: {e}")
-        if st.button("Volver"): _reset_to_system_view()
-        return
-
-    if not planet: 
-        st.error("Planeta no encontrado en la base de datos.")
-        if st.button("Regresar"): _reset_to_system_view()
-        return
-
-    st.header(f"Planeta: {planet['name']}")
-    
-    # --- VISUALIZACIÓN DE SOBERANÍA ---
-    s_owner = _resolve_controller_name(planet.get('surface_owner_id'))
-    o_owner = _resolve_controller_name(planet.get('orbital_owner_id'))
-    
-    # Actualización de etiquetas a 'Controlador' (V7.9.0)
-    st.markdown(f"**Controlador planetario:** :orange[{s_owner}] | **Controlador de la órbita:** :cyan[{o_owner}]")
-    
-    if st.button("← Volver al Sistema"):
-        _reset_to_system_view()
-
-    # DATOS MÉTRICOS (MMFR V2)
-    m1, m2, m3 = st.columns(3)
-    
-    # Refactor V5.8: Solo population
-    real_pop = planet.get('population', 0.0) or 0.0
-    security_val = planet.get('security', 0.0)
-    if security_val is None: security_val = 0.0
-
-    if asset:
-        asset_pop = asset.get('population', 0.0) or 0.0
-        m1.metric("Población (Ciudadanos)", f"{asset_pop:,.1f}B")
-        
-        delta_color = "normal" if security_val >= 50 else "inverse" 
-        m2.metric("Seguridad (Sp)", f"{security_val:.1f}/100", delta_color=delta_color)
-        
-        tier = asset.get('base_tier', 1)
-        m3.metric("Nivel de Base", f"Tier {tier}")
-    else:
-        m1.metric("Población (Nativa/Neutral)", f"{real_pop:,.1f}B")
-        m2.metric("Seguridad Global", f"{security_val:.1f}/100")
-        
-        # Feedback de Omnisciencia
-        if st.session_state.get("debug_omniscience", False):
-            m3.write("🕵️ Modo Omnisciencia")
-        else:
-            m3.write("No colonizado por ti")
-        
-    # Mostrar Desglose (Si hay asset, ya se muestra abajo, sino aqui)
-    # Si estamos en debug o hay desglose, lo mostramos
-    if not asset and planet.get('security_breakdown'):
-        bd = planet.get('security_breakdown')
-        if isinstance(bd, dict) and "text" in bd:
-             st.caption(f"Cálculo: {bd['text']}")
-
-    st.markdown("---")
-    if asset: 
-        _render_construction_ui(player, planet, asset)
-    elif st.session_state.get("debug_omniscience", False):
-         st.info("ℹ️ Para ver y gestionar la superficie en Modo Omnisciencia, utiliza la herramienta de Superficie (ui/planet_surface_view). Esta vista es el resumen cartográfico.")
-
-
-def _render_construction_ui(player, planet, planet_asset):
-    st.markdown("### 🏯 Gestión de Colonia")
-    
-    # 📡 INFRAESTRUCTURA DE SEGURIDAD
-    st.markdown("#### 📡 Infraestructura de Seguridad")
-    st.caption("Aumenta la **Seguridad (Sp)** para mejorar la eficiencia fiscal y protegerte de ataques.")
-    
-    # Mostrar desglose específico aquí
-    bd = planet.get('security_breakdown')
-    if bd and isinstance(bd, dict) and "text" in bd:
-        st.info(f"📊 Desglose Actual: {bd['text']}")
-    
-    mod_cols = st.columns(2)
-    modules = ["sensor_ground", "sensor_orbital", "defense_aa", "defense_ground"]
-    
-    for idx, mod_key in enumerate(modules):
-        col = mod_cols[idx % 2]
-        mod_def = INFRASTRUCTURE_MODULES.get(mod_key, {})
-        lvl = planet_asset.get(f"module_{mod_key}", 0)
-        with col.container(border=True):
-            c1, c2 = st.columns([3, 1])
-            c1.write(f"**{mod_def['name']}** (Lvl {lvl})")
-            c1.caption(mod_def.get('desc', ''))
-            if c2.button("✚", key=f"up_{mod_key}"):
-                res = upgrade_infrastructure_module(planet_asset['id'], mod_key, player.id)
-                if res == "OK": st.rerun()
-                else: st.error(res)
-
-    st.markdown("---")
-
-    # 🏗️ EDIFICIOS (SLOTS)
-    slots = get_base_slots_info(planet_asset['id'])
-    st.markdown(f"#### 🏗️ Distrito Industrial ({slots['used']}/{slots['total']} Slots)")
-    st.progress(slots['used'] / slots['total'] if slots['total'] > 0 else 0)
-    
-    buildings = get_planet_buildings(planet_asset['id'])
-    for b in buildings:
-        b_def = BUILDING_TYPES.get(b['building_type'], {})
-        
-        status_icon = "✅" if b['is_active'] else "🛑"
-        status_text = "Operativo" if b['is_active'] else "DETENIDO (Sin recursos)"
-        
-        with st.container(border=True):
-            c1, c2 = st.columns([4, 1])
-            c1.write(f"**{b_def['name']}** | {status_icon} {status_text}")
-            
-            maint = b_def.get('maintenance', {})
-            maint_str = ", ".join([f"{v} {k.capitalize()}" for k, v in maint.items()])
-            c1.caption(f"Mantenimiento: {maint_str}")
-            
-            if c2.button("🗑️", key=f"dem_{b['id']}"):
-                if demolish_building(b['id'], player.id): st.rerun()
-
-    if slots['free'] > 0:
-        with st.expander("Proyectar nuevo edificio"):
-            selected = st.selectbox("Tipo", list(BUILDING_TYPES.keys()), format_func=lambda x: BUILDING_TYPES[x]['name'])
-            b_def = BUILDING_TYPES[selected]
-            st.write(b_def['description'])
-            
-            maint = b_def.get('maintenance', {})
-            if maint:
-                st.info(f"Requiere mantenimiento: {', '.join([f'{v} {k}' for k, v in maint.items()])}")
-            
-            if st.button(f"Construir {b_def['name']}"):
-                if build_structure(planet_asset['id'], player.id, selected): st.rerun()
 
 
 # FUNCIONES DE NAVEGACIÓN
 def _reset_to_galaxy_view():
     st.session_state.map_view = "galaxy"
-    st.rerun()
-
-def _reset_to_system_view():
-    st.session_state.map_view = "system"
     st.rerun()
 
 # --- UTILS MAPA ---

@@ -77,20 +77,17 @@ def render_planet_surface(planet_id: int):
     
     if not planet:
         st.error("Datos del planeta no encontrados.")
-        if st.button("⬅ Volver al Mapa"):
+        if st.button("🌌 Volver a la Galaxia"):
             st.session_state.map_view = "galaxy"
+            st.session_state.selected_planet_id = None
+            st.session_state.current_page = "Mapa de la Galaxia"
             st.rerun()
         return
 
     asset = get_planet_asset(planet_id, player_id)
 
-    # --- Navegación ---
-    if st.button("⬅ Volver al Sistema"):
-        # Actualizamos el contexto del sistema para asegurar el retorno correcto
-        st.session_state.selected_system = planet['system_id']
-        st.session_state.map_view = "system"
-        st.rerun()
-    
+    # Navegación manejada por breadcrumbs globales en main_game_page.py
+
     # Validar modo Omnisciencia (Debug)
     debug_mode = st.session_state.get("debug_omniscience", False)
 

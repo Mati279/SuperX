@@ -9,7 +9,8 @@ from services.character_generation_service import generate_character_pool
 
 # --- Imports para STRT ---
 from core.time_engine import get_world_status_display, check_and_trigger_tick, debug_force_tick
-from data.world_repository import get_commander_location_display
+from data.world_repository import get_commander_location_display, get_system_by_id
+from data.planet_repository import get_planet_by_id
 from data.player_repository import get_player_finances, delete_player_account, add_player_credits, reset_player_progress
 
 # --- Imports para Economía ---
@@ -78,7 +79,8 @@ def render_main_game_page(cookie_manager):
     
     with st.container():
         st.write("") # Espaciador
-        st.write("") 
+        st.write("")
+        _render_breadcrumbs()  # Navegación por breadcrumbs
         render_func = PAGES.get(st.session_state.current_page, _render_war_room_page)
         render_func()
 
@@ -200,6 +202,83 @@ def _render_sticky_top_hud(player, commander):
     <div style="height: 60px;"></div>
     """
     st.markdown(hud_css + hud_html, unsafe_allow_html=True)
+
+
+def _render_breadcrumbs():
+    """Renderiza navegación contextual tipo breadcrumb debajo del HUD."""
+    current_page = st.session_state.get('current_page', 'Puente de Mando')
+
+    # Solo mostrar en páginas de navegación espacial
+    if current_page not in ['Mapa de la Galaxia', 'Superficie']:
+        return
+
+    system_id = st.session_state.get('selected_system_id')
+    planet_id = st.session_state.get('selected_planet_id')
+    map_view = st.session_state.get('map_view', 'galaxy')
+
+    # Resolver nombres
+    system_name = None
+    planet_name = None
+
+    if system_id:
+        sys_data = get_system_by_id(system_id)
+        system_name = sys_data.get('name') if sys_data else f'Sistema {system_id}'
+
+    if planet_id:
+        pl_data = get_planet_by_id(planet_id)
+        planet_name = pl_data.get('name') if pl_data else f'Planeta {planet_id}'
+
+    # Determinar profundidad actual
+    if current_page == 'Superficie':
+        depth = 'planet'
+    elif map_view == 'system':
+        depth = 'system'
+    else:
+        depth = 'galaxy'
+
+    # CSS minimalista
+    st.markdown("""
+    <style>
+    .breadcrumb-nav {
+        padding: 8px 0;
+        margin-bottom: 10px;
+        border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Construir UI con columnas
+    cols = st.columns([1, 0.2, 1, 0.2, 1, 3])
+
+    with cols[0]:
+        if depth != 'galaxy':
+            if st.button("🌌 Galaxia", key="bc_galaxy", use_container_width=True):
+                st.session_state.map_view = 'galaxy'
+                st.session_state.selected_system_id = None
+                st.session_state.selected_planet_id = None
+                st.session_state.current_page = 'Mapa de la Galaxia'
+                st.rerun()
+        else:
+            st.markdown("**🌌 Galaxia**")
+
+    if system_name and depth in ['system', 'planet']:
+        with cols[1]:
+            st.markdown("<span style='color:#666;'>›</span>", unsafe_allow_html=True)
+        with cols[2]:
+            if depth == 'planet':
+                if st.button(f"☀ {system_name}", key="bc_system", use_container_width=True):
+                    st.session_state.map_view = 'system'
+                    st.session_state.selected_planet_id = None
+                    st.session_state.current_page = 'Mapa de la Galaxia'
+                    st.rerun()
+            else:
+                st.markdown(f"**☀ {system_name}**")
+
+    if planet_name and depth == 'planet':
+        with cols[3]:
+            st.markdown("<span style='color:#666;'>›</span>", unsafe_allow_html=True)
+        with cols[4]:
+            st.markdown(f"**🪐 {planet_name}**")
 
 
 def _render_navigation_sidebar(player, commander, cookie_manager):

@@ -41,7 +41,12 @@ def initialize_session_state() -> None:
         'is_registering': False,
         'registration_step': 0,
         'temp_player': None,
-        'temp_char_bio': {}
+        'temp_char_bio': {},
+        # --- Navegación Espacial ---
+        'navigation_depth': 'galaxy',  # 'galaxy', 'system', 'planet'
+        'selected_system_id': None,
+        'selected_planet_id': None,
+        'map_view': 'galaxy'
     }
 
     for key, default_value in defaults.items():
