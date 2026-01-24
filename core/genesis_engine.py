@@ -14,6 +14,7 @@ Actualizado V7.3: Garantía de Inicialización de Sectores y Asignación de Dist
 Actualizado V7.4: Construcción automática de Comando Central (HQ) en sector urbano inicial.
                   Fix claim_genesis_sector: Eliminadas columnas inexistentes (owner_id, has_outpost).
                   Recuperación de planet_asset_id para vinculación correcta de edificios.
+Actualizado V7.5: Fix Soberanía Inicial (Sincronización Orbital en Creación).
 """
 
 import random
@@ -26,7 +27,8 @@ from data.planet_repository import (
     grant_sector_knowledge,
     initialize_planet_sectors,
     claim_genesis_sector,
-    add_initial_building
+    add_initial_building,
+    update_planet_sovereignty # Importado V7.5
 )
 from core.world_constants import STAR_TYPES, ECONOMY_RATES, HABITABLE_BIRTH_BIOMES, SECTOR_TYPE_URBAN
 from core.constants import MIN_ATTRIBUTE_VALUE
@@ -164,8 +166,10 @@ def genesis_protocol(player_id: int) -> bool:
         # FIX V6.0: Separación de updates para evitar race condition con triggers DB
         
         # Paso 1: Asignar Población y Dueño (Trigger puede dispararse aquí)
+        # V7.5: Asignación explícita de orbital_owner_id = player_id para evitar penalización económica inicial
         db.table("planets").update({
             "surface_owner_id": player_id,
+            "orbital_owner_id": player_id, # FIX CRÍTICO: Soberanía completa inicial
             "population": initial_pop
         }).eq("id", target_planet['id']).execute()
         

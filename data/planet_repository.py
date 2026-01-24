@@ -1,5 +1,33 @@
 # data/planet_repository.py (Completo)
-
+"""
+Repositorio de Planetas y Edificios.
+Gestiona activos planetarios, edificios, recursos y mejoras de base.
+Refactorizado para MMFR V2: Seguridad dinámica (0-100) y Mantenimiento.
+Actualizado v4.3.0: Integración completa de Planetología Avanzada (Sectores).
+Actualizado v4.4.0: Persistencia de Seguridad Galáctica.
+Corrección v4.4.1: Consultas seguras (maybe_single) para assets opcionales.
+Actualizado v4.7.0: Estandarización de Capitales (Población Inicial).
+Actualizado v4.8.1: Eliminación definitiva de 'security_breakdown' para sincronización con DB.
+Refactorizado v5.3: Limpieza de redundancia 'slots' en Planeta.
+Corrección v5.4: Protecciones robustas contra respuestas 'NoneType' de Supabase.
+Corrección v5.5: Persistencia de 'poblacion' en tabla global 'planets'.
+Corrección v5.6: Join con tabla 'planets' para obtener seguridad real.
+Refactor v5.7: Estandarización de nomenclatura 'population' (Fix poblacion).
+Refactor v5.8: Limpieza integral de consultas y campos expandidos.
+Corrección v5.9: Fix columna 'sector_type' en tabla sectors.
+Refactor v6.0: Eliminación de columna redundante 'buildings_count' en sectors (Cálculo dinámico).
+Corrección v6.1: Fix crítico de tipos en seguridad (soporte Dict/Float) y persistencia de breakdown.
+Corrección v6.2: Mapeo explícito de 'population' en assets para el motor económico.
+Actualizado v6.3: Implementación de Soberanía Dinámica y Control de Construcción (Slots/Bloqueos).
+Actualizado v7.2: Soporte para Niebla de Superficie (grant_sector_knowledge).
+Actualizado v7.3: Inicialización garantizada de Sectores Urbanos para Protocolo Génesis.
+Actualizado v7.4: Nueva función add_initial_building() para edificio inicial en Génesis.
+                  Fix claim_genesis_sector: Eliminadas columnas inexistentes (owner_id, has_outpost).
+                  initialize_planet_sectors ahora retorna List[Dict] con sectores creados/existentes.
+Actualizado v7.4.1: Fix de integridad en initialize_planet_sectors para inyectar sector Urbano si falta.
+Actualizado v7.5.0: Implementación de Sector Orbital y Lógica de Soberanía Espacial (V6.4 Specs).
+Actualizado v7.5.1: Fix Soberanía Inicial (Sincronización Orbital en Creación).
+"""
 
 from typing import Dict, List, Any, Optional, Tuple
 import random 
@@ -234,9 +262,10 @@ def create_planet_asset(
                 sec_breakdown = initial_security
             
             # Sincronizar tabla PLANETS con desglose explícito
-            # V6.3: Se actualiza surface_owner_id aquí inicialmente, pero update_planet_sovereignty lo confirmará luego
+            # V7.5.1: Asignar orbital_owner_id = player_id para evitar bloqueo inicial
             db.table("planets").update({
                 "surface_owner_id": player_id,
+                "orbital_owner_id": player_id, # FIX CRÍTICO DE SOBERANÍA
                 "security": sec_value,
                 "security_breakdown": sec_breakdown,
                 "population": initial_population
@@ -534,7 +563,7 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
         elif enemy_fleet_owner_id:
             new_orbital_owner = enemy_fleet_owner_id # Prioridad 2
         else:
-            new_orbital_owner = new_surface_owner # Prioridad 3
+            new_orbital_owner = new_surface_owner # Prioridad 3 (Herencia)
 
         # Actualizar Planeta
         db.table("planets").update({
@@ -985,7 +1014,10 @@ def add_initial_building(
                 f"construido en sector {sector_id} para jugador {player_id}",
                 player_id
             )
-            # V6.4: Asegurar soberanía tras genesis
+            
+            # --- V7.5.1: Asegurar Sincronización de Soberanía ---
+            # Aunque create_planet_asset ya asignó los dueños, esto recalcula basado en el edificio real (HQ)
+            # garantizando integridad total.
             asset = get_planet_asset_by_id(planet_asset_id)
             if asset:
                  update_planet_sovereignty(asset["planet_id"])
