@@ -6,7 +6,8 @@ from .world_models import Galaxy, System, Star, Planet, Sector
 from .world_constants import (
     STAR_TYPES, STAR_RARITY_WEIGHTS, PLANET_BIOMES,
     PLANET_MASS_CLASSES, ORBITAL_ZONE_WEIGHTS,
-    SECTOR_TYPE_URBAN, SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN, SECTOR_TYPE_INHOSPITABLE,
+    SECTOR_TYPE_URBAN, SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN, 
+    SECTOR_TYPE_INHOSPITABLE, SECTOR_TYPE_ORBITAL,
     SECTOR_SLOTS_CONFIG, SECTOR_NAMES_BY_CATEGORY, LUXURY_RESOURCES_BY_CATEGORY,
     RESOURCE_PROB_HIGH, RESOURCE_PROB_MEDIUM, RESOURCE_PROB_LOW, RESOURCE_PROB_NONE,
     EMPTY_SYSTEMS_COUNT, WILD_POPULATION_CHANCE, POP_RANGE,
@@ -228,6 +229,7 @@ class GalaxyGenerator:
         Genera los sectores validando habitabilidad y recursos.
         Refactor V6.0: Instancia TODOS los sectores teóricos (planet.max_sectors).
         Los sectores no habitables se generan como inhóspitos (slots=0).
+        Refactor V6.4: Agrega obligatoriamente un Sector Orbital.
         
         Args:
             planet: Objeto planeta.
@@ -320,6 +322,21 @@ class GalaxyGenerator:
                 buildings=[],
                 is_known=is_known_flag
             ))
+
+        # --- FASE ORBITAL (V6.4) ---
+        # Añadir Sector Orbital Geoestacionario
+        orbital_sector_id = (planet.id * 1000) + 99 # ID reservado para órbita
+        sectors.append(Sector(
+            id=orbital_sector_id,
+            planet_id=planet.id,
+            name="Órbita Geoestacionaria",
+            type=SECTOR_TYPE_ORBITAL,
+            resource_category=None,
+            luxury_resource=None,
+            max_slots=SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_ORBITAL, 1),
+            buildings=[],
+            is_known=True # La órbita siempre es visible
+        ))
                 
         return sectors
 

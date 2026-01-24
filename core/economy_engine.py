@@ -8,6 +8,7 @@ Corrección V5.6: Estandarización de Modelos usando 'core.rules.calculate_plane
 Corrección V5.7: Estandarización de Fórmula Fiscal usando 'core.rules.calculate_fiscal_income'.
 Corrección V5.8: Fix crítico de nomenclatura 'poblacion' a 'population'.
 Actualizado V6.3: Implementación de Restricciones de Soberanía y Bloqueos.
+Actualizado V6.4: Penalización por Bloqueo Orbital Enemigo en Producción Industrial.
 """
 
 from typing import Dict, List, Any, Tuple, Optional
@@ -168,10 +169,11 @@ def process_building_maintenance(
     return result
 
 
-def calculate_planet_production(active_buildings: List[Dict[str, Any]]) -> ProductionSummary:
+def calculate_planet_production(active_buildings: List[Dict[str, Any]], penalty_multiplier: float = 1.0) -> ProductionSummary:
     """
     Calcula producción SOLO de edificios activos y pagados.
     Actualizado v4.2.0: Aplica bono de +15% si está en sector Urbano.
+    Actualizado V6.4: Aplica penalización por bloqueo (penalty_multiplier).
     """
     production = ProductionSummary()
 
@@ -183,6 +185,9 @@ def calculate_planet_production(active_buildings: List[Dict[str, Any]]) -> Produ
         # V4.2.0: Chequear bono de sector
         sector_type = building.get("sector_type")
         multiplier = 1.15 if sector_type == SECTOR_TYPE_URBAN else 1.0
+        
+        # V6.4: Penalización global por bloqueo
+        multiplier *= penalty_multiplier
 
         production.materiales += int(base_prod.get("materiales", 0) * multiplier)
         production.componentes += int(base_prod.get("componentes", 0) * multiplier)
@@ -279,7 +284,7 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             
             systems_to_update_security.add(planet["system_id"])
             
-            # B. Estado de Disputa / Bloqueo y Soberanía (V6.3)
+            # B. Estado de Disputa / Bloqueo y Soberanía (V6.3/V6.4)
             orbital_owner = planet.get("orbital_owner_id")
             surface_owner = planet.get("surface_owner_id")
             is_disputed = planet.get("is_disputed", False)
@@ -292,9 +297,9 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             # (Se asume que la ocupación es total o que el surface owner recauda impuestos)
             is_sovereign = (surface_owner == player_id)
             
-            # Regla de Bloqueo Orbital:
-            # Si hay un dueño orbital diferente al dueño de superficie -> Bloqueo
-            if orbital_owner is not None and orbital_owner != surface_owner:
+            # Regla de Bloqueo Orbital (V6.4):
+            # Si hay un dueño orbital diferente al dueño de superficie (yo) -> Bloqueo
+            if orbital_owner is not None and orbital_owner != player_id:
                 is_blockaded = True
                 
             if is_disputed or is_blockaded:
@@ -332,12 +337,11 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             # La instrucción dice "sus ingresos proyectados y reales para ese planeta sean 0".
             # Asumiremos que aplica a todo output económico.
             if is_sovereign:
-                prod = calculate_planet_production(maint_res.paid_buildings)
+                # V6.4: Aplicar penalización de bloqueo a producción también
+                prod = calculate_planet_production(maint_res.paid_buildings, penalty_multiplier=penalty)
                 result.production = result.production.add(prod)
             else:
                 # Mantenimiento se paga (costo de ocupación fallida?), pero no se produce.
-                # Opcional: Se podría devolver el mantenimiento si se considera "apagado forzoso".
-                # Por ahora, pagas mantenimiento pero no produces (Penalización máxima).
                 pass
 
         # 3. Recursos de Lujo
@@ -417,7 +421,7 @@ def get_player_projected_economy(player_id: int) -> Dict[str, int]:
             
             is_sovereign = (surface_owner == player_id)
 
-            if orbital_owner is not None and orbital_owner != surface_owner:
+            if orbital_owner is not None and orbital_owner != player_id:
                 is_blockaded = True
                 
             if is_disputed or is_blockaded:
@@ -446,7 +450,8 @@ def get_player_projected_economy(player_id: int) -> Dict[str, int]:
             
             # Solo sumar producción si es soberano
             if is_sovereign:
-                prod = calculate_planet_production(active_buildings)
+                # V6.4: Proyectar con penalización
+                prod = calculate_planet_production(active_buildings, penalty_multiplier=penalty)
                 projection["materiales"] += prod.materiales
                 projection["componentes"] += prod.componentes
                 projection["celulas_energia"] += prod.celulas_energia

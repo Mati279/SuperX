@@ -12,6 +12,7 @@ Actualizado v4.8.2: Limpieza de constantes de seguridad obsoletas.
 Actualizado v5.2.0: Definición de Biomas de Nacimiento Habitables.
 Actualizado v5.3.0: Integración de Precios Base para Recursos de Lujo.
 Actualizado v6.3.0: Definición de Puestos de Avanzada, Estaciones Orbitales y Soberanía.
+Actualizado v6.4.0: Implementación de Sector Orbital y Soberanía Espacial.
 """
 from typing import Dict, List
 
@@ -213,15 +214,17 @@ SECTOR_TYPE_URBAN = "Urbano"
 SECTOR_TYPE_PLAIN = "Llanura"
 SECTOR_TYPE_MOUNTAIN = "Montañoso"
 SECTOR_TYPE_INHOSPITABLE = "Inhospito"
+SECTOR_TYPE_ORBITAL = "Orbital" # Nuevo V6.4
 
 VALID_SECTOR_TYPES = [
     SECTOR_TYPE_URBAN,
     SECTOR_TYPE_PLAIN,
     SECTOR_TYPE_MOUNTAIN,
-    SECTOR_TYPE_INHOSPITABLE
+    SECTOR_TYPE_INHOSPITABLE,
+    SECTOR_TYPE_ORBITAL
 ]
 
-# Definición de sectores válidos para Outposts (Todo menos Urbano e Inhóspito)
+# Definición de sectores válidos para Outposts (Todo menos Urbano, Inhóspito y Orbital)
 OUTPOST_ALLOWED_TERRAIN = [SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN] + list(SECTOR_NAMES_BY_CATEGORY.values())
 
 BUILDING_TYPES = {
@@ -258,7 +261,8 @@ BUILDING_TYPES = {
         "pops_required": 20,
         "category": "orbital",
         "is_orbital": True,
-        "consumes_slots": False,
+        "allowed_terrain": [SECTOR_TYPE_ORBITAL], # Restricción V6.4
+        "consumes_slots": True, # V6.4: Consume el slot único orbital
         "production": {"datos": 5}
     },
     "barracks": {
@@ -378,6 +382,7 @@ SECTOR_SLOTS_CONFIG = {
     SECTOR_TYPE_MOUNTAIN: 2,     # Montañoso: 2 slots
     SECTOR_TYPE_URBAN: 2,        # Urbano: 2 slots
     SECTOR_TYPE_INHOSPITABLE: 0, # Inhóspito: 0 slots
+    SECTOR_TYPE_ORBITAL: 1,      # Orbital: 1 slot (V6.4)
     # Mapeo dinámico de yacimientos de recursos (Todos 2 slots)
     **{name: 2 for name in SECTOR_NAMES_BY_CATEGORY.values()},
     # Mapeo dinámico de sectores inhóspitos por bioma (Todos 0 slots)
