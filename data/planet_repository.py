@@ -24,6 +24,7 @@ Actualizado v7.3: Inicialización garantizada de Sectores Urbanos para Protocolo
 Actualizado v7.4: Nueva función add_initial_building() para edificio inicial en Génesis.
                   Fix claim_genesis_sector: Eliminadas columnas inexistentes (owner_id, has_outpost).
                   initialize_planet_sectors ahora retorna List[Dict] con sectores creados/existentes.
+Actualizado v7.4.1: Fix de integridad en initialize_planet_sectors para inyectar sector Urbano si falta.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -907,7 +908,30 @@ def initialize_planet_sectors(planet_id: int, biome: str, mass_class: str = 'Est
         # 1. Verificar existencia
         check = db.table("sectors").select("*").eq("planet_id", planet_id).execute()
         if check and check.data:
-            return check.data  # Retornar sectores existentes
+            existing_sectors = check.data
+            
+            # --- FIX V7.4.1: Garantizar Sector Urbano para HQ ---
+            # Si el planeta ya tenía sectores (por scripts de población o generación parcial)
+            # pero ninguno es Urbano, el Protocolo Génesis fallaba.
+            has_urban = any(s.get("sector_type") == SECTOR_TYPE_URBAN for s in existing_sectors)
+            
+            if not has_urban:
+                urban_slots = SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_URBAN, 2)
+                urban_sector = {
+                    "planet_id": planet_id,
+                    "name": "Distrito Central",
+                    "sector_type": SECTOR_TYPE_URBAN,
+                    "max_slots": urban_slots,
+                    "is_known": False,
+                    "resource_category": "influencia"
+                }
+                
+                # Insertar y recuperar el ID generado
+                res = db.table("sectors").insert(urban_sector).execute()
+                if res and res.data:
+                    existing_sectors.append(res.data[0])
+            
+            return existing_sectors
 
         # 2. Calcular cantidad y configuración
         num_sectors = PLANET_MASS_CLASSES.get(mass_class, 4)
