@@ -1,5 +1,8 @@
 -- db_update_stellar_sectors.sql
 -- V8.0: Soporte para Sectores Estelares (Megaestructuras a nivel de sistema)
+--
+-- NOTA: El "dueño" de un sector estelar se infiere de systems.controlling_faction_id
+-- Los edificios individuales rastrean su propietario via stellar_buildings.player_id
 
 -- 1. Añadir columna system_id a la tabla sectors
 -- Permite que un sector esté asociado a un sistema en lugar de a un planeta
@@ -11,15 +14,10 @@ ADD COLUMN IF NOT EXISTS system_id INTEGER REFERENCES systems(id) ON DELETE CASC
 ALTER TABLE sectors
 ALTER COLUMN planet_id DROP NOT NULL;
 
--- 3. Añadir constraint: un sector debe tener planet_id O system_id (pero no ambos vacíos)
--- Nota: Comentado porque puede requerir ajustes según tu esquema
--- ALTER TABLE sectors
--- ADD CONSTRAINT chk_sector_parent CHECK (planet_id IS NOT NULL OR system_id IS NOT NULL);
-
--- 4. Crear índice para consultas por system_id
+-- 3. Crear índice para consultas por system_id
 CREATE INDEX IF NOT EXISTS idx_sectors_system ON sectors(system_id);
 
--- 5. Comentarios para documentación
+-- 4. Comentarios para documentación
 COMMENT ON COLUMN sectors.system_id IS 'V8.0: ID del sistema para sectores estelares (NULL para sectores planetarios)';
 COMMENT ON COLUMN sectors.planet_id IS 'ID del planeta para sectores planetarios (NULL para sectores estelares)';
 

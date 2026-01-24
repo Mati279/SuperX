@@ -216,6 +216,7 @@ class PlayerData(BaseModel):
 
     id: int
     nombre: str
+    faction_id: Optional[int] = None  # V8.0: ID de facción para control de sistemas
     faccion_nombre: Optional[str] = None
     banner_url: Optional[str] = None
     session_token: Optional[str] = None

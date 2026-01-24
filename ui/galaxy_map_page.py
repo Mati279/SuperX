@@ -181,11 +181,16 @@ def _render_debug_control_button(system_id: int, system: dict, player):
         col1, col2 = st.columns(2)
         if col1.button("🏴 Tomar Control", key=f"debug_take_control_{system_id}", type="primary"):
             try:
+                # V8.0: Usar faction_id del jugador (controlling_faction_id referencia factions, no players)
+                faction_id = getattr(player, 'faction_id', None)
+                if not faction_id:
+                    st.error("❌ Tu jugador no tiene una facción asignada (faction_id)")
+                    return
                 # Actualizar el controlador del sistema
                 get_supabase().table("systems").update({
-                    "controlling_faction_id": player.id
+                    "controlling_faction_id": faction_id
                 }).eq("id", system_id).execute()
-                st.success(f"✅ Ahora controlas el sistema {system.get('name', system_id)}!")
+                st.success(f"✅ Tu facción ahora controla el sistema {system.get('name', system_id)}!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -196,18 +201,6 @@ def _render_debug_control_button(system_id: int, system: dict, player):
                     "controlling_faction_id": None
                 }).eq("id", system_id).execute()
                 st.success("✅ Sistema liberado (Neutral)")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
-
-        # Botón para reclamar el sector estelar
-        st.markdown("##### Sector Estelar")
-        if st.button("🛰️ Reclamar Sector Estelar", key=f"debug_claim_stellar_{system_id}"):
-            try:
-                get_supabase().table("sectors").update({
-                    "owner_id": player.id
-                }).eq("system_id", system_id).is_("planet_id", "null").execute()
-                st.success("✅ Sector estelar reclamado!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")

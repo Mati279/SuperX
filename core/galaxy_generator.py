@@ -401,8 +401,8 @@ class GalaxyGenerator:
             luxury_resource=None,
             max_slots=SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_STELLAR, 3),
             buildings=[],
-            is_known=True,  # Siempre visible (el espacio estelar es observable)
-            owner_id=None  # Sin dueño inicial
+            is_known=True  # Siempre visible (el espacio estelar es observable)
+            # Nota: owner_id no se usa para sectores estelares - se infiere de systems.controlling_faction_id
         )
 
         return [stellar_sector]
