@@ -30,6 +30,7 @@ Actualizado v7.5.1: Fix Soberanía Inicial (Sincronización Orbital en Creación
 Actualizado v7.6.0: Fix Crítico de IDs y Transformación de Sectores en initialize_planet_sectors.
 Actualizado v7.6.1: Fix Crítico SQL en initialize_planet_sectors (sync planet_id) y limpieza de retorno.
 Actualizado v7.7.1: Restauración de updates secuenciales en create_planet_asset para evitar Race Condition con Triggers.
+Actualizado v7.7.2: Fix PGRST204 delegando 'base_tier' al default de la base de datos.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -253,8 +254,9 @@ def create_planet_asset(
             "population": initial_population,
             "pops_activos": initial_population,
             "pops_desempleados": 0.0,
-            "infraestructura_defensiva": 0,
-            "base_tier": 1
+            "infraestructura_defensiva": 0
+            # FIX V7.7.2: Eliminado 'base_tier' explícito para evitar PGRST204.
+            # Se delega al valor DEFAULT 1 en la base de datos.
         }
         
         response = db.table("planet_assets").insert(asset_data).execute()
