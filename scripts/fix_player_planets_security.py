@@ -7,6 +7,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from data.database import get_supabase
 from core.rules import calculate_planet_security
+# V9.1: Importamos la función para recalcular el sistema
+from data.planet_repository import recalculate_system_security
 
 def fix_security():
     print("🛠️ Iniciando reparación de seguridad en planetas de jugadores...")
@@ -36,11 +38,13 @@ def fix_security():
 
     updated_count = 0
     error_count = 0
+    affected_systems = set() # V9.1: Set para guardar IDs de sistemas únicos
 
-    # 2. Recalcular y actualizar
+    # 2. Recalcular y actualizar Planetas
     for p in planets:
         try:
             pid = p["id"]
+            sid = p.get("system_id") # V9.1: Obtener ID del sistema
             name = p.get("name", "Desconocido")
             base_def = p.get("base_defense", 10) or 10
             pop = p.get("population", 0.0) or 0.0
@@ -80,6 +84,8 @@ def fix_security():
             if upd_res:
                 print(f"   -> Reparado {name} (ID {pid}): Seguridad {new_security:.1f}")
                 updated_count += 1
+                if sid:
+                    affected_systems.add(sid) # V9.1: Marcar sistema para recálculo
             else:
                 print(f"   ⚠️ Fallo al actualizar {name} (ID {pid})")
                 error_count += 1
@@ -88,7 +94,21 @@ def fix_security():
             print(f"   ❌ Error procesando ID {p.get('id')}: {ex}")
             error_count += 1
 
-    print(f"\n✨ Reparación finalizada. Actualizados: {updated_count}, Errores: {error_count}")
+    # 3. Fase de Sistemas (V9.1)
+    print(f"\n🔄 Recalculando seguridad de {len(affected_systems)} sistemas afectados...")
+    systems_updated = 0
+    for sys_id in affected_systems:
+        try:
+            new_val = recalculate_system_security(sys_id)
+            print(f"   -> Sistema {sys_id}: Nueva Seguridad Promedio {new_val:.2f}")
+            systems_updated += 1
+        except Exception as e:
+             print(f"   ❌ Error actualizando sistema {sys_id}: {e}")
+
+    print(f"\n✨ Reparación finalizada.")
+    print(f"   - Planetas actualizados: {updated_count}")
+    print(f"   - Sistemas sincronizados: {systems_updated}")
+    print(f"   - Errores: {error_count}")
 
 if __name__ == "__main__":
     fix_security()

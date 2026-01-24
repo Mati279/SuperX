@@ -38,6 +38,7 @@ Actualizado v8.1.0: Robustez en resolución de nombres de soberanía (Fail-Safe 
 Actualizado v8.2.0: Fix build_structure (Ghost Buildings Check & ID types).
 Actualizado v8.2.1: Fix Not-Null Constraint (Inyección de pops_required y energy_consumption).
 Actualizado v8.3.0: Business Logic para HQ Único (Reemplazo de Constraint DB).
+Actualizado v9.1.0: Implementación de Seguridad de Sistema (Recálculo automático en cascada).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -45,7 +46,7 @@ import random
 import traceback # Importado para debug crítico
 from .database import get_supabase
 from .log_repository import log_event
-from .world_repository import get_world_state, update_system_controller
+from .world_repository import get_world_state, update_system_controller, update_system_security
 from core.world_constants import (
     BUILDING_TYPES, 
     BASE_TIER_COSTS, 
@@ -380,6 +381,10 @@ def create_planet_asset(
                 log_event(f"Sector de emergencia creado para {planet_id}", player_id, is_error=True)
 
             log_event(f"Planeta colonizado: {settlement_name} (Seguridad inicial: {sec_value:.1f})", player_id)
+            
+            # --- V9.1: Recalcular Seguridad del Sistema ---
+            recalculate_system_security(system_id)
+            
             return response.data[0]
         return None
     except Exception as e:
@@ -918,12 +923,30 @@ def get_luxury_extraction_sites_for_player(player_id: int) -> List[Dict[str, Any
 
 
 def batch_update_planet_security(updates: List[Tuple[int, float]]) -> bool:
-    """Actualiza la seguridad en lote en la tabla 'planets'."""
+    """Actualiza la seguridad en lote en la tabla 'planets' y recalcula sistemas afectados."""
     if not updates: return True
     try:
         db = _get_db()
+        affected_systems = set()
+        
+        # Actualización de planetas
         for planet_id, security in updates:
             db.table("planets").update({"security": security}).eq("id", planet_id).execute()
+            
+        # V9.1: Recálculo de Sistemas Afectados
+        # Consultamos los sistemas de todos los planetas actualizados
+        planet_ids = [u[0] for u in updates]
+        if planet_ids:
+            sys_res = db.table("planets").select("system_id").in_("id", planet_ids).execute()
+            if sys_res and sys_res.data:
+                for row in sys_res.data:
+                    sid = row.get("system_id")
+                    if sid: affected_systems.add(sid)
+        
+        # Recalculamos la seguridad de cada sistema afectado
+        for sid in affected_systems:
+            recalculate_system_security(sid)
+
         return True
     except Exception as e:
         log_event(f"Error batch security update: {e}", is_error=True)
@@ -1008,6 +1031,41 @@ def recalculate_system_ownership(system_id: int) -> Optional[int]:
         log_event(f"Error recalculando propiedad del sistema {system_id}: {e}", is_error=True)
         return None
 
+def recalculate_system_security(system_id: int) -> float:
+    """
+    V9.1: Recalcula el promedio de seguridad de todos los planetas del sistema
+    y actualiza la tabla systems.
+    
+    Lógica:
+    - Suma de security de todos los planetas (incluyendo 0.0)
+    - División por número de planetas
+    - Actualización en tabla systems
+    """
+    try:
+        db = _get_db()
+        # 1. Obtener seguridad de todos los planetas del sistema
+        # Importante: Incluir todos los planetas, incluso con seguridad 0
+        response = db.table("planets")\
+            .select("security")\
+            .eq("system_id", system_id)\
+            .execute()
+        
+        planets = response.data if response and response.data else []
+        if not planets:
+            # Si no hay planetas, seguridad 0
+            update_system_security(system_id, 0.0)
+            return 0.0
+
+        total_security = sum(p.get("security", 0.0) for p in planets)
+        avg_security = total_security / len(planets)
+        
+        # 2. Actualizar sistema
+        update_system_security(system_id, avg_security)
+        
+        return avg_security
+    except Exception as e:
+        log_event(f"Error recalculando seguridad sistema {system_id}: {e}", is_error=True)
+        return 0.0
 
 def check_system_majority_control(system_id: int, player_id: int) -> bool:
     """
@@ -1050,14 +1108,23 @@ def update_planet_security_value(planet_id: int, value: float) -> bool:
         return False
 
 def update_planet_security_data(planet_id: int, security: float, breakdown: Dict[str, Any]) -> bool:
-    """Actualiza la seguridad en la tabla 'planets'."""
+    """Actualiza la seguridad en la tabla 'planets' y recalcula la del sistema."""
     try:
+        db = _get_db()
         # V6.1: Persistencia explícita de breakdown
-        response = _get_db().table("planets").update({
+        response = db.table("planets").update({
             "security": security,
             "security_breakdown": breakdown
         }).eq("id", planet_id).execute()
-        return True if response else False
+        
+        if response:
+            # V9.1: Trigger automático de Sistema
+            # Necesitamos el system_id para el recálculo
+            p_res = db.table("planets").select("system_id").eq("id", planet_id).single().execute()
+            if p_res and p_res.data and p_res.data.get("system_id"):
+                recalculate_system_security(p_res.data.get("system_id"))
+            return True
+        return False
     except Exception as e:
         log_event(f"Error actualizando seguridad planeta {planet_id}: {e}", is_error=True)
         return False

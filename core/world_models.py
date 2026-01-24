@@ -8,6 +8,7 @@ Refactorizado v5.3: Limpieza de redundancia 'slots' en Planeta. Fuente de verdad
 Actualizado v7.2: Soporte para Niebla de Superficie (is_explored_by_player).
 Actualizado v7.8: Inclusión de nombres de soberanía (surface_owner_name, orbital_owner_name) para UI.
 Actualizado v8.0: Soporte para Sectores Estelares (Control de Sistema y Megaestructuras).
+Actualizado v9.1: Inclusión de Seguridad de Sistema (Promedio de planetas).
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, Optional
@@ -136,6 +137,7 @@ class System:
     """
     Modelo que representa un sistema estelar.
     Actualizado V8.0: Soporte para Sectores Estelares (megaestructuras a nivel de sistema).
+    Actualizado V9.1: Soporte para Seguridad de Sistema (Promedio).
     """
     id: int
     name: str
@@ -146,6 +148,9 @@ class System:
     neighbors: List[int] = field(default_factory=list)
     description: str = ""
     controlling_player_id: Optional[int] = None
+    
+    # V9.1: Seguridad Promedio del Sistema (0.0 - 100.0)
+    security: float = 0.0
 
     # V8.0: Sectores Estelares para megaestructuras
     sectors: List[Sector] = field(default_factory=list)
