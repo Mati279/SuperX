@@ -31,6 +31,7 @@ Actualizado v7.6.0: Fix Crítico de IDs y Transformación de Sectores en initial
 Actualizado v7.6.1: Fix Crítico SQL en initialize_planet_sectors (sync planet_id) y limpieza de retorno.
 Actualizado v7.7.1: Restauración de updates secuenciales en create_planet_asset para evitar Race Condition con Triggers.
 Actualizado v7.7.2: Fix PGRST204 delegando 'base_tier' al default de la base de datos.
+Actualizado v7.8.0: Join con Facciones para resolver nombres de Soberanía (Surface/Orbital) en get_planet_by_id.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -65,14 +66,58 @@ def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
     """
     Obtiene información de un planeta de la tabla mundial 'planets'.
     Actualizado V5.8: Recuperación explícita de population y breakdown.
+    Actualizado V7.8: Join con players->factions para obtener nombres de soberanía reales.
     """
     try:
+        # Construcción de la query con Joins anidados para resolver nombres de facción desde el ID de jugador
+        # Sintaxis: surface_player:players!surface_owner_id(factions(nombre))
+        select_query = (
+            "id, name, system_id, biome, mass_class, orbital_ring, is_habitable, "
+            "surface_owner_id, orbital_owner_id, is_disputed, security, population, "
+            "security_breakdown, base_defense, "
+            "surface_player:players!surface_owner_id(factions(nombre)), "
+            "orbital_player:players!orbital_owner_id(factions(nombre))"
+        )
+
         response = _get_db().table("planets")\
-            .select("id, name, system_id, biome, mass_class, orbital_ring, is_habitable, surface_owner_id, orbital_owner_id, is_disputed, security, population, security_breakdown, base_defense")\
+            .select(select_query)\
             .eq("id", planet_id)\
             .single()\
             .execute()
-        return response.data if response and response.data else None
+            
+        if not response or not response.data:
+            return None
+            
+        planet_data = response.data
+        
+        # Procesamiento de nombres de soberanía (Flattening)
+        # Lógica: Si hay ID pero no datos -> "Desconocido". Si no hay ID -> "Neutral".
+        
+        # 1. Soberanía Superficie
+        s_data = planet_data.get("surface_player")
+        s_name = "Neutral"
+        if planet_data.get("surface_owner_id"):
+            if s_data and s_data.get("factions"):
+                s_name = s_data["factions"].get("nombre", "Desconocido")
+            else:
+                s_name = "Desconocido"
+        planet_data["surface_owner_name"] = s_name
+        
+        # 2. Soberanía Orbital
+        o_data = planet_data.get("orbital_player")
+        o_name = "Neutral"
+        if planet_data.get("orbital_owner_id"):
+            if o_data and o_data.get("factions"):
+                o_name = o_data["factions"].get("nombre", "Desconocido")
+            else:
+                o_name = "Desconocido"
+        planet_data["orbital_owner_name"] = o_name
+        
+        # Limpieza de campos auxiliares del join
+        planet_data.pop("surface_player", None)
+        planet_data.pop("orbital_player", None)
+
+        return planet_data
     except Exception:
         return None
 

@@ -12,6 +12,7 @@ Actualizado V7.2: Implementación de Niebla de Superficie (Exploración de Secto
 Actualizado V7.6: Visualización Orbital Integrada y Filtro de Superficie.
 Feature: Visualización de Soberanía y Dueños de Sectores.
 Hotfix V7.7: Sincronización DB (nombre) y corrección de Slots Urbanos.
+Hotfix V7.8: Corrección visualización Soberanía (Join backend).
 """
 
 import streamlit as st
@@ -36,22 +37,11 @@ from core.world_constants import (
 from ui.state import get_player_id
 
 
-# --- Helpers de Facciones ---
+# --- Helpers de Facciones (Simplificado) ---
+# Ya no necesitamos _get_faction_map masivo para la cabecera, 
+# pero lo mantenemos para _get_faction_name_by_player en tarjetas de sector individuales
+
 @st.cache_data(ttl=600)
-def _get_faction_map():
-    """Cache simple para nombres de facciones. Actualizado a columna 'nombre'."""
-    try:
-        # DB Sync: Cambio de 'name' a 'nombre'
-        factions = get_supabase().table("factions").select("id, nombre").execute().data
-        return {f['id']: f['nombre'] for f in factions}
-    except:
-        return {}
-
-def _resolve_faction_name(faction_id):
-    if faction_id is None: return "Neutral"
-    f_map = _get_faction_map()
-    return f_map.get(faction_id, "Desconocido")
-
 def _get_faction_name_by_player(player_id):
     """Resuelve el nombre de la facción de un jugador específico."""
     if not player_id: return "Desconocido"
@@ -78,6 +68,7 @@ def render_planet_surface(planet_id: int):
         return
 
     # 1. Carga de Datos (Prioritaria para navegación)
+    # Ahora 'planet' trae surface_owner_name y orbital_owner_name pre-cargados
     planet = get_planet_by_id(planet_id)
     
     if not planet:
@@ -146,11 +137,11 @@ def _render_info_header(planet: dict, asset: dict):
     """Muestra el resumen del planeta, tamaño y capacidad global."""
     st.title(f"Vista Planetaria: {planet['name']}")
     
-    # --- VISUALIZACIÓN DE SOBERANÍA ---
-    s_owner = _resolve_faction_name(planet.get('surface_owner_id'))
-    o_owner = _resolve_faction_name(planet.get('orbital_owner_id'))
+    # --- VISUALIZACIÓN DE SOBERANÍA (FIX V7.8) ---
+    # Usamos los datos enriquecidos directamente del repositorio
+    s_owner = planet.get('surface_owner_name', "Desconocido")
+    o_owner = planet.get('orbital_owner_name', "Desconocido")
     
-    # Nota: _resolve_faction_name garantiza 'Neutral' si es None, evitando strings vacíos.
     st.markdown(f"**Soberanía de Superficie:** :orange[{s_owner}] | **Soberanía Orbital:** :cyan[{o_owner}]")
 
     col1, col2, col3, col4 = st.columns(4)

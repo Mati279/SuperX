@@ -6,6 +6,7 @@ Actualizado v4.8.1: Eliminación de recursos planetarios (migrados a Sectores).
 Actualizado v4.8.2: Refactorización de Sector (max_slots, resource_category) y validación de tipos.
 Refactorizado v5.3: Limpieza de redundancia 'slots' en Planeta. Fuente de verdad: total_sector_slots.
 Actualizado v7.2: Soporte para Niebla de Superficie (is_explored_by_player).
+Actualizado v7.8: Inclusión de nombres de soberanía (surface_owner_name, orbital_owner_name) para UI.
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, Optional
@@ -78,6 +79,10 @@ class Planet(CelestialBody):
     orbital_owner_id: Optional[int] = None
     surface_owner_id: Optional[int] = None
     is_disputed: bool = False
+    
+    # --- Actualización V7.8: Nombres de Soberanía (UI) ---
+    surface_owner_name: str = "Neutral"
+    orbital_owner_name: str = "Neutral"
     
     # Referencias auxiliares y Stats (V4.8 - Actualizado para precisión decimal)
     base_defense: int = 0
