@@ -13,6 +13,7 @@ Actualizado v5.2.0: Definición de Biomas de Nacimiento Habitables.
 Actualizado v5.3.0: Integración de Precios Base para Recursos de Lujo.
 Actualizado v6.3.0: Definición de Puestos de Avanzada, Estaciones Orbitales y Soberanía.
 Actualizado v6.4.0: Implementación de Sector Orbital y Soberanía Espacial.
+Actualizado v7.6.0: Ajuste de Capacidad Urbana (3 Slots).
 """
 from typing import Dict, List
 
@@ -380,7 +381,7 @@ LUXURY_PRICES = {
 SECTOR_SLOTS_CONFIG = {
     SECTOR_TYPE_PLAIN: 3,        # Llanuras: 3 slots (Máximo)
     SECTOR_TYPE_MOUNTAIN: 2,     # Montañoso: 2 slots
-    SECTOR_TYPE_URBAN: 2,        # Urbano: 2 slots
+    SECTOR_TYPE_URBAN: 3,        # Urbano: 3 slots (Ajustado V7.6)
     SECTOR_TYPE_INHOSPITABLE: 0, # Inhóspito: 0 slots
     SECTOR_TYPE_ORBITAL: 1,      # Orbital: 1 slot (V6.4)
     # Mapeo dinámico de yacimientos de recursos (Todos 2 slots)

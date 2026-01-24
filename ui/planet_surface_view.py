@@ -9,6 +9,7 @@ Corrección V6.0: Adaptación a 'sector_type' para consistencia con DB.
 Refactor V7.0: Modo Observador, Navegación de Sistema, Sección Orbital y Estilo de Recursos estricto.
 Mejora V7.1: Navegación contextual (Volver al Sistema del planeta actual).
 Actualizado V7.2: Implementación de Niebla de Superficie (Exploración de Sectores).
+Actualizado V7.6: Visualización Orbital Integrada y Filtro de Superficie.
 """
 
 import streamlit as st
@@ -23,7 +24,7 @@ from data.planet_repository import (
     grant_sector_knowledge
 )
 from core.rules import calculate_planet_habitability
-from core.world_constants import BUILDING_TYPES, PLANET_BIOMES
+from core.world_constants import BUILDING_TYPES, PLANET_BIOMES, SECTOR_TYPE_ORBITAL
 from ui.state import get_player_id
 
 
@@ -75,16 +76,34 @@ def render_planet_surface(planet_id: int):
 
     st.divider()
 
+    # Pre-carga de datos de sectores y edificios para distribución
+    sectors = get_planet_sectors_status(planet['id'], player_id=player_id)
+    buildings = get_planet_buildings(asset['id']) if asset else []
+    asset_id = asset['id'] if asset else None
+
+    # Filtrado de sectores (Orbital vs Superficie)
+    orbital_sector = next((s for s in sectors if s.get('sector_type') == SECTOR_TYPE_ORBITAL), None)
+    surface_sectors = [s for s in sectors if s.get('sector_type') != SECTOR_TYPE_ORBITAL]
+
+    if debug_mode:
+        st.info(f"🐛 Debug Sectores: Total {len(sectors)} | Superficie {len(surface_sectors)} | Orbital {1 if orbital_sector else 0}")
+
     # 3. Nueva Sección: Órbita
     st.subheader("🛰️ Órbita")
-    with st.container(border=True):
-        st.caption("Espacio orbital despejado")
-        # Placeholder para futuras funcionalidades de astilleros/estaciones
+    
+    if orbital_sector:
+        with st.container(border=True):
+             _render_sector_card(orbital_sector, buildings, asset_id, player_id, debug_mode)
+    else:
+        # Fallback por si la generación antigua no tiene sector orbital
+        with st.container(border=True):
+            st.caption("Espacio orbital no cartografiado.")
+            if debug_mode: st.warning("Falta registro SECTOR_TYPE_ORBITAL en DB.")
 
     st.divider()
 
-    # 4. Grid de Sectores y Gestión de Edificios
-    _render_sectors_management(planet, asset, player_id, debug_mode)
+    # 4. Grid de Sectores y Gestión de Edificios (Solo Superficie)
+    _render_sectors_management(planet, asset, player_id, debug_mode, surface_sectors, buildings)
 
 
 def _render_info_header(planet: dict, asset: dict):
@@ -131,23 +150,14 @@ def _render_info_header(planet: dict, asset: dict):
         st.write("**Capacidad de Construcción:** Modo Observador (Sin Colonia)")
 
 
-def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_mode: bool):
-    """Renderiza el grid de sectores y sus opciones interactivas."""
+def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_mode: bool, sectors: list, buildings: list):
+    """Renderiza el grid de sectores de superficie y sus opciones interactivas."""
     st.subheader("Distribución de Sectores")
     
-    # V7.2: Pasar player_id para resolver niebla de superficie
-    sectors = get_planet_sectors_status(planet['id'], player_id=player_id)
-    
-    if debug_mode:
-        st.info(f"🐛 Debug Sectores: Encontrados {len(sectors)} registros en DB para PlanetID {planet['id']}")
-
     if not sectors:
-        st.info("🛰️ No se han detectado sectores. El escaneo de superficie podría estar incompleto.")
+        st.info("🛰️ No se han detectado sectores de superficie. El escaneo podría estar incompleto.")
         return
 
-    # Obtener edificios para filtrarlos por sector en la visualización
-    # Si asset es None (Observador), buildings será vacío
-    buildings = get_planet_buildings(asset['id']) if asset else []
     asset_id = asset['id'] if asset else None
 
     # Crear Grid de Sectores (2 columnas para legibilidad en Streamlit)
@@ -165,11 +175,14 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     """
     Renderiza una tarjeta individual para un sector específico con estilo estricto.
     V7.2: Manejo de Niebla de Superficie.
+    V7.6: Soporte explícito para visualización Orbital y Bypass de Niebla.
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE (V7.2) ---
     is_explored = sector.get('is_explored_by_player', False)
+    is_orbital = sector.get('sector_type') == SECTOR_TYPE_ORBITAL
     
-    if not is_explored and not debug_mode:
+    # La órbita siempre es visible, independientemente del flag (safety check)
+    if not is_explored and not is_orbital and not debug_mode:
         # Renderizado Oculto
         st.markdown(f"### 🌫️ Sector Desconocido ({sector['id']})")
         st.caption("Zona no cartografiada. Sensores bloqueados.")
@@ -186,14 +199,15 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                 st.error("Error al registrar la exploración.")
         return # Salir temprano, no mostrar detalles
     
-    # --- RENDERIZADO NORMAL (Explorado o Debug) ---
+    # --- RENDERIZADO NORMAL (Explorado, Orbital o Debug) ---
     
     # Iconografía por tipo de sector
     icons = {
         "Urbano": "🏙️",
         "Llanura": "🌿",
         "Montañoso": "🏔️",
-        "Inhospito": "🌋"
+        "Inhospito": "🌋",
+        "Orbital": "🛰️"
     }
     
     # Fix V6.0: Uso seguro de 'sector_type' (DB) con fallback a 'type' (Legacy/Model)
