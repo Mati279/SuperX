@@ -97,14 +97,14 @@ def _resolve_controller_name(controller_id: Optional[int]) -> str:
 
 def _render_stellar_sector_panel(system_id: int, system: dict, player):
     """
-    V8.0: Renderiza el panel del sector estelar con información de megaestructuras.
-    Incluye botón de debug para tomar control del sistema.
+    V9.0: Renderiza el panel del sector estelar con información de megaestructuras.
+    Permite construcción si el jugador es el controlador del sistema.
     """
     st.subheader("🌟 Sector Estelar")
 
     # Obtener sector estelar de la base de datos
     stellar_sector = None
-    stellar_buildings = []
+    all_stellar_buildings = []
     try:
         sector_res = get_supabase().table("sectors")\
             .select("*")\
@@ -126,75 +126,225 @@ def _render_stellar_sector_panel(system_id: int, system: dict, player):
             _render_debug_control_button(system_id, system, player)
         return
 
-    # Mostrar información del sector estelar
-    with st.container(border=True):
-        col1, col2, col3 = st.columns([3, 2, 2])
+    # Datos del sistema
+    star_type = system.get('star_type', 'G')
+    max_slots = stellar_sector.get('max_slots', 3)
+    controller_id = system.get('controlling_player_id')
+    controller_name = _resolve_controller_name(controller_id)
+    is_controller = player and controller_id == player.id
 
-        col1.markdown(f"**{stellar_sector.get('name', 'Espacio Estelar')}**")
-        col1.caption(f"Tipo: {stellar_sector.get('sector_type', 'Estelar')}")
-
-        max_slots = stellar_sector.get('max_slots', 3)
-        col2.metric("Slots Disponibles", f"{max_slots}")
-
-        # Tipo de estrella del sistema
-        star_type = system.get('star_type', 'G')
-        col3.metric("Clase Estelar", star_type)
-
-    # Obtener edificios estelares si el jugador tiene alguno
-    if player:
+    # Obtener TODOS los edificios estelares del sector
+    try:
+        buildings_res = get_supabase().table("stellar_buildings")\
+            .select("*")\
+            .eq("sector_id", stellar_sector['id'])\
+            .execute()
+        if buildings_res and buildings_res.data:
+            all_stellar_buildings = buildings_res.data
+    except:
+        # Fallback: intentar con planet_buildings
         try:
-            buildings_res = get_supabase().table("stellar_buildings")\
+            buildings_res = get_supabase().table("planet_buildings")\
                 .select("*")\
                 .eq("sector_id", stellar_sector['id'])\
-                .eq("player_id", player.id)\
                 .execute()
             if buildings_res and buildings_res.data:
-                stellar_buildings = buildings_res.data
+                all_stellar_buildings = buildings_res.data
         except:
-            # Fallback: intentar con planet_buildings
-            try:
-                buildings_res = get_supabase().table("planet_buildings")\
-                    .select("*")\
-                    .eq("sector_id", stellar_sector['id'])\
-                    .eq("player_id", player.id)\
-                    .execute()
-                if buildings_res and buildings_res.data:
-                    stellar_buildings = buildings_res.data
-            except:
-                pass
+            pass
 
-    # Mostrar edificios estelares del jugador
-    if stellar_buildings:
-        st.markdown("**Tus Megaestructuras:**")
-        for b in stellar_buildings:
+    used_slots = len(all_stellar_buildings)
+    free_slots = max(0, max_slots - used_slots)
+
+    # --- HEADER INFO ---
+    with st.container(border=True):
+        col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+
+        col1.markdown(f"**{stellar_sector.get('name', 'Espacio Estelar')}**")
+        col1.caption(f"Controlador: **{controller_name}**")
+
+        col2.metric("Clase Estelar", star_type, help=_get_star_class_description(star_type))
+        col3.metric("Slots", f"{used_slots}/{max_slots}")
+        col4.metric("Disponibles", f"{free_slots}")
+
+    # --- EDIFICIOS EXISTENTES ---
+    if all_stellar_buildings:
+        st.markdown("#### 🏗️ Megaestructuras Activas")
+        for b in all_stellar_buildings:
             b_type = b.get('building_type', 'unknown')
             b_def = BUILDING_TYPES.get(b_type, {})
-            status = "✅ Activo" if b.get('is_active', True) else "🛑 Inactivo"
-            st.write(f"- {b_def.get('name', b_type)} | {status}")
-    else:
-        st.caption("No tienes megaestructuras construidas en este sistema.")
+            owner_id = b.get('player_id')
+            owner_name = _get_player_name_by_id(owner_id)
+            status_icon = "✅" if b.get('is_active', True) else "🛑"
 
-    # Mostrar estructuras disponibles para construcción
-    with st.expander("📋 Estructuras Estelares Disponibles"):
-        star_type = system.get('star_type', 'G')
+            with st.container(border=True):
+                c1, _ = st.columns([4, 1])
+                c1.markdown(f"**{b_def.get('name', b_type)}** | {status_icon}")
+                c1.caption(f"Propietario: {owner_name}")
+
+                # Mostrar bonus del sistema
+                bonus = b_def.get('system_bonus', {})
+                prod = b_def.get('production', {})
+                if bonus:
+                    bonus_text = ", ".join([f"{k}: {v}" for k, v in bonus.items()])
+                    c1.caption(f"🎯 Bonus: {bonus_text}")
+                if prod:
+                    prod_text = ", ".join([f"+{v} {k}" for k, v in prod.items()])
+                    c1.caption(f"📈 Producción: {prod_text}")
+    else:
+        st.caption("No hay megaestructuras construidas en este sistema.")
+
+    # --- CONSTRUCCIÓN (Solo para el controlador) ---
+    st.markdown("---")
+
+    if not player:
+        st.warning("Inicia sesión para ver opciones de construcción.")
+    elif not is_controller:
+        st.info(f"🔒 Solo el controlador del sistema ({controller_name}) puede construir megaestructuras aquí.")
+    elif free_slots == 0:
+        st.warning("⚠️ No hay slots disponibles en el sector estelar.")
+    else:
+        st.markdown("#### 🔨 Construir Megaestructura")
+        st.caption(f"Como controlador del sistema, puedes construir en {free_slots} slot(s) disponible(s).")
+
+        # Filtrar edificios disponibles
+        available_buildings = []
         for key, bdef in BUILDING_TYPES.items():
             if not bdef.get('is_stellar', False):
                 continue
             required_star = bdef.get('required_star_class')
+            # Verificar compatibilidad con tipo de estrella
             if required_star and required_star != star_type:
-                st.caption(f"❌ {bdef['name']} - Requiere estrella clase {required_star}")
                 continue
-            maint = bdef.get('maintenance', {})
-            maint_str = ", ".join([f"{v} {k}" for k, v in maint.items()])
-            bonus = bdef.get('system_bonus', {})
-            bonus_str = ", ".join([f"{k}: {v}" for k, v in bonus.items()]) if bonus else "Producción directa"
-            st.markdown(f"**{bdef['name']}** - {bdef.get('description', '')}")
-            st.caption(f"Coste: {bdef.get('material_cost', 0)} materiales | Mant: {maint_str} | Bonus: {bonus_str}")
+            # Verificar que no esté ya construido (solo 1 de cada tipo por sistema)
+            already_built = any(b.get('building_type') == key for b in all_stellar_buildings)
+            if not already_built:
+                available_buildings.append((key, bdef))
+
+        if not available_buildings:
+            st.caption("Ya has construido todas las estructuras disponibles para esta clase de estrella.")
+        else:
+            # Selector de estructura
+            options = {key: bdef['name'] for key, bdef in available_buildings}
+            selected_key = st.selectbox(
+                "Seleccionar estructura",
+                options=list(options.keys()),
+                format_func=lambda x: options[x],
+                key=f"stellar_build_select_{system_id}"
+            )
+
+            if selected_key:
+                bdef = BUILDING_TYPES[selected_key]
+
+                # Mostrar detalles
+                with st.container(border=True):
+                    st.markdown(f"**{bdef['name']}**")
+                    st.write(bdef.get('description', ''))
+
+                    # Costos
+                    cost = bdef.get('material_cost', 0)
+                    maint = bdef.get('maintenance', {})
+                    maint_str = ", ".join([f"{v} {k}" for k, v in maint.items()]) if maint else "Ninguno"
+
+                    col_cost, col_maint = st.columns(2)
+                    col_cost.metric("Costo", f"{cost} materiales")
+                    col_maint.caption(f"**Mantenimiento:** {maint_str}")
+
+                    # Bonus/Producción
+                    bonus = bdef.get('system_bonus', {})
+                    prod = bdef.get('production', {})
+                    if bonus:
+                        st.success(f"🎯 **Bonus del Sistema:** {', '.join([f'{k}: {v}' for k, v in bonus.items()])}")
+                    if prod:
+                        st.success(f"📈 **Producción:** {', '.join([f'+{v} {k}' for k, v in prod.items()])}")
+
+                    # Restricción de estrella
+                    req_star = bdef.get('required_star_class')
+                    if req_star:
+                        st.info(f"⭐ Requiere estrella clase **{req_star}** (actual: {star_type})")
+
+                # Botón de construcción
+                if st.button(f"🚀 Construir {bdef['name']}", key=f"build_stellar_{selected_key}_{system_id}", type="primary"):
+                    success = _build_stellar_structure(
+                        system_id=system_id,
+                        sector_id=stellar_sector['id'],
+                        player_id=player.id,
+                        building_type=selected_key
+                    )
+                    if success:
+                        st.success(f"✅ ¡{bdef['name']} construida exitosamente!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Error al construir. Verifica recursos y permisos.")
 
     # Botón de debug para tomar control
     if st.session_state.get("debug_omniscience", False):
         st.markdown("---")
         _render_debug_control_button(system_id, system, player)
+
+
+def _get_star_class_description(star_type: str) -> str:
+    """Retorna descripción de la clase estelar y estructuras especiales disponibles."""
+    descriptions = {
+        "O": "Gigante Azul - Permite: Colector de Radiación (+200 energía)",
+        "B": "Blanca-Azul - Permite: Sincrotrón Estelar (+20% datos)",
+        "A": "Blanca - Permite: Relé de Salto (viajes rápidos)",
+        "F": "Blanca-Amarilla - Sin estructuras especiales",
+        "G": "Amarilla (tipo Sol) - Sin estructuras especiales",
+        "K": "Naranja - Permite: Refinería Integrada (+15% materiales)",
+        "M": "Enana Roja - Sin estructuras especiales"
+    }
+    return descriptions.get(star_type, "Clase desconocida")
+
+
+def _build_stellar_structure(system_id: int, sector_id: int, player_id: int, building_type: str) -> bool:
+    """
+    Construye una megaestructura estelar.
+    V9.0: Inserta en stellar_buildings o planet_buildings según disponibilidad.
+    """
+    try:
+        db = get_supabase()
+        bdef = BUILDING_TYPES.get(building_type)
+        if not bdef or not bdef.get('is_stellar'):
+            return False
+
+        # Preparar datos
+        building_data = {
+            "sector_id": sector_id,
+            "player_id": player_id,
+            "building_type": building_type,
+            "is_active": True
+        }
+
+        # Intentar insertar en stellar_buildings
+        try:
+            response = db.table("stellar_buildings").insert(building_data).execute()
+            if response and response.data:
+                from data.log_repository import log_event
+                log_event(f"Megaestructura '{bdef['name']}' construida en sistema {system_id}", player_id)
+                return True
+        except Exception:
+            pass
+
+        # Fallback a planet_buildings
+        try:
+            # Añadir campos requeridos por planet_buildings
+            building_data["building_tier"] = 1
+            building_data["pops_required"] = bdef.get("pops_required", 0)
+            building_data["energy_consumption"] = bdef.get("maintenance", {}).get("celulas_energia", 0)
+
+            response = db.table("planet_buildings").insert(building_data).execute()
+            if response and response.data:
+                from data.log_repository import log_event
+                log_event(f"Megaestructura '{bdef['name']}' construida en sistema {system_id}", player_id)
+                return True
+        except Exception as e:
+            print(f"Error construyendo estructura estelar: {e}")
+
+        return False
+    except Exception as e:
+        print(f"Error crítico en _build_stellar_structure: {e}")
+        return False
 
 
 def _render_debug_control_button(system_id: int, system: dict, player):
