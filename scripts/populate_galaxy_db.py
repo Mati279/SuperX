@@ -86,6 +86,7 @@ def populate_galaxy():
                 sectors_data.append({
                     "id": s.id,
                     "planet_id": p.id,
+                    "system_id": None,  # V8.0: Sectores planetarios no tienen system_id
                     "name": s.name,
                     "sector_type": s.type,
                     "max_slots": s.max_slots,
@@ -93,6 +94,20 @@ def populate_galaxy():
                     "luxury_resource": s.luxury_resource,
                     "is_known": s.is_known
                 })
+
+        # V8.0: Recolectar sectores estelares del sistema
+        for s in sys_obj.sectors:
+            sectors_data.append({
+                "id": s.id,
+                "planet_id": None,  # V8.0: Sectores estelares no tienen planet_id
+                "system_id": sys_obj.id,
+                "name": s.name,
+                "sector_type": s.type,
+                "max_slots": s.max_slots,
+                "resource_category": s.resource_category,
+                "luxury_resource": s.luxury_resource,
+                "is_known": s.is_known
+            })
 
     # Insertar Planetas por lotes para evitar timeouts
     batch_size = 100

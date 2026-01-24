@@ -325,3 +325,128 @@ def update_system_security_data(system_id: int, security: float, breakdown: Dict
     except Exception as e:
         log_event(f"Error actualizando seguridad detallada sistema {system_id}: {e}", is_error=True)
         return False
+
+
+# --- V8.0: SECTORES Y EDIFICIOS ESTELARES ---
+
+def get_stellar_sector_by_system(system_id: int) -> Optional[Dict[str, Any]]:
+    """
+    V8.0: Obtiene el sector estelar de un sistema.
+
+    Args:
+        system_id: ID del sistema.
+
+    Returns:
+        Dict con datos del sector estelar o None si no existe.
+    """
+    try:
+        response = _get_db().table("sectors")\
+            .select("*")\
+            .eq("system_id", system_id)\
+            .is_("planet_id", "null")\
+            .single()\
+            .execute()
+        return response.data if response and response.data else None
+    except Exception as e:
+        log_event(f"Error obteniendo sector estelar del sistema {system_id}: {e}", is_error=True)
+        return None
+
+
+def get_stellar_buildings_by_system(system_id: int, player_id: int) -> List[Dict[str, Any]]:
+    """
+    V8.0: Obtiene los edificios estelares de un sistema controlados por un jugador.
+
+    Args:
+        system_id: ID del sistema.
+        player_id: ID del jugador.
+
+    Returns:
+        Lista de edificios estelares del jugador en ese sistema.
+    """
+    try:
+        # Primero obtenemos el sector estelar del sistema
+        sector = get_stellar_sector_by_system(system_id)
+        if not sector:
+            return []
+
+        sector_id = sector.get("id")
+
+        # Buscamos edificios en ese sector que pertenezcan al jugador
+        # Nota: Asumimos una tabla 'stellar_buildings' o reutilizamos 'planet_buildings'
+        # con un campo sector_id. Ajustar según esquema real.
+        try:
+            response = _get_db().table("stellar_buildings")\
+                .select("*")\
+                .eq("sector_id", sector_id)\
+                .eq("player_id", player_id)\
+                .execute()
+            return response.data if response and response.data else []
+        except Exception:
+            # Si la tabla stellar_buildings no existe, intentamos con planet_buildings
+            # usando el sector_id del sector estelar
+            try:
+                response = _get_db().table("planet_buildings")\
+                    .select("*")\
+                    .eq("sector_id", sector_id)\
+                    .eq("player_id", player_id)\
+                    .execute()
+                return response.data if response and response.data else []
+            except Exception:
+                return []
+    except Exception as e:
+        log_event(f"Error obteniendo edificios estelares del sistema {system_id}: {e}", is_error=True)
+        return []
+
+
+def create_stellar_building(
+    system_id: int,
+    player_id: int,
+    building_type: str
+) -> Optional[Dict[str, Any]]:
+    """
+    V8.0: Crea un edificio estelar en el sector estelar de un sistema.
+
+    Args:
+        system_id: ID del sistema.
+        player_id: ID del jugador.
+        building_type: Tipo de edificio (ej: 'stellar_fortress', 'trade_beacon').
+
+    Returns:
+        Dict con el edificio creado o None si falla.
+    """
+    try:
+        sector = get_stellar_sector_by_system(system_id)
+        if not sector:
+            log_event(f"No existe sector estelar en sistema {system_id}", player_id, is_error=True)
+            return None
+
+        sector_id = sector.get("id")
+
+        # Verificar slots disponibles
+        max_slots = sector.get("max_slots", 3)
+        existing = get_stellar_buildings_by_system(system_id, player_id)
+        if len(existing) >= max_slots:
+            log_event(f"Sector estelar lleno en sistema {system_id}", player_id, is_error=True)
+            return None
+
+        # Crear el edificio
+        data = {
+            "sector_id": sector_id,
+            "player_id": player_id,
+            "building_type": building_type,
+            "is_active": True
+        }
+
+        try:
+            response = _get_db().table("stellar_buildings").insert(data).execute()
+        except Exception:
+            # Fallback a planet_buildings si stellar_buildings no existe
+            response = _get_db().table("planet_buildings").insert(data).execute()
+
+        if response and response.data:
+            log_event(f"Edificio estelar {building_type} construido en sistema {system_id}", player_id)
+            return response.data[0] if isinstance(response.data, list) else response.data
+        return None
+    except Exception as e:
+        log_event(f"Error creando edificio estelar: {e}", player_id, is_error=True)
+        return None

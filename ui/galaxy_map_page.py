@@ -10,12 +10,13 @@ Actualizado V5.2: Integración con Modo Omnisciencia (Debug).
 Refactor V5.8: Estandarización final a 'population' y navegación directa a Superficie.
 Feature: Visualización de Soberanía (Controlador de Sistema y Planetas).
 Actualizado V7.9.0: Actualización de etiquetas de interfaz para Soberanía.
+Actualizado V8.0: Visualización de Sectores Estelares y Megaestructuras.
 """
 import json
 import math
 import streamlit as st
 import streamlit.components.v1 as components
-from core.world_constants import BUILDING_TYPES, INFRASTRUCTURE_MODULES, ECONOMY_RATES
+from core.world_constants import BUILDING_TYPES, INFRASTRUCTURE_MODULES, ECONOMY_RATES, SECTOR_TYPE_STELLAR
 from data.database import get_supabase
 from data.planet_repository import (
     get_all_player_planets, 
@@ -64,6 +65,154 @@ def _resolve_faction_name(faction_id):
     if faction_id is None: return "Neutral"
     f_map = _get_faction_map()
     return f_map.get(faction_id, "Desconocido")
+
+
+def _render_stellar_sector_panel(system_id: int, system: dict, player):
+    """
+    V8.0: Renderiza el panel del sector estelar con información de megaestructuras.
+    Incluye botón de debug para tomar control del sistema.
+    """
+    st.subheader("🌟 Sector Estelar")
+
+    # Obtener sector estelar de la base de datos
+    stellar_sector = None
+    stellar_buildings = []
+    try:
+        sector_res = get_supabase().table("sectors")\
+            .select("*")\
+            .eq("system_id", system_id)\
+            .is_("planet_id", "null")\
+            .maybe_single()\
+            .execute()
+        if sector_res and sector_res.data:
+            stellar_sector = sector_res.data
+    except Exception as e:
+        st.caption(f"⚠️ Error cargando sector estelar: {e}")
+
+    if not stellar_sector:
+        st.info("ℹ️ Este sistema no tiene un sector estelar registrado en la base de datos.")
+        st.caption("Ejecuta el script `populate_galaxy_db.py` después de aplicar la migración SQL.")
+
+        # Botón debug para tomar control aunque no haya sector
+        if st.session_state.get("debug_omniscience", False):
+            _render_debug_control_button(system_id, system, player)
+        return
+
+    # Mostrar información del sector estelar
+    with st.container(border=True):
+        col1, col2, col3 = st.columns([3, 2, 2])
+
+        col1.markdown(f"**{stellar_sector.get('name', 'Espacio Estelar')}**")
+        col1.caption(f"Tipo: {stellar_sector.get('sector_type', 'Estelar')}")
+
+        max_slots = stellar_sector.get('max_slots', 3)
+        col2.metric("Slots Disponibles", f"{max_slots}")
+
+        # Tipo de estrella del sistema
+        star_type = system.get('star_type', 'G')
+        col3.metric("Clase Estelar", star_type)
+
+    # Obtener edificios estelares si el jugador tiene alguno
+    if player:
+        try:
+            buildings_res = get_supabase().table("stellar_buildings")\
+                .select("*")\
+                .eq("sector_id", stellar_sector['id'])\
+                .eq("player_id", player.id)\
+                .execute()
+            if buildings_res and buildings_res.data:
+                stellar_buildings = buildings_res.data
+        except:
+            # Fallback: intentar con planet_buildings
+            try:
+                buildings_res = get_supabase().table("planet_buildings")\
+                    .select("*")\
+                    .eq("sector_id", stellar_sector['id'])\
+                    .eq("player_id", player.id)\
+                    .execute()
+                if buildings_res and buildings_res.data:
+                    stellar_buildings = buildings_res.data
+            except:
+                pass
+
+    # Mostrar edificios estelares del jugador
+    if stellar_buildings:
+        st.markdown("**Tus Megaestructuras:**")
+        for b in stellar_buildings:
+            b_type = b.get('building_type', 'unknown')
+            b_def = BUILDING_TYPES.get(b_type, {})
+            status = "✅ Activo" if b.get('is_active', True) else "🛑 Inactivo"
+            st.write(f"- {b_def.get('name', b_type)} | {status}")
+    else:
+        st.caption("No tienes megaestructuras construidas en este sistema.")
+
+    # Mostrar estructuras disponibles para construcción
+    with st.expander("📋 Estructuras Estelares Disponibles"):
+        star_type = system.get('star_type', 'G')
+        for key, bdef in BUILDING_TYPES.items():
+            if not bdef.get('is_stellar', False):
+                continue
+            required_star = bdef.get('required_star_class')
+            if required_star and required_star != star_type:
+                st.caption(f"❌ {bdef['name']} - Requiere estrella clase {required_star}")
+                continue
+            maint = bdef.get('maintenance', {})
+            maint_str = ", ".join([f"{v} {k}" for k, v in maint.items()])
+            bonus = bdef.get('system_bonus', {})
+            bonus_str = ", ".join([f"{k}: {v}" for k, v in bonus.items()]) if bonus else "Producción directa"
+            st.markdown(f"**{bdef['name']}** - {bdef.get('description', '')}")
+            st.caption(f"Coste: {bdef.get('material_cost', 0)} materiales | Mant: {maint_str} | Bonus: {bonus_str}")
+
+    # Botón de debug para tomar control
+    if st.session_state.get("debug_omniscience", False):
+        st.markdown("---")
+        _render_debug_control_button(system_id, system, player)
+
+
+def _render_debug_control_button(system_id: int, system: dict, player):
+    """V8.0: Botón de debug para tomar control de un sistema."""
+    st.markdown("#### 🔧 Debug: Control de Sistema")
+
+    current_controller = system.get('controlling_faction_id')
+    current_name = _resolve_faction_name(current_controller)
+    st.caption(f"Controlador actual: {current_name}")
+
+    if player:
+        col1, col2 = st.columns(2)
+        if col1.button("🏴 Tomar Control", key=f"debug_take_control_{system_id}", type="primary"):
+            try:
+                # Actualizar el controlador del sistema
+                get_supabase().table("systems").update({
+                    "controlling_faction_id": player.id
+                }).eq("id", system_id).execute()
+                st.success(f"✅ Ahora controlas el sistema {system.get('name', system_id)}!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+        if col2.button("🏳️ Liberar Control", key=f"debug_release_control_{system_id}"):
+            try:
+                get_supabase().table("systems").update({
+                    "controlling_faction_id": None
+                }).eq("id", system_id).execute()
+                st.success("✅ Sistema liberado (Neutral)")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+        # Botón para reclamar el sector estelar
+        st.markdown("##### Sector Estelar")
+        if st.button("🛰️ Reclamar Sector Estelar", key=f"debug_claim_stellar_{system_id}"):
+            try:
+                get_supabase().table("sectors").update({
+                    "owner_id": player.id
+                }).eq("system_id", system_id).is_("planet_id", "null").execute()
+                st.success("✅ Sector estelar reclamado!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+    else:
+        st.warning("Inicia sesión para usar los controles de debug.")
 
 
 def show_galaxy_map_page():
@@ -176,7 +325,10 @@ def _render_system_view():
         ss = sum(secs) / len(secs) if secs else 0.0
     
     st.header(f"Sistema: {system.get('name', 'Desconocido')}")
-    
+
+    # Obtener player temprano para usarlo en múltiples secciones
+    player = get_player()
+
     # --- VISUALIZACIÓN DEL CONTROLADOR ---
     ctl_id = system.get('controlling_faction_id')
     ctl_name = _resolve_faction_name(ctl_id)
@@ -198,6 +350,9 @@ def _render_system_view():
         with st.expander("📊 Ver Desglose de Seguridad del Sistema"):
             st.write(sys_breakdown.get("details", ""))
             st.caption("Promedio basado en la seguridad individual de los cuerpos celestes.")
+
+    # --- V8.0: SECTOR ESTELAR ---
+    _render_stellar_sector_panel(system_id, system, player)
 
     st.subheader("Cuerpos celestiales")
     
