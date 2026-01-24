@@ -15,6 +15,7 @@ Actualizado v6.3.0: Definición de Puestos de Avanzada, Estaciones Orbitales y S
 Actualizado v6.4.0: Implementación de Sector Orbital y Soberanía Espacial.
 Actualizado v7.6.0: Ajuste de Capacidad Urbana (3 Slots).
 Actualizado v8.0.0: Control del Sistema (Nivel Estelar) - Megaestructuras y Bonos de Sistema.
+Actualizado v8.1.0: Estandarización de UI de Recursos (RESOURCE_UI_CONFIG).
 """
 from typing import Dict, List
 
@@ -514,6 +515,16 @@ LUXURY_PRICES = {
     "Códigos de Encriptación": 72,
     "Matrices de IA": 98,
     "Núcleos de Datos Crípticos": 132
+}
+
+# --- CONFIGURACIÓN UI DE RECURSOS (V8.1) ---
+# Estandarización de visualización en la interfaz
+RESOURCE_UI_CONFIG = {
+    "materiales": {"icon": "📦", "color": "gray"},
+    "componentes": {"icon": "⚙️", "color": "red"},
+    "celulas_energia": {"icon": "⚡", "color": "orange"},
+    "influencia": {"icon": "🎭", "color": "violet"},
+    "datos": {"icon": "💾", "color": "blue"}
 }
 
 # Configuración de Slots por Tipo de Sector (V4.6.0)

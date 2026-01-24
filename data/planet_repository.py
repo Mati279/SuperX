@@ -34,6 +34,7 @@ Actualizado v7.7.2: Fix PGRST204 delegando 'base_tier' al default de la base de 
 Actualizado v7.8.0: Join con Facciones para resolver nombres de Soberanía (Surface/Orbital) en get_planet_by_id.
 Hotfix v7.8.1: Estrategia Fail-Safe para get_planet_by_id (Recuperación en 2 pasos) para evitar errores de sintaxis PostgREST.
 Actualizado v7.9.0: Cambio de fuente de nombre de facción a 'players.faccion_nombre'.
+Actualizado v8.1.0: Robustez en resolución de nombres de soberanía (Fail-Safe Desconocido).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -70,6 +71,7 @@ def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
     Actualizado V7.8.1: Implementación ROBUSTA (Fail-Safe).
     Recupera datos crudos primero y resuelve nombres en query separada para evitar fallos de JOIN.
     Actualizado V7.9.0: Uso de 'faccion_nombre' directo de la tabla players.
+    Actualizado V8.1.0: Resolución estricta de 'Desconocido' si falla el nombre.
     """
     try:
         db = _get_db()
@@ -84,7 +86,7 @@ def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
         planet_data = response.data
         
         # 2. Resolución de Nombres de Soberanía (Query Auxiliar)
-        # Valores por defecto
+        # Valores por defecto iniciales (se sobrescriben si hay ID válido)
         planet_data["surface_owner_name"] = "Neutral"
         planet_data["orbital_owner_name"] = "Neutral"
         
@@ -109,23 +111,34 @@ def get_planet_by_id(planet_id: int) -> Optional[Dict[str, Any]]:
                     # Crear mapa {player_id: faccion_nombre}
                     player_faction_map = {}
                     for p in players_res.data:
-                        # Obtenemos el nombre directo, con fallback si es None
+                        # Obtenemos el nombre directo
                         f_name = p.get("faccion_nombre")
-                        if not f_name:
-                            f_name = "Sin Facción"
+                        
+                        # V8.1: Validación estricta. Si es None o string vacío, asignar "Desconocido".
+                        if not f_name or str(f_name).strip() == "":
+                            f_name = "Desconocido"
                         
                         player_faction_map[p["id"]] = f_name
                     
-                    # Asignar nombres al objeto planeta
-                    if s_id: planet_data["surface_owner_name"] = player_faction_map.get(s_id, "Desconocido")
-                    if o_id: planet_data["orbital_owner_name"] = player_faction_map.get(o_id, "Desconocido")
+                    # Asignar nombres al objeto planeta usando el mapa
+                    # Si el ID existe en el mapa, usa el nombre. Si no (ej. usuario borrado), usa "Desconocido".
+                    if s_id: 
+                        planet_data["surface_owner_name"] = player_faction_map.get(s_id, "Desconocido")
+                    if o_id: 
+                        planet_data["orbital_owner_name"] = player_faction_map.get(o_id, "Desconocido")
+                else:
+                    # Si la query no devuelve nada pero había IDs (caso raro de fallo total), asignar Desconocido
+                    if s_id: planet_data["surface_owner_name"] = "Desconocido"
+                    if o_id: planet_data["orbital_owner_name"] = "Desconocido"
             
             except Exception as e:
                 # Si falla la resolución de nombres, NO bloqueamos la carga del planeta
                 print(f"Warning: Fallo resolución de nombres soberanía: {e}")
                 # Mantenemos los valores por defecto o IDs como fallback visual
                 if s_id and planet_data["surface_owner_name"] == "Neutral": 
-                    planet_data["surface_owner_name"] = f"Jugador {s_id}"
+                    planet_data["surface_owner_name"] = "Desconocido"
+                if o_id and planet_data["orbital_owner_name"] == "Neutral":
+                    planet_data["orbital_owner_name"] = "Desconocido"
 
         return planet_data
 

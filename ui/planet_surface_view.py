@@ -14,6 +14,7 @@ Feature: Visualización de Soberanía y Dueños de Sectores.
 Hotfix V7.7: Sincronización DB (nombre) y corrección de Slots Urbanos.
 Hotfix V7.8: Corrección visualización Soberanía (Join backend).
 Actualizado V7.9.0: Cambio de fuente de nombre de facción a 'players.faccion_nombre' y actualización de etiquetas UI.
+Actualizado V8.1.0: Estandarización de Recursos (RESOURCE_UI_CONFIG) y Limpieza de UI (Remove ID, Fix Colors).
 """
 
 import streamlit as st
@@ -33,7 +34,8 @@ from core.world_constants import (
     BUILDING_TYPES, 
     PLANET_BIOMES, 
     SECTOR_TYPE_ORBITAL,
-    SECTOR_SLOTS_CONFIG
+    SECTOR_SLOTS_CONFIG,
+    RESOURCE_UI_CONFIG
 )
 from ui.state import get_player_id
 
@@ -138,13 +140,15 @@ def _render_info_header(planet: dict, asset: dict):
     """Muestra el resumen del planeta, tamaño y capacidad global."""
     st.title(f"Vista Planetaria: {planet['name']}")
     
-    # --- VISUALIZACIÓN DE SOBERANÍA (FIX V7.9.0) ---
-    # Usamos los datos enriquecidos directamente del repositorio
+    # --- VISUALIZACIÓN DE SOBERANÍA (FIX V8.1.0) ---
     s_owner = planet.get('surface_owner_name', "Desconocido")
-    o_owner = planet.get('orbital_owner_name', "Desconocido")
+    o_owner = planet.get('orbital_owner_name') # Puede ser None
     
-    # Actualización de etiquetas a 'Controlador'
-    st.markdown(f"**Controlador planetario:** :orange[{s_owner}] | **Controlador de la órbita:** :cyan[{o_owner}]")
+    # Validación segura para string
+    o_owner_str = o_owner if o_owner else "Neutral"
+    
+    # Actualización de etiquetas a 'Controlador' y corrección de color orbital (:cyan -> :blue)
+    st.markdown(f"**Controlador planetario:** :orange[{s_owner}] | **Controlador de la órbita:** :blue[{o_owner_str}]")
 
     col1, col2, col3, col4 = st.columns(4)
     
@@ -177,13 +181,8 @@ def _render_info_header(planet: dict, asset: dict):
             with st.expander("🔍 Desglose"):
                 st.caption(f"{sec_breakdown['text']}")
     
-    # Slots Info (Extra row)
+    # V8.1: Eliminada la sección redundante de "Slots Info" para limpiar la cabecera.
     st.divider()
-    if asset:
-        slots = get_base_slots_info(asset['id'])
-        st.write(f"**Capacidad de Construcción:** {slots['used']} / {slots['total']} Slots utilizados.")
-    else:
-        st.write("**Capacidad de Construcción:** Modo Observador (Sin Colonia)")
 
 
 def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_mode: bool, sectors: list, buildings: list):
@@ -213,6 +212,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     V7.2: Manejo de Niebla de Superficie.
     V7.6: Soporte explícito para visualización Orbital y Bypass de Niebla.
     V7.7: Cálculo de Slots dinámico basado en World Constants.
+    V8.1: Refactor UI (Recursos Estandarizados, Sin ID, Propiedad Destacada).
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE (V7.2) ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -221,7 +221,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     # La órbita siempre es visible, independientemente del flag (safety check)
     if not is_explored and not is_orbital and not debug_mode:
         # Renderizado Oculto
-        st.markdown(f"### 🌫️ Sector Desconocido ({sector['id']})")
+        st.markdown(f"### 🌫️ Sector Desconocido") # V8.1: Quitamos el ID del titulo oculto tambien
         st.caption("Zona no cartografiada. Sensores bloqueados.")
         st.write("**Terreno:** ???")
         st.write("**Recursos:** ???")
@@ -251,50 +251,55 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     s_type = sector.get('sector_type') or sector.get('type') or "Desconocido"
     icon = icons.get(s_type, "💠")
     
-    st.markdown(f"### {icon} {s_type} (Sector {sector['id']})")
+    # V8.1: Título Limpio (Sin ID visible)
+    st.markdown(f"### {icon} {s_type}")
     
     # --- PROPIEDAD DEL SECTOR ---
     sector_buildings = [b for b in buildings if b.get('sector_id') == sector['id']]
+    
+    # Determinamos el dueño actual del sector para lógica de construcción
+    current_sector_owner_id = None
+    
     if sector_buildings:
         # Tomar el primer edificio para determinar el dueño
         owner_pid = sector_buildings[0].get('player_id')
+        current_sector_owner_id = owner_pid
         if owner_pid:
             faction_name = _get_faction_name_by_player(owner_pid)
-            st.caption(f"Propiedad de: **{faction_name}**")
+            # V8.1: Nombre de facción destacado en color
+            st.caption(f"Propiedad de: :orange[**{faction_name}**]")
         else:
              st.caption("Propiedad: Desconocida")
     else:
         st.caption("Sector No Reclamado")
 
 
-    # V7.0: Visualización Estricta de Recursos
-    # Mapeo de colores según requerimiento
-    res_color_map = {
-        "Materiales": "grey",
-        "Energía": "orange",
-        "Datos": "blue",
-        "Influencia": "violet",
-        "Componentes": "red"
-    }
-
+    # V8.1: Visualización Estricta de Recursos (RESOURCE_UI_CONFIG)
     res_cat = sector.get('resource_category')
     lux_res = sector.get('luxury_resource')
     
     if res_cat:
-        # Color específico o gris por defecto
-        color = res_color_map.get(res_cat, "grey")
-        # Formato: :color[**TEXTO.**]
-        st.markdown(f":{color}[**{res_cat.upper()}.**]")
+        # Normalizar clave (por si viene en mayúsculas o sucio)
+        cat_key = res_cat.lower().strip()
+        
+        if cat_key in RESOURCE_UI_CONFIG:
+            cfg = RESOURCE_UI_CONFIG[cat_key]
+            # Formato: :color[**ICON Nombre.**] en Sentence Case
+            name_display = cat_key.capitalize()
+            st.markdown(f":{cfg['color']}[**{cfg['icon']} {name_display}.**]")
+        else:
+            # Fallback si no está en config
+            st.markdown(f":gray[**{res_cat.capitalize()}.**]")
         
     if lux_res:
-        # Recurso de lujo siempre magenta
-        st.markdown(f":magenta[**{lux_res.upper()}.**]")
+        # Recurso de lujo con estilo genérico diamante magenta
+        st.markdown(f":magenta[**💎 {lux_res}.**]")
 
     # Visualización de capacidad del sector
     # Nota: 'buildings_count' es inyectado dinámicamente por planet_repository V6.0
     used = sector.get('buildings_count', 0)
     
-    # Fix V7.7: Uso de SECTOR_SLOTS_CONFIG para determinar total de slots, especialmente para Urbano (3 slots)
+    # Fix V7.7: Uso de SECTOR_SLOTS_CONFIG para determinar total de slots
     total = sector.get('slots') or SECTOR_SLOTS_CONFIG.get(s_type, 2)
     
     st.write(f"Capacidad: {used} / {total}")
@@ -309,44 +314,74 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
             c1, c2 = st.columns([0.8, 0.2])
             c1.write(f"• {name} (Tier {b['building_tier']})")
             
-            # Opción de Demolición (Solo si hay asset/colonia)
-            if asset_id and c2.button("🗑️", key=f"dem_{b['id']}", help=f"Demoler {name}"):
+            # Opción de Demolición (Solo si hay asset/colonia Y es mi edificio)
+            # Nota: Si asset_id existe, implica que el jugador tiene presencia en el planeta.
+            # Verificamos si el edificio pertenece al jugador actual.
+            if asset_id and b.get('player_id') == player_id and c2.button("🗑️", key=f"dem_{b['id']}", help=f"Demoler {name}"):
                 if demolish_building(b['id'], player_id):
                     st.toast(f"Estructura {name} demolida.")
                     st.rerun()
     else:
         st.caption("No hay estructuras en este sector.")
 
-    # Panel de Construcción (Solo si hay slots libres y asset existe)
-    if asset_id and used < total:
-        with st.expander("🏗️ Construir Estructura"):
+    # --- PANEL DE CONSTRUCCIÓN (V8.1) ---
+    # REGLA: Solo mostrar si el sector está vacío (No Reclamado) 
+    # O si el dueño de los edificios actuales soy yo.
+    
+    is_sector_empty = (not sector_buildings)
+    is_my_sector = (current_sector_owner_id == player_id)
+    
+    can_build_access = is_sector_empty or is_my_sector
+    
+    # Panel de Construcción (Solo si hay slots libres, asset existe y tengo acceso)
+    if asset_id and used < total and can_build_access:
+        # V8.1: Renombrado a "🏗️ Construir"
+        with st.expander("🏗️ Construir"):
             available_types = list(BUILDING_TYPES.keys())
             
             # Regla de Negocio: Evitar múltiples HQ en la UI (el backend también lo valida)
             has_hq = any(b['building_type'] == 'hq' for b in buildings)
             if has_hq and 'hq' in available_types:
                 available_types.remove('hq')
-                
+            
+            # Filtrar por terreno permitido para evitar errores visuales
+            # (Aunque build_structure valida, es mejor UX filtrar aquí)
+            filtered_types = []
+            for t in available_types:
+                b_def = BUILDING_TYPES[t]
+                allowed = b_def.get("allowed_terrain")
+                # Si no define allowed, asumimos permitido (salvo que sea orbital check)
+                if not allowed or s_type in allowed:
+                     filtered_types.append(t)
+
             selected_type = st.selectbox(
                 "Tipo de Edificio",
-                available_types,
+                filtered_types,
                 format_func=lambda x: BUILDING_TYPES[x]['name'],
                 key=f"sel_build_{sector['id']}"
             )
             
-            st.info(BUILDING_TYPES[selected_type]['description'])
-            
-            if st.button("Confirmar Construcción", key=f"btn_b_{sector['id']}", use_container_width=True):
-                # Llamada atómica a la lógica de construcción V4.3
-                new_struct = build_structure(
-                    planet_asset_id=asset_id,
-                    player_id=player_id,
-                    building_type=selected_type,
-                    sector_id=sector['id']
-                )
+            if selected_type:
+                st.info(BUILDING_TYPES[selected_type]['description'])
                 
-                if new_struct:
-                    st.toast(f"Construcción de {BUILDING_TYPES[selected_type]['name']} iniciada.")
-                    st.rerun()
-                else:
-                    st.error("Error en la construcción. Verifique recursos o requisitos.")
+                # Mostrar costos básicos para referencia (Opcional, pero útil)
+                cost = BUILDING_TYPES[selected_type].get("material_cost", 0)
+                st.caption(f"Costo: {cost} Materiales")
+            
+                if st.button("Confirmar Construcción", key=f"btn_b_{sector['id']}", use_container_width=True):
+                    # Llamada atómica a la lógica de construcción V4.3
+                    new_struct = build_structure(
+                        planet_asset_id=asset_id,
+                        player_id=player_id,
+                        building_type=selected_type,
+                        sector_id=sector['id']
+                    )
+                    
+                    if new_struct:
+                        st.toast(f"Construcción de {BUILDING_TYPES[selected_type]['name']} iniciada.")
+                        st.rerun()
+                    else:
+                        st.error("Error en la construcción. Verifique recursos o requisitos.")
+    elif not can_build_access and asset_id:
+        # Feedback visual de por qué no se puede construir
+        st.warning("⛔ Sector controlado por otra facción.")
