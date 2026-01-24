@@ -17,11 +17,12 @@ Actualizado V7.4: Construcción automática de Comando Central (HQ) en sector ur
 Actualizado V7.5: Fix Soberanía Inicial (Sincronización Orbital en Creación).
 Actualizado V7.6: Estandarización de Planeta Inicial (Mass Class: Estándar).
 Actualizado V7.7: Refactor integral para uso de create_planet_asset (Seguridad y Fail-safes).
+Actualizado V10: Propagación de Ubicación (Sistema/Sector) a Comandante y Tripulación. Retorno Dict.
 """
 
 import random
 import traceback
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union
 from data.database import get_supabase
 from data.log_repository import log_event
 # Importación actualizada para V7.4 y V7.7
@@ -65,13 +66,20 @@ def _get_db():
     """Helper para obtener la instancia de BD de forma segura."""
     return get_supabase()
 
-def genesis_protocol(player_id: int) -> bool:
+def genesis_protocol(player_id: int) -> Union[bool, Dict[str, Any]]:
+    """
+    Ejecuta el protocolo de inicio.
+    Returns: 
+       Dict con keys {'success', 'planet_id', 'system_id', 'sector_id', ...} 
+       o False en caso de error.
+    """
     try:
         log_event("Iniciando Protocolo Génesis V4.2 (Fair Start)...", player_id)
         db = _get_db()
         
         target_planet = None
         system_id = None
+        landing_sector_id = None
         
         # 1. Búsqueda de Sistema y Planeta Habitable (Retry Logic)
         # Intentamos hasta 3 veces encontrar un sistema seguro que contenga planetas con biomas habitables.
@@ -115,7 +123,7 @@ def genesis_protocol(player_id: int) -> bool:
                 error_msg = "❌ CRITICAL: No existen planetas habitables de clase 'Estándar' en la base de datos."
                 print(error_msg)
                 log_event(error_msg, player_id, is_error=True)
-                return False
+                return {"success": False}
                 
             target_planet = random.choice(fallback.data)
             system_id = target_planet['system_id']
@@ -141,7 +149,7 @@ def genesis_protocol(player_id: int) -> bool:
 
         if not created_asset:
             log_event("❌ Error crítico: No se pudo crear el asset planetario mediante create_planet_asset.", player_id, is_error=True)
-            return False
+            return {"success": False}
 
         planet_asset_id = created_asset['id']
         
@@ -201,17 +209,26 @@ def genesis_protocol(player_id: int) -> bool:
             log_event(f"Error inicializando sectores/edificio inicial: {e}", player_id, is_error=True)
             traceback.print_exc()
 
-        # 5. Generación de Tripulación Inicial (Opcional/Manual en UI)
-        # _deploy_starting_crew(player_id, target_planet['id'])
+        # 5. Generación de Tripulación Inicial (V10 - Reactivado con Ubicación Correcta)
+        if landing_sector_id and system_id:
+             _deploy_starting_crew(player_id, target_planet['id'], system_id, landing_sector_id)
         
         log_event(f"✅ Protocolo Génesis completado. Base: {base_name}. Pob: {initial_pop}B. (Bioma: {target_planet.get('biome', 'Unknown')})", player_id)
-        return True
+        
+        # Return context for external usage (Player/Commander creation)
+        return {
+            "success": True,
+            "planet_id": target_planet['id'],
+            "system_id": system_id,
+            "sector_id": landing_sector_id,
+            "planet_asset_id": planet_asset_id
+        }
 
     except Exception as e:
         print("\n💥 EXCEPCIÓN EN GENESIS PROTOCOL:")
         traceback.print_exc() 
         log_event(f"❌ Error Crítico en Genesis Protocol: {e}", player_id, is_error=True)
-        return False
+        return {"success": False}
 
 def find_safe_starting_node() -> int:
     try:
@@ -288,10 +305,11 @@ def _grant_visibility(player_id: int, system_id: int, level: int):
     except Exception as e:
         print(f"Error granting visibility: {e}")
 
-def _deploy_starting_crew(player_id: int, planet_id: int):
+def _deploy_starting_crew(player_id: int, planet_id: int, system_id: int, sector_id: int):
     """
     Genera la tripulación inicial (Oficial y Especialistas) con estado KNOWN.
     Esto evita que aparezcan como 'Desconocidos' en la UI.
+    FIX V10: Recibe system_id y sector_id para persistencia correcta.
     """
     try:
         log_event("🚀 Desplegando tripulación inicial de confianza...", player_id)
@@ -300,6 +318,8 @@ def _deploy_starting_crew(player_id: int, planet_id: int):
         recruit_character_with_ai(
             player_id=player_id,
             location_planet_id=planet_id,
+            location_system_id=system_id, # V10
+            location_sector_id=sector_id, # V10
             min_level=5,
             max_level=5,
             initial_knowledge_level=KnowledgeLevel.KNOWN
@@ -310,6 +330,8 @@ def _deploy_starting_crew(player_id: int, planet_id: int):
             recruit_character_with_ai(
                 player_id=player_id,
                 location_planet_id=planet_id,
+                location_system_id=system_id, # V10
+                location_sector_id=sector_id, # V10
                 min_level=3,
                 max_level=3,
                 initial_knowledge_level=KnowledgeLevel.KNOWN

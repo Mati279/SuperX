@@ -199,17 +199,34 @@ def register_player_account(
         # 2. Ejecutar Protocolo Génesis (Delegado al Engine)
         # Esto maneja: Ubicación segura, Selección Aleatoria de Planeta, 
         # Población (MMFR), Inventario Inicial y Niebla de Guerra.
-        genesis_success = genesis_protocol(player_id)
+        # FIX V10: Capturamos el resultado completo (dict) en lugar de solo bool
+        genesis_result = genesis_protocol(player_id)
         
-        if not genesis_success:
+        # Soporte retrocompatible (por si genesis devuelve solo bool en versiones viejas)
+        is_success = genesis_result if isinstance(genesis_result, bool) else genesis_result.get("success", False)
+        
+        if not is_success:
             raise GenesisProtocolError("El protocolo Genesis devolvió False.", {"player_id": player_id})
+
+        # Extraer contexto de ubicación del Genesis
+        genesis_ctx = genesis_result if isinstance(genesis_result, dict) else {}
+        loc_system = genesis_ctx.get("system_id")
+        loc_planet = genesis_ctx.get("planet_id")
+        loc_sector = genesis_ctx.get("sector_id")
 
         # 3. Comandante (Responsabilidad del Repo, el engine solo maneja mundo/assets)
         stats = generate_genesis_commander_stats(user_name)
         
-        # FIX SCHEMA V2: Inyectar ubicación en JSON ya que la columna de texto se eliminó
+        # FIX SCHEMA V2: Inyectar ubicación en JSON y en Columnas SQL
         if "estado" not in stats: stats["estado"] = {}
-        stats["estado"]["ubicacion_local"] = "Puesto de Mando"
+        
+        # Estructura completa de ubicación para JSON
+        stats["estado"]["ubicacion"] = {
+            "system_id": loc_system,
+            "planet_id": loc_planet,
+            "sector_id": loc_sector,
+            "ubicacion_local": "Puesto de Mando"
+        }
 
         char_data = {
             "player_id": player_id,
@@ -221,8 +238,12 @@ def register_player_account(
             "level": stats['nivel'],
             "xp": stats['xp'],
             "estado_id": 1,       # 1 = Disponible
-            "stats_json": stats
-            # Eliminados: clase (texto), ubicacion (texto), estado (texto)
+            "stats_json": stats,
+            
+            # FIX: Inyección de columnas de ubicación SQL (Source of Truth)
+            "location_system_id": loc_system,
+            "location_planet_id": loc_planet,
+            "location_sector_id": loc_sector
         }
 
         try:
@@ -436,16 +457,30 @@ def reset_player_progress(player_id: int) -> bool:
         # --- FASE 2: RE-GÉNESIS (Reconstrucción Vía Engine) ---
 
         # 1. Ejecutar Protocolo Génesis Centralizado
-        genesis_success = genesis_protocol(player_id)
-        if not genesis_success:
+        # FIX V10: Capturar resultado como Dict
+        genesis_result = genesis_protocol(player_id)
+        is_success = genesis_result if isinstance(genesis_result, bool) else genesis_result.get("success", False)
+        
+        if not is_success:
             raise Exception("Genesis Protocol failed during reset")
+
+        # Contexto de ubicación
+        genesis_ctx = genesis_result if isinstance(genesis_result, dict) else {}
+        loc_system = genesis_ctx.get("system_id")
+        loc_planet = genesis_ctx.get("planet_id")
+        loc_sector = genesis_ctx.get("sector_id")
 
         # 2. Re-crear Comandante (Responsabilidad del Repo)
         stats = generate_genesis_commander_stats(player.get('nombre', 'Comandante'))
         
-        # FIX SCHEMA V2: Inyectar ubicación en JSON
+        # FIX SCHEMA V2: Inyectar ubicación completa
         if "estado" not in stats: stats["estado"] = {}
-        stats["estado"]["ubicacion_local"] = "Puesto de Mando"
+        stats["estado"]["ubicacion"] = {
+            "system_id": loc_system,
+            "planet_id": loc_planet,
+            "sector_id": loc_sector,
+            "ubicacion_local": "Puesto de Mando"
+        }
         
         char_data = {
             "player_id": player_id,
@@ -457,8 +492,12 @@ def reset_player_progress(player_id: int) -> bool:
             "level": stats['nivel'],
             "xp": stats['xp'],
             "estado_id": 1,       # 1 = Disponible
-            "stats_json": stats
-            # Eliminados: clase, ubicacion, estado
+            "stats_json": stats,
+            
+            # FIX: Columnas SQL de ubicación
+            "location_system_id": loc_system,
+            "location_planet_id": loc_planet,
+            "location_sector_id": loc_sector
         }
         db.table("characters").insert(char_data).execute()
 
