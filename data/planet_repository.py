@@ -39,6 +39,7 @@ Actualizado v8.2.0: Fix build_structure (Ghost Buildings Check & ID types).
 Actualizado v8.2.1: Fix Not-Null Constraint (Inyección de pops_required y energy_consumption).
 Actualizado v8.3.0: Business Logic para HQ Único (Reemplazo de Constraint DB).
 Actualizado v9.1.0: Implementación de Seguridad de Sistema (Recálculo automático en cascada).
+Actualizado v9.2.0: Reglas de Soberanía Conflictiva y Excepción de Construcción Orbital (Bypass de Flota).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -607,21 +608,30 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
     2. Si no hay estación, 'enemy_fleet_owner_id' (ocupación por flota).
     3. Si no hay estación ni flota enemiga, 'surface_owner_id' (herencia).
 
+    Reglas V9.2 (Soberanía Superficie Conflictiva):
+    - Si Población > 0: El soberano es el dueño del HQ (Base en Sector Urbano).
+    - Si Población == 0:
+      * 1 Jugador con Outposts -> Soberano.
+      * > 1 Jugador con Outposts (Conflicto) -> None (Tierra de nadie).
+      
     V9.0: Al final, recalcula automáticamente el controlador del sistema (cascada).
     """
     try:
         db = _get_db()
 
-        # 0. Obtener system_id para recalcular control de sistema al final
-        planet_info_res = db.table("planets").select("system_id").eq("id", planet_id).single().execute()
-        system_id = planet_info_res.data.get("system_id") if planet_info_res and planet_info_res.data else None
+        # 0. Obtener system_id y poblacion para reglas
+        planet_info_res = db.table("planets").select("system_id, population").eq("id", planet_id).single().execute()
+        if not planet_info_res or not planet_info_res.data:
+            return
+            
+        system_id = planet_info_res.data.get("system_id")
+        population = planet_info_res.data.get("population", 0.0)
 
         # 1. Obtener todos los edificios del planeta
         assets_res = db.table("planet_assets").select("id, player_id").eq("planet_id", planet_id).execute()
         if not assets_res or not assets_res.data:
             # Nadie en el planeta
             db.table("planets").update({"surface_owner_id": None, "orbital_owner_id": enemy_fleet_owner_id}).eq("id", planet_id).execute()
-            # V9.0: Recalcular control del sistema en cascada
             if system_id:
                 recalculate_system_ownership(system_id)
             return
@@ -654,14 +664,20 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
             elif b_type == "orbital_station" and is_active:
                 orbital_station_owner = pid
 
-        # Lógica de Soberanía Superficie
+        # Lógica de Soberanía Superficie (V9.2)
         new_surface_owner = None
-        if hq_owner:
-            new_surface_owner = hq_owner
-        elif len(outpost_owners) == 1:
-            new_surface_owner = list(outpost_owners)[0]
+        
+        if population > 0:
+            # Regla: Si hay población, manda el HQ (Base Urbana)
+            # Si se destruyó el HQ pero queda población, se pierde soberanía hasta reconstruirlo
+            new_surface_owner = hq_owner 
         else:
-            new_surface_owner = None
+            # Regla: Planeta Salvaje / Puestos de Avanzada
+            if len(outpost_owners) == 1:
+                new_surface_owner = list(outpost_owners)[0]
+            else:
+                # 0 owners OR > 1 (Conflicto de Puestos)
+                new_surface_owner = None
 
         # Lógica de Soberanía Orbital (V6.4)
         new_orbital_owner = None
@@ -676,8 +692,8 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
         db.table("planets").update({
             "surface_owner_id": new_surface_owner,
             "orbital_owner_id": new_orbital_owner,
-            # Disputa de superficie si hay HQs rivales (improbable) o multiples outposts
-            "is_disputed": (hq_owner is None and len(outpost_owners) > 1)
+            # Disputa: Si no hay soberano de superficie definido pero hay múltiples outposts
+            "is_disputed": (new_surface_owner is None and len(outpost_owners) > 1)
         }).eq("id", planet_id).execute()
 
         # V9.0: Recalcular control del sistema en cascada
@@ -768,10 +784,10 @@ def build_structure(
             if matches: 
                 target_sector = matches[0]
                 
-                # V8.2: Re-validar Allowed Terrain si se pasa ID explícito (Consistency Check)
+                # V9.2: Re-validar Allowed Terrain si se pasa ID explícito (HARD-LOCK)
                 allowed = definition.get("allowed_terrain")
                 if allowed and target_sector["sector_type"] not in allowed:
-                    log_event(f"Terreno {target_sector['sector_type']} no válido para {building_type}.", player_id, is_error=True)
+                    log_event(f"Error de Construcción: Terreno {target_sector['sector_type']} incompatible con {definition['name']}.", player_id, is_error=True)
                     return None
         else:
             # Auto-asignación inteligente
@@ -782,7 +798,7 @@ def build_structure(
                 if definition.get("consumes_slots", True) and s["buildings_count"] >= s["slots"]:
                     continue
                 
-                # REGLA V6.4: Validar Allowed Terrain explícito
+                # REGLA V6.4 / V9.2: Validar Allowed Terrain explícito (HARD-LOCK)
                 allowed = definition.get("allowed_terrain")
                 if allowed and s["sector_type"] not in allowed:
                     continue
@@ -809,7 +825,7 @@ def build_structure(
             log_event("No hay sectores disponibles o válidos (Bloqueo/Espacio/Tipo).", player_id, is_error=True)
             return None
 
-        # --- VALIDACIONES ORBITALES ESPECÍFICAS (V6.4) ---
+        # --- VALIDACIONES ORBITALES ESPECÍFICAS (V6.4 y V9.2) ---
         if definition.get("is_orbital", False):
             # Verificar presencia: Dueño de Superficie o Control Orbital actual (Flota/Estación)
             planet_info = get_planet_by_id(planet_id)
@@ -817,23 +833,23 @@ def build_structure(
                 surface_owner = planet_info.get("surface_owner_id")
                 orbital_owner = planet_info.get("orbital_owner_id")
                 
-                has_presence = (surface_owner == player_id) or (orbital_owner == player_id)
-                # O si no hay dueño orbital y soy surface owner (cubierto arriba), o si orbital está vacía y tengo flota (no chequeable aquí directo sin flota, asumimos control si orbital_owner es None o Yo).
-                # Si orbital_owner es otro jugador, BLOQUEADO.
+                # V9.2 EXCEPCIÓN DE CONSTRUCCIÓN ORBITAL:
+                # Si soy dueño de la superficie, NO necesito flota en órbita (orbital_owner puede ser None).
+                is_surface_owner = (surface_owner == player_id)
+                is_orbital_owner = (orbital_owner == player_id)
                 
+                # Regla de Bloqueo:
+                # Si hay un dueño orbital diferente a mí, NO puedo construir (independientemente de la superficie)
                 if orbital_owner and orbital_owner != player_id:
                      log_event("Construcción orbital bloqueada: Órbita controlada por enemigo.", player_id, is_error=True)
                      return None
                 
-                if not has_presence and orbital_owner is not None:
-                     # Si no soy dueño de nada y hay dueño, no puedo construir.
-                     # Si orbital_owner es None, y surface_owner es otro, puedo construir? 
-                     # Solo si tengo flota (que habría puesto orbital_owner = yo). 
-                     # Así que si orbital_owner es None, nadie tiene flota. 
-                     # Si surface_owner es otro, y orbital_owner es None -> Hereda surface.
-                     # Por ende, orbital_owner == None implica surface_owner == None? No necesariamente en la DB, pero logicamente sí.
-                     # En resumen: Si orbital_owner != player_id -> Fail.
-                     pass 
+                # Regla de Requisito:
+                # Debo ser dueño de la superficie O dueño orbital (flota).
+                # Si orbital_owner es None, solo paso si is_surface_owner es True.
+                if not is_surface_owner and not is_orbital_owner:
+                     log_event("Requisito Orbital: Se requiere control de superficie o flota en órbita.", player_id, is_error=True)
+                     return None
 
         # Validación explícita de bloqueo en target
         occupants = sector_occupants.get(target_sector["id"], set())
