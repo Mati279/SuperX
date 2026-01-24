@@ -60,16 +60,28 @@ from typing import Optional
 def _get_player_name_by_id(player_id: Optional[int]) -> str:
     """
     Resuelve el nombre de un jugador por su ID.
-    V9.0: Busca en characters (nombre de personaje) o retorna un fallback genérico.
+    V9.0: Usa 'faccion_nombre' de la tabla players (consistente con planet_surface_view).
+    Fallback a nombre de personaje (characters.nombre) si no hay facción.
     """
     if player_id is None:
         return "Neutral"
     try:
-        res = get_supabase().table("characters").select("name").eq("player_id", player_id).limit(1).maybe_single().execute()
+        # Primero: Buscar faccion_nombre en players (fuente principal de soberanía)
+        res = get_supabase().table("players").select("faccion_nombre").eq("id", player_id).maybe_single().execute()
         if res and res.data:
-            return res.data['name']
+            faction_name = res.data.get('faccion_nombre')
+            if faction_name and str(faction_name).strip():
+                return faction_name
+
+        # Fallback: Buscar nombre del comandante en characters
+        char_res = get_supabase().table("characters").select("nombre").eq("player_id", player_id).limit(1).maybe_single().execute()
+        if char_res and char_res.data:
+            char_name = char_res.data.get('nombre')
+            if char_name and str(char_name).strip():
+                return char_name
+
         return f"Jugador {player_id}"
-    except:
+    except Exception:
         return "Desconocido"
 
 
