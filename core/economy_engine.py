@@ -9,6 +9,7 @@ Corrección V5.7: Estandarización de Fórmula Fiscal usando 'core.rules.calcula
 Corrección V5.8: Fix crítico de nomenclatura 'poblacion' a 'population'.
 Actualizado V6.3: Implementación de Restricciones de Soberanía y Bloqueos.
 Actualizado V6.4: Penalización por Bloqueo Orbital Enemigo en Producción Industrial.
+Actualizado V8.0: Control del Sistema (Nivel Estelar) - Bonos de Sistema y Producción Estelar.
 """
 
 from typing import Dict, List, Any, Tuple, Optional
@@ -31,7 +32,8 @@ from core.world_constants import (
     BUILDING_SHUTDOWN_PRIORITY,
     ECONOMY_RATES,
     DISPUTED_PENALTY_MULTIPLIER,
-    SECTOR_TYPE_URBAN
+    SECTOR_TYPE_URBAN,
+    SECTOR_TYPE_STELLAR
 )
 from core.models import ProductionSummary, EconomyTickResult
 from core.market_engine import process_pending_market_orders
@@ -198,6 +200,171 @@ def calculate_planet_production(active_buildings: List[Dict[str, Any]], penalty_
     return production
 
 
+# --- V8.0: PROCESAMIENTO DE BONOS DE SISTEMA (ESTRUCTURAS ESTELARES) ---
+
+@dataclass
+class SystemBonuses:
+    """V8.0: Contenedor de bonos aplicables a nivel de sistema."""
+    fiscal_multiplier: float = 1.0        # Multiplicador de ingresos fiscales
+    maintenance_multiplier: float = 1.0   # Multiplicador de costes de mantenimiento
+    security_flat: float = 0.0            # Bono plano de seguridad a todos los planetas
+    material_multiplier: float = 1.0      # Multiplicador de producción de materiales
+    data_multiplier: float = 1.0          # Multiplicador de producción de datos
+    mitigate_ring_penalty: bool = False   # Mitiga penalización por anillo orbital
+    defense_bonus: int = 0                # Bono de defensa del sistema
+    detection_range: int = 0              # Rango de detección adicional
+    ftl_speed_bonus: float = 0.0          # Bono de velocidad FTL
+
+
+def calculate_system_bonuses(stellar_buildings: List[Dict[str, Any]]) -> SystemBonuses:
+    """
+    V8.0: Calcula los bonos acumulados de las estructuras estelares activas.
+
+    Args:
+        stellar_buildings: Lista de edificios estelares activos (con is_active=True).
+
+    Returns:
+        SystemBonuses con todos los modificadores aplicables.
+    """
+    bonuses = SystemBonuses()
+
+    for building in stellar_buildings:
+        if not building.get("is_active", True):
+            continue
+
+        building_type = building.get("building_type", "")
+        definition = BUILDING_TYPES.get(building_type, {})
+        system_bonus = definition.get("system_bonus", {})
+
+        # Acumular bonos multiplicativos (se multiplican entre sí)
+        if "fiscal_multiplier" in system_bonus:
+            bonuses.fiscal_multiplier *= system_bonus["fiscal_multiplier"]
+        if "maintenance_multiplier" in system_bonus:
+            bonuses.maintenance_multiplier *= system_bonus["maintenance_multiplier"]
+        if "material_multiplier" in system_bonus:
+            bonuses.material_multiplier *= system_bonus["material_multiplier"]
+        if "data_multiplier" in system_bonus:
+            bonuses.data_multiplier *= system_bonus["data_multiplier"]
+        if "ftl_speed_bonus" in system_bonus:
+            bonuses.ftl_speed_bonus += system_bonus["ftl_speed_bonus"]
+
+        # Acumular bonos aditivos
+        if "security_flat" in system_bonus:
+            bonuses.security_flat += system_bonus["security_flat"]
+        if "defense" in system_bonus:
+            bonuses.defense_bonus += system_bonus["defense"]
+        if "detection_range" in system_bonus:
+            bonuses.detection_range += system_bonus["detection_range"]
+
+        # Flags booleanos (OR)
+        if system_bonus.get("mitigate_ring_penalty", False):
+            bonuses.mitigate_ring_penalty = True
+
+    return bonuses
+
+
+def calculate_stellar_production(
+    stellar_buildings: List[Dict[str, Any]],
+    system_bonuses: SystemBonuses
+) -> ProductionSummary:
+    """
+    V8.0: Calcula la producción directa de las estructuras estelares.
+
+    Args:
+        stellar_buildings: Lista de edificios estelares activos.
+        system_bonuses: Bonos calculados del sistema (para aplicar multiplicadores).
+
+    Returns:
+        ProductionSummary con los recursos producidos.
+    """
+    production = ProductionSummary()
+
+    for building in stellar_buildings:
+        if not building.get("is_active", True):
+            continue
+
+        building_type = building.get("building_type", "")
+        definition = BUILDING_TYPES.get(building_type, {})
+        base_prod = definition.get("production", {})
+
+        # Aplicar producción base con multiplicadores del sistema
+        production.materiales += int(
+            base_prod.get("materiales", 0) * system_bonuses.material_multiplier
+        )
+        production.componentes += int(base_prod.get("componentes", 0))
+        production.celulas_energia += int(base_prod.get("celulas_energia", 0))
+        production.influencia += int(base_prod.get("influencia", 0))
+        production.datos += int(
+            base_prod.get("datos", 0) * system_bonuses.data_multiplier
+        )
+
+    return production
+
+
+def process_stellar_building_maintenance(
+    stellar_buildings: List[Dict[str, Any]],
+    available_resources: Dict[str, int],
+    maintenance_multiplier: float = 1.0
+) -> MaintenanceResult:
+    """
+    V8.0: Procesa el mantenimiento de edificios estelares.
+    Similar a process_building_maintenance pero para estructuras estelares.
+
+    Args:
+        stellar_buildings: Lista de edificios estelares.
+        available_resources: Recursos disponibles del jugador.
+        maintenance_multiplier: Multiplicador de coste (ej: 0.9 si hay logistics_hub).
+
+    Returns:
+        MaintenanceResult con edificios pagados y costes.
+    """
+    result = MaintenanceResult()
+    current_resources = available_resources.copy()
+
+    def get_priority(b: Dict) -> int:
+        b_type = b.get("building_type", "")
+        cat = BUILDING_TYPES.get(b_type, {}).get("category", "otros")
+        return BUILDING_SHUTDOWN_PRIORITY.get(cat, 99)
+
+    sorted_buildings = sorted(stellar_buildings, key=get_priority)
+
+    for b in sorted_buildings:
+        b_id = b["id"]
+        b_type = b.get("building_type", "")
+        b_def = BUILDING_TYPES.get(b_type, {})
+        b_name = b_def.get("name", b_type)
+
+        maintenance = b_def.get("maintenance", {})
+
+        can_afford = True
+        adjusted_costs = {}
+        for res, cost in maintenance.items():
+            adjusted_cost = int(cost * maintenance_multiplier)
+            adjusted_costs[res] = adjusted_cost
+            if current_resources.get(res, 0) < adjusted_cost:
+                can_afford = False
+                break
+
+        is_active_db = b.get("is_active", True)
+
+        if can_afford:
+            for res, cost in adjusted_costs.items():
+                current_resources[res] -= cost
+                result.total_cost[res] = result.total_cost.get(res, 0) + cost
+
+            if not is_active_db:
+                result.buildings_to_enable.append((b_id, b_name))
+
+            b_active = b.copy()
+            b_active["is_active"] = True
+            result.paid_buildings.append(b_active)
+        else:
+            if is_active_db:
+                result.buildings_to_disable.append((b_id, b_name))
+
+    return result
+
+
 # --- PROCESAMIENTO DE RECURSOS DE LUJO ---
 
 def calculate_luxury_extraction(sites: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -224,11 +391,41 @@ def merge_luxury_resources(current: Dict[str, Any], extracted: Dict[str, int]) -
     return result
 
 
+# --- V8.0: FUNCIONES DE ACCESO A EDIFICIOS ESTELARES ---
+
+def get_stellar_buildings_for_system(system_id: int, player_id: int) -> List[Dict[str, Any]]:
+    """
+    V8.0: Obtiene los edificios estelares de un sistema controlados por un jugador.
+
+    TODO: Esta función es un placeholder. Debe ser implementada en el repositorio
+    (data/planet_repository.py o data/world_repository.py) para consultar la tabla
+    de edificios estelares en la base de datos.
+
+    Args:
+        system_id: ID del sistema.
+        player_id: ID del jugador.
+
+    Returns:
+        Lista de edificios estelares del jugador en ese sistema.
+    """
+    # PLACEHOLDER: Consultar tabla 'stellar_buildings' o 'system_sectors'
+    # Por ahora retorna lista vacía hasta que se implemente el repositorio
+    try:
+        from data.world_repository import get_stellar_buildings_by_system
+        return get_stellar_buildings_by_system(system_id, player_id)
+    except ImportError:
+        # El repositorio aún no tiene esta función implementada
+        return []
+    except Exception:
+        return []
+
+
 # --- ORQUESTADOR PRINCIPAL ---
 
 def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
     """
     Ejecuta el ciclo económico completo para un jugador.
+    Actualizado V8.0: Soporte para bonos de sistema y estructuras estelares.
     """
     result = EconomyTickResult(player_id=player_id)
 
@@ -253,12 +450,70 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             "influencia": finances.get("influencia", 0),
             "datos": finances.get("datos", 0)
         }
-        
+
         building_status_updates: List[Tuple[int, bool]] = []
         systems_to_update_security = set()
-        
-        # 2. Procesar cada planeta
+
+        # --- V8.0: FASE 1 - Agrupar planetas por sistema y calcular bonos estelares ---
+        systems_planets: Dict[int, List[Dict]] = {}
         for planet in planets:
+            sys_id = planet.get("system_id")
+            if sys_id not in systems_planets:
+                systems_planets[sys_id] = []
+            systems_planets[sys_id].append(planet)
+
+        # Cache de bonos por sistema (evita recalcular para cada planeta)
+        system_bonuses_cache: Dict[int, SystemBonuses] = {}
+        stellar_production_total = ProductionSummary()
+
+        # --- V8.0: FASE 2 - Procesar estructuras estelares por sistema ---
+        for sys_id in systems_planets.keys():
+            # Obtener edificios estelares del jugador en este sistema
+            stellar_buildings = get_stellar_buildings_for_system(sys_id, player_id)
+
+            if stellar_buildings:
+                # Calcular bonos del sistema
+                system_bonuses = calculate_system_bonuses(stellar_buildings)
+                system_bonuses_cache[sys_id] = system_bonuses
+
+                # Procesar mantenimiento de edificios estelares
+                # Nota: El logistics_hub reduce su propio mantenimiento también
+                stellar_maint = process_stellar_building_maintenance(
+                    stellar_buildings,
+                    player_resources,
+                    maintenance_multiplier=system_bonuses.maintenance_multiplier
+                )
+
+                # Registrar costes de mantenimiento estelar
+                for res, cost in stellar_maint.total_cost.items():
+                    result.maintenance_cost[res] = result.maintenance_cost.get(res, 0) + cost
+                    player_resources[res] -= cost
+
+                # Registrar edificios desactivados/reactivados
+                for bid, name in stellar_maint.buildings_to_disable:
+                    building_status_updates.append((bid, False))
+                    result.buildings_disabled.append(bid)
+                    log_event(f"⚠️ Estructura estelar {name} detenida (Falta de recursos)", player_id)
+
+                for bid, name in stellar_maint.buildings_to_enable:
+                    building_status_updates.append((bid, True))
+                    result.buildings_reactivated.append(bid)
+
+                # Calcular producción de estructuras estelares
+                stellar_prod = calculate_stellar_production(
+                    stellar_maint.paid_buildings,
+                    system_bonuses
+                )
+                stellar_production_total = stellar_production_total.add(stellar_prod)
+            else:
+                # Sin estructuras estelares, bonos por defecto
+                system_bonuses_cache[sys_id] = SystemBonuses()
+
+        # --- V8.0: FASE 3 - Procesar cada planeta con bonos de sistema aplicados ---
+        for planet in planets:
+            sys_id = planet.get("system_id")
+            system_bonuses = system_bonuses_cache.get(sys_id, SystemBonuses())
+
             # A. Seguridad (V4.4: Centralizada en tabla planets con Breakdown)
             # FIX V5.8: Estandarización a 'population'
             pop = float(planet.get("population", 0.0))
@@ -267,82 +522,107 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
                 log_event(f"⚠️ Alerta Economía: Planeta {planet.get('id')} reporta población 0.0", player_id)
 
             infra_def = planet.get("infraestructura_defensiva", 0)
-            
-            orbital_dist = planet.get("orbital_distance", 0) 
+
+            orbital_dist = planet.get("orbital_distance", 0)
             if orbital_dist == 0 and "ring_index" in planet:
                 orbital_dist = planet["ring_index"]
 
             # CALCULO PRINCIPAL DE SEGURIDAD
             security, security_breakdown = calculate_planet_security(pop, infra_def, orbital_dist)
-            
+
+            # V8.0: Aplicar bono de seguridad plano de surveillance_network
+            security += system_bonuses.security_flat
+            security = min(100.0, security)  # Cap a 100
+            if system_bonuses.security_flat > 0:
+                security_breakdown["stellar_bonus"] = system_bonuses.security_flat
+                security_breakdown["total"] = round(security, 2)
+                security_breakdown["text"] += f" + Estelar ({system_bonuses.security_flat:.1f})"
+
             # Persistencia V4.4: Guardar en tabla PLANETS (Source of Truth)
             update_planet_security_data(planet["planet_id"], security, security_breakdown)
-            
+
             # Sincronizar hacia planet_assets para compatibilidad UI legacy temporal
             if abs(security - planet.get("seguridad", 0)) > 0.1:
                 update_planet_asset(planet["id"], {"seguridad": security})
-            
+
             systems_to_update_security.add(planet["system_id"])
-            
+
             # B. Estado de Disputa / Bloqueo y Soberanía (V6.3/V6.4)
             orbital_owner = planet.get("orbital_owner_id")
             surface_owner = planet.get("surface_owner_id")
             is_disputed = planet.get("is_disputed", False)
-            
+
             penalty = 1.0
             is_blockaded = False
-            
+
             # Regla de Soberanía V6.3:
             # Si no soy el surface owner, mis ingresos y producción son 0.
             # (Se asume que la ocupación es total o que el surface owner recauda impuestos)
             is_sovereign = (surface_owner == player_id)
-            
+
             # Regla de Bloqueo Orbital (V6.4):
             # Si hay un dueño orbital diferente al dueño de superficie (yo) -> Bloqueo
             if orbital_owner is not None and orbital_owner != player_id:
                 is_blockaded = True
-                
+
             if is_disputed or is_blockaded:
-                penalty = DISPUTED_PENALTY_MULTIPLIER # 0.3
-            
+                penalty = DISPUTED_PENALTY_MULTIPLIER  # 0.3
+
             # Si no soy soberano, penalización total (0 ingresos)
             if not is_sovereign:
                 penalty = 0.0
 
             # C. Ingresos
-            income = calculate_income(pop, security, penalty_multiplier=penalty)
+            # V8.0: Aplicar multiplicador fiscal de trade_beacon
+            fiscal_multiplier = system_bonuses.fiscal_multiplier * penalty
+            income = calculate_income(pop, security, penalty_multiplier=fiscal_multiplier)
             result.total_income += income
-            
+
             # D. Mantenimiento
             buildings = planet.get("buildings", [])
             pops_avail = float(planet.get("pops_activos", pop))
-            
+
+            # V8.0: Aplicar reducción de mantenimiento de logistics_hub
+            # Nota: Creamos wrapper temporal que ajusta costes
             maint_res = process_building_maintenance(buildings, player_resources, pops_avail)
-            
+
+            # V8.0: Aplicar multiplicador de mantenimiento del sistema
+            adjusted_maintenance_cost: Dict[str, int] = {}
             for res, cost in maint_res.total_cost.items():
-                result.maintenance_cost[res] = result.maintenance_cost.get(res, 0) + cost
-                player_resources[res] -= cost 
-                
+                adjusted_cost = int(cost * system_bonuses.maintenance_multiplier)
+                adjusted_maintenance_cost[res] = adjusted_cost
+                result.maintenance_cost[res] = result.maintenance_cost.get(res, 0) + adjusted_cost
+                player_resources[res] -= adjusted_cost
+
             for bid, name in maint_res.buildings_to_disable:
                 building_status_updates.append((bid, False))
                 result.buildings_disabled.append(bid)
                 log_event(f"⚠️ Edificio {name} detenido (Falta de recursos)", player_id)
-                
+
             for bid, name in maint_res.buildings_to_enable:
                 building_status_updates.append((bid, True))
                 result.buildings_reactivated.append(bid)
-                
+
             # E. Producción
             # Si no soy soberano, la producción industrial también se detiene/incauta?
             # La instrucción dice "sus ingresos proyectados y reales para ese planeta sean 0".
             # Asumiremos que aplica a todo output económico.
             if is_sovereign:
                 # V6.4: Aplicar penalización de bloqueo a producción también
+                # V8.0: Aplicar multiplicadores de material_multiplier y data_multiplier
                 prod = calculate_planet_production(maint_res.paid_buildings, penalty_multiplier=penalty)
+
+                # Aplicar bonos de sistema a producción
+                prod.materiales = int(prod.materiales * system_bonuses.material_multiplier)
+                prod.datos = int(prod.datos * system_bonuses.data_multiplier)
+
                 result.production = result.production.add(prod)
             else:
                 # Mantenimiento se paga (costo de ocupación fallida?), pero no se produce.
                 pass
+
+        # V8.0: Añadir producción estelar al total
+        result.production = result.production.add(stellar_production_total)
 
         # 3. Recursos de Lujo
         luxury_extracted = calculate_luxury_extraction(luxury_sites)
@@ -351,7 +631,7 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
         # 4. Actualizar DB
         if building_status_updates:
             batch_update_building_status(building_status_updates)
-            
+
         # V4.4: Recalcular seguridad de sistemas afectados
         for sys_id in systems_to_update_security:
             try:
@@ -404,70 +684,121 @@ def run_global_economy_tick() -> List[EconomyTickResult]:
 # --- FUNCIONES AUXILIARES PARA UI (Proyecciones) ---
 
 def get_player_projected_economy(player_id: int) -> Dict[str, int]:
-    """Calcula proyección (Delta) para UI sin modificar DB."""
+    """
+    Calcula proyección (Delta) para UI sin modificar DB.
+    Actualizado V8.0: Incluye bonos de sistema y producción estelar.
+    """
     projection = {k: 0 for k in ["creditos", "materiales", "componentes", "celulas_energia", "influencia", "datos"]}
-    
+
     try:
         planets = get_all_player_planets_with_buildings(player_id)
-        
+
+        # V8.0: Agrupar por sistema y pre-calcular bonos
+        systems_planets: Dict[int, List[Dict]] = {}
         for planet in planets:
+            sys_id = planet.get("system_id")
+            if sys_id not in systems_planets:
+                systems_planets[sys_id] = []
+            systems_planets[sys_id].append(planet)
+
+        # Cache de bonos por sistema
+        system_bonuses_cache: Dict[int, SystemBonuses] = {}
+
+        for sys_id in systems_planets.keys():
+            stellar_buildings = get_stellar_buildings_for_system(sys_id, player_id)
+            if stellar_buildings:
+                system_bonuses = calculate_system_bonuses(stellar_buildings)
+                system_bonuses_cache[sys_id] = system_bonuses
+
+                # V8.0: Proyectar producción estelar
+                active_stellar = [b for b in stellar_buildings if b.get("is_active", True)]
+                stellar_prod = calculate_stellar_production(active_stellar, system_bonuses)
+                projection["materiales"] += stellar_prod.materiales
+                projection["celulas_energia"] += stellar_prod.celulas_energia
+                projection["datos"] += stellar_prod.datos
+                projection["componentes"] += stellar_prod.componentes
+                projection["influencia"] += stellar_prod.influencia
+
+                # V8.0: Proyectar mantenimiento estelar
+                for b in active_stellar:
+                    b_type = b.get("building_type")
+                    maint = BUILDING_TYPES.get(b_type, {}).get("maintenance", {})
+                    for res, cost in maint.items():
+                        adjusted_cost = int(cost * system_bonuses.maintenance_multiplier)
+                        projection[res] -= adjusted_cost
+            else:
+                system_bonuses_cache[sys_id] = SystemBonuses()
+
+        for planet in planets:
+            sys_id = planet.get("system_id")
+            system_bonuses = system_bonuses_cache.get(sys_id, SystemBonuses())
+
             # Control Logic para proyección
             orbital_owner = planet.get("orbital_owner_id")
             surface_owner = planet.get("surface_owner_id")
             is_disputed = planet.get("is_disputed", False)
-            
+
             penalty = 1.0
             is_blockaded = False
-            
+
             is_sovereign = (surface_owner == player_id)
 
             if orbital_owner is not None and orbital_owner != player_id:
                 is_blockaded = True
-                
+
             if is_disputed or is_blockaded:
                 penalty = DISPUTED_PENALTY_MULTIPLIER
-            
+
             if not is_sovereign:
                 penalty = 0.0
 
             # FIX V5.8: Estandarización a 'population'
             pop = float(planet.get("population", 0.0))
             infra = planet.get("infraestructura_defensiva", 0)
-            
+
             orbital_dist = planet.get("orbital_distance", 0)
             if orbital_dist == 0 and "ring_index" in planet:
                 orbital_dist = planet["ring_index"]
 
             # Unpack tuple V4.4
             sec, _ = calculate_planet_security(pop, infra, orbital_dist)
-            
+
+            # V8.0: Aplicar bono de seguridad estelar
+            sec += system_bonuses.security_flat
+            sec = min(100.0, sec)
+
             # Ingresos proyectados con penalización
-            income = calculate_income(pop, sec, penalty_multiplier=penalty)
+            # V8.0: Aplicar multiplicador fiscal de trade_beacon
+            fiscal_multiplier = system_bonuses.fiscal_multiplier * penalty
+            income = calculate_income(pop, sec, penalty_multiplier=fiscal_multiplier)
             projection["creditos"] += income
-            
+
             buildings = planet.get("buildings", [])
             active_buildings = [b for b in buildings if b.get("is_active", True)]
-            
+
             # Solo sumar producción si es soberano
             if is_sovereign:
                 # V6.4: Proyectar con penalización
                 prod = calculate_planet_production(active_buildings, penalty_multiplier=penalty)
-                projection["materiales"] += prod.materiales
+
+                # V8.0: Aplicar multiplicadores de sistema
+                projection["materiales"] += int(prod.materiales * system_bonuses.material_multiplier)
                 projection["componentes"] += prod.componentes
                 projection["celulas_energia"] += prod.celulas_energia
                 projection["influencia"] += prod.influencia
-                projection["datos"] += prod.datos
+                projection["datos"] += int(prod.datos * system_bonuses.data_multiplier)
                 projection["creditos"] += prod.creditos
-            
+
             # Mantenimiento siempre se resta (Costo operativo)
+            # V8.0: Aplicar reducción de mantenimiento de logistics_hub
             for b in active_buildings:
                 b_type = b.get("building_type")
                 maint = BUILDING_TYPES.get(b_type, {}).get("maintenance", {})
                 for res, cost in maint.items():
-                    projection[res] -= cost
-            
+                    adjusted_cost = int(cost * system_bonuses.maintenance_multiplier)
+                    projection[res] -= adjusted_cost
 
     except Exception:
         pass
-        
+
     return projection

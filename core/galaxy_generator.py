@@ -6,12 +6,12 @@ from .world_models import Galaxy, System, Star, Planet, Sector
 from .world_constants import (
     STAR_TYPES, STAR_RARITY_WEIGHTS, PLANET_BIOMES,
     PLANET_MASS_CLASSES, ORBITAL_ZONE_WEIGHTS,
-    SECTOR_TYPE_URBAN, SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN, 
-    SECTOR_TYPE_INHOSPITABLE, SECTOR_TYPE_ORBITAL,
+    SECTOR_TYPE_URBAN, SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN,
+    SECTOR_TYPE_INHOSPITABLE, SECTOR_TYPE_ORBITAL, SECTOR_TYPE_STELLAR,
     SECTOR_SLOTS_CONFIG, SECTOR_NAMES_BY_CATEGORY, LUXURY_RESOURCES_BY_CATEGORY,
     RESOURCE_PROB_HIGH, RESOURCE_PROB_MEDIUM, RESOURCE_PROB_LOW, RESOURCE_PROB_NONE,
     EMPTY_SYSTEMS_COUNT, WILD_POPULATION_CHANCE, POP_RANGE,
-    INHOSPITABLE_BIOME_NAMES 
+    INHOSPITABLE_BIOME_NAMES
 )
 from .rules import calculate_planet_security
 
@@ -44,12 +44,16 @@ class GalaxyGenerator:
                 x=x,
                 y=y,
                 star=star,
-                planets=[]
+                planets=[],
+                sectors=[]  # V8.0: Inicializar sectores estelares
             )
-            
+
+            # V8.0: Generar sector estelar para el sistema
+            new_system.sectors = self._generate_stellar_sector(new_system)
+
             # Determinar si el sistema está civilizado
             is_civilized = i not in empty_system_indices
-            
+
             new_system.planets = self._generate_planets_for_system(new_system, is_civilized)
             systems.append(new_system)
 
@@ -370,5 +374,35 @@ class GalaxyGenerator:
                 
                 if is_gabriel:
                     # Distancia máxima de conexión
-                    if dist_sq < 400: 
+                    if dist_sq < 400:
                         self.galaxy.starlanes.append((s1.id, s2.id))
+
+    def _generate_stellar_sector(self, system: System) -> List[Sector]:
+        """
+        V8.0: Genera el sector estelar para un sistema.
+        El sector estelar permite construcción de megaestructuras a nivel de sistema.
+
+        Args:
+            system: El sistema para el cual generar el sector estelar.
+
+        Returns:
+            Lista con un único Sector de tipo SECTOR_TYPE_STELLAR.
+        """
+        # ID único para el sector estelar: system_id * 10000
+        stellar_sector_id = system.id * 10000
+
+        stellar_sector = Sector(
+            id=stellar_sector_id,
+            planet_id=None,  # No asociado a ningún planeta
+            system_id=system.id,  # Asociado al sistema
+            name=f"Espacio Estelar de {system.name}",
+            type=SECTOR_TYPE_STELLAR,
+            resource_category=None,
+            luxury_resource=None,
+            max_slots=SECTOR_SLOTS_CONFIG.get(SECTOR_TYPE_STELLAR, 3),
+            buildings=[],
+            is_known=True,  # Siempre visible (el espacio estelar es observable)
+            owner_id=None  # Sin dueño inicial
+        )
+
+        return [stellar_sector]

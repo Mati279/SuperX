@@ -7,6 +7,7 @@ Actualizado v4.8.2: Refactorización de Sector (max_slots, resource_category) y 
 Refactorizado v5.3: Limpieza de redundancia 'slots' en Planeta. Fuente de verdad: total_sector_slots.
 Actualizado v7.2: Soporte para Niebla de Superficie (is_explored_by_player).
 Actualizado v7.8: Inclusión de nombres de soberanía (surface_owner_name, orbital_owner_name) para UI.
+Actualizado v8.0: Soporte para Sectores Estelares (Control de Sistema y Megaestructuras).
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, Optional
@@ -14,36 +15,47 @@ from datetime import datetime
 
 @dataclass
 class Sector:
-    """Modelo que representa un sector dentro de un planeta (V4.2.0)."""
+    """
+    Modelo que representa un sector dentro de un planeta o sistema (V4.2.0).
+    Actualizado V8.0: Soporte para Sectores Estelares (system_id opcional).
+    """
     id: int
-    planet_id: int
-    type: str  # 'Urbano', 'Llanura', 'Montañoso', 'Inhospito'
-    max_slots: int # Renombrado de slots a max_slots (V4.8.2)
-    
+    planet_id: Optional[int] = None  # V8.0: Ahora opcional (None para sectores estelares)
+    system_id: Optional[int] = None  # V8.0: ID del sistema (para sectores estelares)
+    type: str = "Desconocido"  # 'Urbano', 'Llanura', 'Montañoso', 'Inhospito', 'Orbital', 'Estelar'
+    max_slots: int = 0  # Renombrado de slots a max_slots (V4.8.2)
+
     # Campos descriptivos
-    name: str = "Sector Desconocido" # Añadido para consistencia con generador
-    
+    name: str = "Sector Desconocido"  # Añadido para consistencia con generador
+
     # Metadata opcional
-    resource_category: Optional[str] = None # Renombrado de resource_type a resource_category (V4.8.2)
-    luxury_resource: Optional[str] = None # V4.3.0: Recurso de lujo específico
-    
+    resource_category: Optional[str] = None  # Renombrado de resource_type a resource_category (V4.8.2)
+    luxury_resource: Optional[str] = None  # V4.3.0: Recurso de lujo específico
+
+    # V8.0: Restricción de tipo de estrella para estructuras específicas
+    required_star_class: Optional[str] = None  # 'O', 'B', 'A', 'K', etc.
+
     # Estado de construcción
-    buildings: List[Dict[str, Any]] = field(default_factory=list) # Lista de edificios instalados
+    buildings: List[Dict[str, Any]] = field(default_factory=list)  # Lista de edificios instalados
     buildings_count: int = 0
-    
+
     # Propiedad y Exploración
-    explored_by: List[int] = field(default_factory=list) # IDs de jugadores (Histórico/Lore)
-    is_explored_by_player: bool = False # V7.2: Flag dinámico para UI actual
-    owner_id: Optional[int] = None # ID del jugador dueño de la base/puesto
+    explored_by: List[int] = field(default_factory=list)  # IDs de jugadores (Histórico/Lore)
+    is_explored_by_player: bool = False  # V7.2: Flag dinámico para UI actual
+    owner_id: Optional[int] = None  # ID del jugador dueño de la base/puesto
     has_outpost: bool = False
-    is_known: bool = False # V4.3.0: Soporte para niebla de superficie (Legacy/Global)
-    
+    is_known: bool = False  # V4.3.0: Soporte para niebla de superficie (Legacy/Global)
+
     def is_explored_by(self, player_id: int) -> bool:
         return player_id in self.explored_by or self.is_explored_by_player
 
     def available_slots(self) -> int:
         # Actualizado para usar max_slots
         return max(0, self.max_slots - self.buildings_count)
+
+    def is_stellar(self) -> bool:
+        """V8.0: Retorna True si es un sector estelar (nivel de sistema)."""
+        return self.system_id is not None and self.planet_id is None
 
 @dataclass
 class CelestialBody:
@@ -121,6 +133,10 @@ class AsteroidBelt(CelestialBody):
 
 @dataclass
 class System:
+    """
+    Modelo que representa un sistema estelar.
+    Actualizado V8.0: Soporte para Sectores Estelares (megaestructuras a nivel de sistema).
+    """
     id: int
     name: str
     x: float
@@ -130,6 +146,26 @@ class System:
     neighbors: List[int] = field(default_factory=list)
     description: str = ""
     controlling_faction_id: Optional[int] = None
+
+    # V8.0: Sectores Estelares para megaestructuras
+    sectors: List[Sector] = field(default_factory=list)
+
+    def get_stellar_sector(self) -> Optional[Sector]:
+        """V8.0: Retorna el sector estelar principal del sistema."""
+        for sector in self.sectors:
+            if sector.is_stellar():
+                return sector
+        return None
+
+    def get_active_stellar_buildings(self) -> List[Dict[str, Any]]:
+        """V8.0: Retorna todos los edificios activos en sectores estelares."""
+        buildings = []
+        for sector in self.sectors:
+            if sector.is_stellar():
+                for b in sector.buildings:
+                    if b.get("is_active", True):
+                        buildings.append(b)
+        return buildings
 
 @dataclass
 class Galaxy:

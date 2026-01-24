@@ -14,6 +14,7 @@ Actualizado v5.3.0: Integración de Precios Base para Recursos de Lujo.
 Actualizado v6.3.0: Definición de Puestos de Avanzada, Estaciones Orbitales y Soberanía.
 Actualizado v6.4.0: Implementación de Sector Orbital y Soberanía Espacial.
 Actualizado v7.6.0: Ajuste de Capacidad Urbana (3 Slots).
+Actualizado v8.0.0: Control del Sistema (Nivel Estelar) - Megaestructuras y Bonos de Sistema.
 """
 from typing import Dict, List
 
@@ -215,14 +216,16 @@ SECTOR_TYPE_URBAN = "Urbano"
 SECTOR_TYPE_PLAIN = "Llanura"
 SECTOR_TYPE_MOUNTAIN = "Montañoso"
 SECTOR_TYPE_INHOSPITABLE = "Inhospito"
-SECTOR_TYPE_ORBITAL = "Orbital" # Nuevo V6.4
+SECTOR_TYPE_ORBITAL = "Orbital"  # Nuevo V6.4
+SECTOR_TYPE_STELLAR = "Estelar"  # V8.0: Sector a nivel de sistema para megaestructuras
 
 VALID_SECTOR_TYPES = [
     SECTOR_TYPE_URBAN,
     SECTOR_TYPE_PLAIN,
     SECTOR_TYPE_MOUNTAIN,
     SECTOR_TYPE_INHOSPITABLE,
-    SECTOR_TYPE_ORBITAL
+    SECTOR_TYPE_ORBITAL,
+    SECTOR_TYPE_STELLAR
 ]
 
 # Definición de sectores válidos para Outposts (Todo menos Urbano, Inhóspito y Orbital)
@@ -316,6 +319,133 @@ BUILDING_TYPES = {
         "category": "industria",
         "consumes_slots": True,
         "production": {"componentes": 5}
+    },
+
+    # --- MEGAESTRUCTURAS ESTELARES (V8.0) ---
+    # Estructuras Básicas (disponibles para cualquier tipo de estrella)
+
+    "stellar_fortress": {
+        "name": "Fortaleza Estelar",
+        "material_cost": 2000,
+        "maintenance": {"creditos": 200, "celulas_energia": 50, "materiales": 30},
+        "description": "Estación de defensa masiva. Protege todo el sistema contra incursiones.",
+        "pops_required": 0,
+        "category": "defensa_estelar",
+        "is_stellar": True,
+        "allowed_terrain": [SECTOR_TYPE_STELLAR],
+        "consumes_slots": True,
+        "production": {},
+        "system_bonus": {"defense": 50}
+    },
+    "approach_sensor": {
+        "name": "Sensor de Aproximación",
+        "material_cost": 800,
+        "maintenance": {"creditos": 80, "celulas_energia": 30},
+        "description": "Red de detección temprana. Alerta de flotas enemigas entrando al sistema.",
+        "pops_required": 0,
+        "category": "deteccion_estelar",
+        "is_stellar": True,
+        "allowed_terrain": [SECTOR_TYPE_STELLAR],
+        "consumes_slots": True,
+        "production": {},
+        "system_bonus": {"detection_range": 2}
+    },
+    "trade_beacon": {
+        "name": "Baliza Comercial",
+        "material_cost": 1200,
+        "maintenance": {"creditos": 100, "celulas_energia": 20},
+        "description": "Atrae rutas comerciales. +15% ingresos fiscales y mitiga penalización orbital.",
+        "pops_required": 0,
+        "category": "comercio_estelar",
+        "is_stellar": True,
+        "allowed_terrain": [SECTOR_TYPE_STELLAR],
+        "consumes_slots": True,
+        "production": {},
+        "system_bonus": {"fiscal_multiplier": 1.15, "mitigate_ring_penalty": True}
+    },
+    "surveillance_network": {
+        "name": "Red de Vigilancia",
+        "material_cost": 1000,
+        "maintenance": {"creditos": 75, "celulas_energia": 25, "datos": 10},
+        "description": "Monitoreo constante. +10 Seguridad base a todos los planetas del sistema.",
+        "pops_required": 0,
+        "category": "seguridad_estelar",
+        "is_stellar": True,
+        "allowed_terrain": [SECTOR_TYPE_STELLAR],
+        "consumes_slots": True,
+        "production": {},
+        "system_bonus": {"security_flat": 10.0}
+    },
+    "logistics_hub": {
+        "name": "Centro Logístico",
+        "material_cost": 1500,
+        "maintenance": {"creditos": 120, "celulas_energia": 40},
+        "description": "Optimiza suministros. -10% coste de mantenimiento de todos los edificios del sistema.",
+        "pops_required": 0,
+        "category": "logistica_estelar",
+        "is_stellar": True,
+        "allowed_terrain": [SECTOR_TYPE_STELLAR],
+        "consumes_slots": True,
+        "production": {},
+        "system_bonus": {"maintenance_multiplier": 0.9}
+    },
+
+    # Estructuras Específicas por Tipo de Estrella
+
+    "radiation_collector": {
+        "name": "Colector de Radiación",
+        "material_cost": 3000,
+        "maintenance": {"creditos": 150, "materiales": 50},
+        "description": "Aprovecha la intensa radiación de estrellas clase O. +200 energía.",
+        "pops_required": 0,
+        "category": "energia_estelar",
+        "is_stellar": True,
+        "allowed_terrain": [SECTOR_TYPE_STELLAR],
+        "required_star_class": "O",
+        "consumes_slots": True,
+        "production": {"celulas_energia": 200}
+    },
+    "stellar_synchrotron": {
+        "name": "Sincrotrón Estelar",
+        "material_cost": 2500,
+        "maintenance": {"creditos": 180, "celulas_energia": 60},
+        "description": "Acelera partículas usando el campo magnético de estrellas clase B. +20% datos.",
+        "pops_required": 0,
+        "category": "investigacion_estelar",
+        "is_stellar": True,
+        "allowed_terrain": [SECTOR_TYPE_STELLAR],
+        "required_star_class": "B",
+        "consumes_slots": True,
+        "production": {},
+        "system_bonus": {"data_multiplier": 1.20}
+    },
+    "jump_relay": {
+        "name": "Relé de Salto",
+        "material_cost": 4000,
+        "maintenance": {"creditos": 250, "celulas_energia": 100},
+        "description": "Amplifica la gravedad de estrellas clase A para viajes FTL rápidos.",
+        "pops_required": 0,
+        "category": "transporte_estelar",
+        "is_stellar": True,
+        "allowed_terrain": [SECTOR_TYPE_STELLAR],
+        "required_star_class": "A",
+        "consumes_slots": True,
+        "production": {},
+        "system_bonus": {"ftl_speed_bonus": 0.5}
+    },
+    "integrated_refinery": {
+        "name": "Refinería Integrada",
+        "material_cost": 2800,
+        "maintenance": {"creditos": 140, "celulas_energia": 45},
+        "description": "Aprovecha la estabilidad de estrellas clase K para refinado eficiente. +15% materiales.",
+        "pops_required": 0,
+        "category": "extraccion_estelar",
+        "is_stellar": True,
+        "allowed_terrain": [SECTOR_TYPE_STELLAR],
+        "required_star_class": "K",
+        "consumes_slots": True,
+        "production": {},
+        "system_bonus": {"material_multiplier": 1.15}
     }
 }
 
@@ -327,7 +457,17 @@ BUILDING_SHUTDOWN_PRIORITY = {
     "celulas_energia": 0,
     "administracion": 0,
     "orbital": 0,
-    "expansion": 5
+    "expansion": 5,
+    # V8.0: Prioridades de estructuras estelares (alta prioridad = se apagan primero)
+    "defensa_estelar": 1,       # Crítico, se apaga último
+    "deteccion_estelar": 2,
+    "seguridad_estelar": 2,
+    "comercio_estelar": 3,
+    "logistica_estelar": 3,
+    "energia_estelar": 0,       # Energía crítica
+    "investigacion_estelar": 4,
+    "transporte_estelar": 4,
+    "extraccion_estelar": 4
 }
 
 ECONOMY_RATES = {
@@ -384,6 +524,7 @@ SECTOR_SLOTS_CONFIG = {
     SECTOR_TYPE_URBAN: 3,        # Urbano: 3 slots (Ajustado V7.6)
     SECTOR_TYPE_INHOSPITABLE: 0, # Inhóspito: 0 slots
     SECTOR_TYPE_ORBITAL: 1,      # Orbital: 1 slot (V6.4)
+    SECTOR_TYPE_STELLAR: 3,      # Estelar: 3 slots (V8.0 - Megaestructuras)
     # Mapeo dinámico de yacimientos de recursos (Todos 2 slots)
     **{name: 2 for name in SECTOR_NAMES_BY_CATEGORY.values()},
     # Mapeo dinámico de sectores inhóspitos por bioma (Todos 0 slots)
