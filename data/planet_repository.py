@@ -37,6 +37,7 @@ Actualizado v7.9.0: Cambio de fuente de nombre de facción a 'players.faccion_no
 Actualizado v8.1.0: Robustez en resolución de nombres de soberanía (Fail-Safe Desconocido).
 Actualizado v8.2.0: Fix build_structure (Ghost Buildings Check & ID types).
 Actualizado v8.2.1: Fix Not-Null Constraint (Inyección de pops_required y energy_consumption).
+Actualizado v8.3.0: Business Logic para HQ Único (Reemplazo de Constraint DB).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -695,6 +696,9 @@ def build_structure(
             .select("sector_id, building_type, planet_asset_id")\
             .in_("planet_asset_id", all_asset_ids)\
             .execute().data or []
+            
+        # V8.3: Filtrar mis edificios para validación de HQ
+        my_buildings = [b for b in all_buildings if b["planet_asset_id"] == planet_asset_id]
 
         # Mapa de ocupación
         sector_occupants = {} 
@@ -716,7 +720,6 @@ def build_structure(
             return None
 
         # Contadores de slots
-        my_buildings = [b for b in all_buildings if b["planet_asset_id"] == planet_asset_id]
         sector_counts = {}
         for b in my_buildings:
             sid = b.get("sector_id")
@@ -728,6 +731,15 @@ def build_structure(
         for s in sectors:
             if 'max_slots' in s: s['slots'] = s['max_slots']
             s['buildings_count'] = sector_counts.get(s["id"], 0)
+            
+        # --- V8.3: VALIDACIÓN DE REGLAS DE NEGOCIO (HQ Único) ---
+        # Como hemos eliminado la restricción DB 'unique_building_per_planet', 
+        # debemos asegurar que no se construyan múltiples HQs por código.
+        if building_type == 'hq':
+             existing_hq = next((b for b in my_buildings if b["building_type"] == "hq"), None)
+             if existing_hq:
+                 log_event("Solo puedes tener un Comando Central por colonia.", player_id, is_error=True)
+                 return None
 
         # 2. Selección de Sector Objetivo y Validación de Bloqueo Local
         target_sector = None
