@@ -16,6 +16,7 @@ Hotfix V7.8: Corrección visualización Soberanía (Join backend).
 Actualizado V7.9.0: Cambio de fuente de nombre de facción a 'players.faccion_nombre' y actualización de etiquetas UI.
 Actualizado V8.1.0: Estandarización de Recursos (RESOURCE_UI_CONFIG) y Limpieza de UI (Remove ID, Fix Colors).
 Actualizado V8.2.0: Botón directo de Puesto de Avanzada (Debug Mode) en sectores no reclamados.
+Actualizado V8.3.0: Estandarización de Seguridad (Sp) - Base 30 para todos los planetas.
 """
 
 import streamlit as st
@@ -173,7 +174,11 @@ def _render_info_header(planet: dict, asset: dict):
         security_val = planet.get('security', 0.0)
         sec_breakdown = planet.get('security_breakdown') or {}
         
-        st.metric("Seguridad (Sp)", f"{security_val:.1f}%", help="Nivel de seguridad fiscal y policial.")
+        st.metric(
+            "Seguridad (Sp)", 
+            f"{security_val:.1f}%", 
+            help="Base Estándar (30) + Población + Infraestructura."
+        )
         
         if sec_breakdown and "text" in sec_breakdown:
             with st.expander("🔍 Desglose"):

@@ -473,8 +473,8 @@ BUILDING_SHUTDOWN_PRIORITY = {
 
 ECONOMY_RATES = {
     "income_per_pop": 150.0, # OBSOLETO: Reemplazado por modelo logarítmico en rules.py
-    "security_base": 25.0,
-    "security_per_1b_pop": 5.0,
+    "security_base": 30.0,      # Aumentado de 25.0 a 30.0 (Estandarización)
+    "security_per_1b_pop": 3.0, # Reducido de 5.0 a 3.0
     "security_bonus_sensor": 2.0,
     "security_bonus_defense_aa": 5.0,
     "security_bonus_defense_ground": 5.0,

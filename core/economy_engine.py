@@ -56,15 +56,18 @@ def calculate_planet_security(
     Calcula el nivel de seguridad del planeta (0-100) y genera un desglose.
     Wrapper alrededor de core.rules.calculate_planet_security para mantener compatibilidad
     con la firma que retorna (float, dict) y generar el breakdown visual.
+    
+    Actualización Estandarización: Refleja Base 30 y Pop Mult 3.
     """
     if population <= 0:
         return 0.0, {"text": "Deshabitado (Población 0)", "total": 0.0}
 
-    # Valores base para el desglose (deben coincidir con la lógica implícita o explicita de rules.py)
-    # En rules.py se espera 'base_stat'. Si no lo tenemos, usamos el default global.
-    base = ECONOMY_RATES.get("security_base", 25.0) 
+    # Valores base para el desglose (ESTANDARIZADOS)
+    # Deben coincidir con core.rules y core.world_constants
+    base = 30.0 # Base fija estándar
     
     # Llamada a la lógica centralizada
+    # Nota: rules_calculate_planet_security ignora el base_stat pasado, pero lo enviamos por consistencia
     final_val = rules_calculate_planet_security(
         base_stat=int(base),
         pop_count=population,
@@ -73,9 +76,9 @@ def calculate_planet_security(
     )
     
     # Reconstrucción del Breakdown para UI (Transparencia)
-    per_pop = ECONOMY_RATES.get("security_per_1b_pop", 5.0)
+    per_pop = 3.0 # Nuevo multiplicador estandarizado
     pop_bonus = population * per_pop
-    distance_penalty = 2.0 * orbital_distance # Hardcoded en rules.py como RING_PENALTY (2)
+    distance_penalty = 1.0 * orbital_distance # RING_PENALTY es 1
     
     breakdown = {
         "base": base,

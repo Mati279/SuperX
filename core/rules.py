@@ -6,7 +6,7 @@ from core.world_constants import PLANET_BIOMES, SECTOR_TYPE_INHOSPITABLE
 from core.models import KnowledgeLevel
 
 # --- CONSTANTES DE BALANCEO (V4.4 SEGURIDAD) ---
-SECURITY_POP_MULT = 5
+SECURITY_POP_MULT = 3 # Reducido de 5 a 3 (Estandarización)
 RING_PENALTY = 1 # Reducido de 2 a 1 para ser menos punitivo en anillos exteriores (Task 1)
 
 def calculate_skills(attributes: Dict[str, int]) -> Dict[str, int]:
@@ -167,22 +167,25 @@ def calculate_fiscal_income(rate_base: float, population_billions: float, securi
 def calculate_planet_security(base_stat: int, pop_count: float, infrastructure_defense: int, orbital_ring: int, is_player_owned: bool = False) -> float:
     """
     Calcula el valor de seguridad (Sp) de un planeta.
-    Fórmula: Sp = Base + (Pop * 5) + Infra - (1 * Ring)
+    Fórmula: Sp = Base (30.0) + (Pop * 3) + Infra - (1 * Ring)
     
     Args:
-        base_stat: Defensa base del planeta (10-30).
+        base_stat: IGNORADO (Se usa base fija de 30.0 para estandarización).
         pop_count: Población en miles de millones.
         infrastructure_defense: Valor de defensa por edificios.
         orbital_ring: Anillo orbital (1-6).
         is_player_owned: Si es True, aplica un suelo de seguridad mínimo (20.0).
     
     Actualización V4.8.2: Retorna float para precisión decimal.
-    Corrección Task 1: RING_PENALTY reducido y Floor añadido.
+    Actualización Estandarización: Base fija 30.0 y mult pop 3.0.
     """
     if pop_count <= 0 and not is_player_owned:
         return 0.0
         
-    raw_security = base_stat + (pop_count * SECURITY_POP_MULT) + infrastructure_defense - (orbital_ring * RING_PENALTY)
+    # ESTANDARIZACIÓN: Base fija de 30.0 para todos los planetas
+    fixed_base = 30.0
+    
+    raw_security = fixed_base + (pop_count * SECURITY_POP_MULT) + infrastructure_defense - (orbital_ring * RING_PENALTY)
     
     # Floor de seguridad para evitar bloqueos económicos en colonias nuevas
     if is_player_owned:
