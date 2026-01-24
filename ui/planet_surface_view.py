@@ -10,9 +10,11 @@ Refactor V7.0: Modo Observador, Navegación de Sistema, Sección Orbital y Estil
 Mejora V7.1: Navegación contextual (Volver al Sistema del planeta actual).
 Actualizado V7.2: Implementación de Niebla de Superficie (Exploración de Sectores).
 Actualizado V7.6: Visualización Orbital Integrada y Filtro de Superficie.
+Feature: Visualización de Soberanía y Dueños de Sectores.
 """
 
 import streamlit as st
+from data.database import get_supabase
 from data.planet_repository import (
     get_planet_by_id,
     get_planet_asset,
@@ -26,6 +28,32 @@ from data.planet_repository import (
 from core.rules import calculate_planet_habitability
 from core.world_constants import BUILDING_TYPES, PLANET_BIOMES, SECTOR_TYPE_ORBITAL
 from ui.state import get_player_id
+
+
+# --- Helpers de Facciones ---
+@st.cache_data(ttl=600)
+def _get_faction_map():
+    """Cache simple para nombres de facciones."""
+    try:
+        factions = get_supabase().table("factions").select("id, name").execute().data
+        return {f['id']: f['name'] for f in factions}
+    except:
+        return {}
+
+def _resolve_faction_name(faction_id):
+    if faction_id is None: return "Neutral"
+    f_map = _get_faction_map()
+    return f_map.get(faction_id, "Desconocido")
+
+def _get_faction_name_by_player(player_id):
+    """Resuelve el nombre de la facción de un jugador específico."""
+    if not player_id: return "Desconocido"
+    try:
+        res = get_supabase().table("players").select("faction_id, factions(name)").eq("id", player_id).maybe_single().execute()
+        if res.data and res.data.get('factions'):
+            return res.data['factions']['name']
+    except: pass
+    return "Desconocido"
 
 
 def render_planet_surface(planet_id: int):
@@ -110,6 +138,11 @@ def _render_info_header(planet: dict, asset: dict):
     """Muestra el resumen del planeta, tamaño y capacidad global."""
     st.title(f"Vista Planetaria: {planet['name']}")
     
+    # --- VISUALIZACIÓN DE SOBERANÍA ---
+    s_owner = _resolve_faction_name(planet.get('surface_owner_id'))
+    o_owner = _resolve_faction_name(planet.get('orbital_owner_id'))
+    st.markdown(f"**Soberanía de Superficie:** :orange[{s_owner}] | **Soberanía Orbital:** :cyan[{o_owner}]")
+
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -216,6 +249,20 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     
     st.markdown(f"### {icon} {s_type} (Sector {sector['id']})")
     
+    # --- PROPIEDAD DEL SECTOR ---
+    sector_buildings = [b for b in buildings if b.get('sector_id') == sector['id']]
+    if sector_buildings:
+        # Tomar el primer edificio para determinar el dueño
+        owner_pid = sector_buildings[0].get('player_id')
+        if owner_pid:
+            faction_name = _get_faction_name_by_player(owner_pid)
+            st.caption(f"Propiedad de: **{faction_name}**")
+        else:
+             st.caption("Propiedad: Desconocida")
+    else:
+        st.caption("Sector No Reclamado")
+
+
     # V7.0: Visualización Estricta de Recursos
     # Mapeo de colores según requerimiento
     res_color_map = {
@@ -246,9 +293,6 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     
     st.write(f"Capacidad: {used} / {total}")
     st.progress(min(1.0, used / total) if total > 0 else 0)
-    
-    # Listado de edificios construidos
-    sector_buildings = [b for b in buildings if b.get('sector_id') == sector['id']]
     
     if sector_buildings:
         st.markdown("**Estructuras:**")

@@ -8,6 +8,7 @@ Corrección V5.0: Fix Mismatch 'population' vs 'poblacion' y Cálculo Dinámico 
 Refactorizado V5.1: Protecciones 'NoneType' en respuestas de Supabase.
 Actualizado V5.2: Integración con Modo Omnisciencia (Debug).
 Refactor V5.8: Estandarización final a 'population' y navegación directa a Superficie.
+Feature: Visualización de Soberanía (Controlador de Sistema y Planetas).
 """
 import json
 import math
@@ -46,6 +47,22 @@ BIOME_COLORS = {
     "Gélido": "#a8d8ff",
     "Gigante Gaseoso": "#c6a3ff",
 }
+
+
+# --- Helpers de Facciones ---
+@st.cache_data(ttl=600)
+def _get_faction_map():
+    """Cache simple para nombres de facciones."""
+    try:
+        factions = get_supabase().table("factions").select("id, name").execute().data
+        return {f['id']: f['name'] for f in factions}
+    except:
+        return {}
+
+def _resolve_faction_name(faction_id):
+    if faction_id is None: return "Neutral"
+    f_map = _get_faction_map()
+    return f_map.get(faction_id, "Desconocido")
 
 
 def show_galaxy_map_page():
@@ -158,6 +175,11 @@ def _render_system_view():
         ss = sum(secs) / len(secs) if secs else 0.0
     
     st.header(f"Sistema: {system.get('name', 'Desconocido')}")
+    
+    # --- VISUALIZACIÓN DEL CONTROLADOR ---
+    ctl_id = system.get('controlling_faction_id')
+    ctl_name = _resolve_faction_name(ctl_id)
+    st.subheader(f"Controlador del Sistema: :blue[{ctl_name}]")
     
     col_back, col_metrics = st.columns([4, 3])
     
@@ -275,6 +297,11 @@ def _render_planet_view():
         return
 
     st.header(f"Planeta: {planet['name']}")
+    
+    # --- VISUALIZACIÓN DE SOBERANÍA ---
+    s_owner = _resolve_faction_name(planet.get('surface_owner_id'))
+    o_owner = _resolve_faction_name(planet.get('orbital_owner_id'))
+    st.markdown(f"**Soberanía de Superficie:** :orange[{s_owner}] | **Soberanía Orbital:** :cyan[{o_owner}]")
     
     if st.button("← Volver al Sistema"):
         _reset_to_system_view()
@@ -526,6 +553,11 @@ def _render_interactive_galaxy_map():
                 st.write(f"**Población:** {sys_pop:,.1f}B")
                 st.write(f"**Seguridad (Ss):** {sys_ss:.1f}/100")
                 
+                # Mostrar Controlador en preview
+                p_ctl_id = preview_sys.get('controlling_faction_id')
+                p_ctl_name = _resolve_faction_name(p_ctl_id)
+                st.write(f"**Controlador:** {p_ctl_name}")
+
                 if st.button("🚀 ENTRAR AL SISTEMA", type="primary", use_container_width=True):
                     st.session_state.selected_system_id = preview_sys['id']
                     st.session_state.map_view = "system"

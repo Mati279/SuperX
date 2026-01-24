@@ -167,6 +167,12 @@ class GalaxyGenerator:
                 elif random.random() < WILD_POPULATION_CHANCE:
                     should_populate = True
                 
+                # FIX TAREA 1: Restricción de Población en Gigantes Gaseosos
+                # Un gigante gaseoso nunca puede tener población asentada en superficie
+                if p.biome == "Gaseoso":
+                    p.population = 0.0
+                    should_populate = False
+
                 if should_populate:
                     # Rango Natural Unificado: 1.0 - 10.0 Billones
                     p.population = round(random.uniform(1.0, 10.0), 2)
