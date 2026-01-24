@@ -29,10 +29,12 @@ Actualizado v7.5.0: Implementación de Sector Orbital y Lógica de Soberanía Es
 Actualizado v7.5.1: Fix Soberanía Inicial (Sincronización Orbital en Creación).
 Actualizado v7.6.0: Fix Crítico de IDs y Transformación de Sectores en initialize_planet_sectors.
 Actualizado v7.6.1: Fix Crítico SQL en initialize_planet_sectors (sync planet_id) y limpieza de retorno.
+Actualizado v7.7.1: Restauración de updates secuenciales en create_planet_asset para evitar Race Condition con Triggers.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
 import random 
+import traceback # Importado para debug crítico
 from .database import get_supabase
 from .log_repository import log_event
 from .world_repository import get_world_state
@@ -266,19 +268,24 @@ def create_planet_asset(
                 sec_value = initial_security.get("total", 20.0)
                 sec_breakdown = initial_security
             
-            # Sincronizar tabla PLANETS con desglose explícito
-            # V7.5.1: Asignar orbital_owner_id = player_id para evitar bloqueo inicial
+            # --- FIX RACE CONDITION (V7.7.1) ---
+            # Separamos los updates para evitar conflictos con Triggers DB que calculan seguridad/producción.
+            
+            # Paso 1: Asignar Dueños y Población
             db.table("planets").update({
                 "surface_owner_id": player_id,
                 "orbital_owner_id": player_id, # FIX CRÍTICO DE SOBERANÍA
-                "security": sec_value,
-                "security_breakdown": sec_breakdown,
                 "population": initial_population
+            }).eq("id", planet_id).execute()
+            
+            # Paso 2: Asignar Seguridad Calculada (Sobrescribiendo posibles triggers)
+            db.table("planets").update({
+                "security": sec_value,
+                "security_breakdown": sec_breakdown
             }).eq("id", planet_id).execute()
             
             # --- FAIL-SAFE DE SECTORES (V5.9) ---
             # Verificar si existen sectores. Si no, crear uno de emergencia.
-            # NOTA: Genesis Engine V7.3 ahora maneja esto mejor, pero mantenemos el fallback.
             sectors_check = db.table("sectors").select("id").eq("planet_id", planet_id).execute()
             if not sectors_check.data:
                 # Crear sector de emergencia
@@ -298,6 +305,9 @@ def create_planet_asset(
             return response.data[0]
         return None
     except Exception as e:
+        # --- DEBUG CRÍTICO ---
+        print("\n💥 CRITICAL ERROR IN CREATE_PLANET_ASSET:")
+        traceback.print_exc()
         log_event(f"Error creando activo planetario: {e}", player_id, is_error=True)
         return None
 
