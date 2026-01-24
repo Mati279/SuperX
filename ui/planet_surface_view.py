@@ -11,6 +11,7 @@ Mejora V7.1: Navegación contextual (Volver al Sistema del planeta actual).
 Actualizado V7.2: Implementación de Niebla de Superficie (Exploración de Sectores).
 Actualizado V7.6: Visualización Orbital Integrada y Filtro de Superficie.
 Feature: Visualización de Soberanía y Dueños de Sectores.
+Hotfix V7.7: Sincronización DB (nombre) y corrección de Slots Urbanos.
 """
 
 import streamlit as st
@@ -26,17 +27,23 @@ from data.planet_repository import (
     grant_sector_knowledge
 )
 from core.rules import calculate_planet_habitability
-from core.world_constants import BUILDING_TYPES, PLANET_BIOMES, SECTOR_TYPE_ORBITAL
+from core.world_constants import (
+    BUILDING_TYPES, 
+    PLANET_BIOMES, 
+    SECTOR_TYPE_ORBITAL,
+    SECTOR_SLOTS_CONFIG
+)
 from ui.state import get_player_id
 
 
 # --- Helpers de Facciones ---
 @st.cache_data(ttl=600)
 def _get_faction_map():
-    """Cache simple para nombres de facciones."""
+    """Cache simple para nombres de facciones. Actualizado a columna 'nombre'."""
     try:
-        factions = get_supabase().table("factions").select("id, name").execute().data
-        return {f['id']: f['name'] for f in factions}
+        # DB Sync: Cambio de 'name' a 'nombre'
+        factions = get_supabase().table("factions").select("id, nombre").execute().data
+        return {f['id']: f['nombre'] for f in factions}
     except:
         return {}
 
@@ -49,9 +56,10 @@ def _get_faction_name_by_player(player_id):
     """Resuelve el nombre de la facción de un jugador específico."""
     if not player_id: return "Desconocido"
     try:
-        res = get_supabase().table("players").select("faction_id, factions(name)").eq("id", player_id).maybe_single().execute()
+        # DB Sync: Cambio de 'name' a 'nombre'
+        res = get_supabase().table("players").select("faction_id, factions(nombre)").eq("id", player_id).maybe_single().execute()
         if res.data and res.data.get('factions'):
-            return res.data['factions']['name']
+            return res.data['factions']['nombre']
     except: pass
     return "Desconocido"
 
@@ -141,6 +149,8 @@ def _render_info_header(planet: dict, asset: dict):
     # --- VISUALIZACIÓN DE SOBERANÍA ---
     s_owner = _resolve_faction_name(planet.get('surface_owner_id'))
     o_owner = _resolve_faction_name(planet.get('orbital_owner_id'))
+    
+    # Nota: _resolve_faction_name garantiza 'Neutral' si es None, evitando strings vacíos.
     st.markdown(f"**Soberanía de Superficie:** :orange[{s_owner}] | **Soberanía Orbital:** :cyan[{o_owner}]")
 
     col1, col2, col3, col4 = st.columns(4)
@@ -209,6 +219,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     Renderiza una tarjeta individual para un sector específico con estilo estricto.
     V7.2: Manejo de Niebla de Superficie.
     V7.6: Soporte explícito para visualización Orbital y Bypass de Niebla.
+    V7.7: Cálculo de Slots dinámico basado en World Constants.
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE (V7.2) ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -289,7 +300,9 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     # Visualización de capacidad del sector
     # Nota: 'buildings_count' es inyectado dinámicamente por planet_repository V6.0
     used = sector.get('buildings_count', 0)
-    total = sector.get('slots', 2)
+    
+    # Fix V7.7: Uso de SECTOR_SLOTS_CONFIG para determinar total de slots, especialmente para Urbano (3 slots)
+    total = sector.get('slots') or SECTOR_SLOTS_CONFIG.get(s_type, 2)
     
     st.write(f"Capacidad: {used} / {total}")
     st.progress(min(1.0, used / total) if total > 0 else 0)
