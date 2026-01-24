@@ -16,6 +16,7 @@ Actualizado V7.4: Construcción automática de Comando Central (HQ) en sector ur
                   Recuperación de planet_asset_id para vinculación correcta de edificios.
 Actualizado V7.5: Fix Soberanía Inicial (Sincronización Orbital en Creación).
 Actualizado V7.6: Estandarización de Planeta Inicial (Mass Class: Estándar).
+Actualizado V7.7: Refactor integral para uso de create_planet_asset (Seguridad y Fail-safes).
 """
 
 import random
@@ -23,13 +24,14 @@ import traceback
 from typing import Dict, Any, List
 from data.database import get_supabase
 from data.log_repository import log_event
-# Importación actualizada para V7.4
+# Importación actualizada para V7.4 y V7.7
 from data.planet_repository import (
+    create_planet_asset, # V7.7 Importante
     grant_sector_knowledge,
     initialize_planet_sectors,
     claim_genesis_sector,
     add_initial_building,
-    update_planet_sovereignty # Importado V7.5
+    update_planet_sovereignty
 )
 from core.world_constants import STAR_TYPES, ECONOMY_RATES, HABITABLE_BIRTH_BIOMES, SECTOR_TYPE_URBAN
 from core.constants import MIN_ATTRIBUTE_VALUE
@@ -121,72 +123,31 @@ def genesis_protocol(player_id: int) -> bool:
         # Generar nombre de base
         base_name = f"{random.choice(BASE_NAMES_PREFIX)} {random.choice(BASE_NAMES_SUFFIX)}"
 
-        # 3. Calcular Población y Seguridad
+        # 3. Calcular Población y Creación de Asset
         # Asignar población inicial decimal (1.5 - 1.7 Billones)
         initial_pop = round(random.uniform(GENESIS_POP_MIN, GENESIS_POP_MAX), 2)
         
-        # Obtener Base Stat (Defensa) del planeta o default si es data antigua
-        base_stat = target_planet.get('base_defense', 20)
-        if base_stat is None: base_stat = 20
+        # --- REFACTOR V7.7: Usar repositorio centralizado ---
+        # Delegamos la creación, cálculo de seguridad y actualizaciones de planetas al repositorio
+        # Esto activa los fail-safes de sectores y triggers de base de datos correctamente.
         
-        orbital_ring = target_planet.get('orbital_ring', 3)
-        
-        # Calcular Seguridad usando la fórmula centralizada (core/rules.py)
-        initial_security = calculate_planet_security(
-            base_stat=base_stat,
-            pop_count=initial_pop,
-            infrastructure_defense=0, # Génesis empieza sin edificios
-            orbital_ring=orbital_ring,
-            is_player_owned=True
+        created_asset = create_planet_asset(
+            planet_id=target_planet['id'],
+            system_id=system_id,
+            player_id=player_id,
+            settlement_name=base_name,
+            initial_population=initial_pop
         )
-        
-        # Generar breakdown inicial para UI
-        security_breakdown = {
-            "text": f"Génesis: Base ({base_stat}) + Pop ({initial_pop:.1f}x{SECURITY_POP_MULT}) - Anillo ({orbital_ring}x{RING_PENALTY})",
-            "total": initial_security
-        }
 
-        # Datos del Asset (Sin columna 'seguridad')
-        asset_data = {
-            "player_id": player_id,
-            "system_id": system_id,
-            "planet_id": target_planet['id'],
-            "nombre_asentamiento": base_name,
-            # FIX V5.9: Corregido de 'poblacion' a 'population'
-            "population": initial_pop,
-            "pops_activos": initial_pop,
-            "pops_desempleados": 0.0,
-            # "seguridad": initial_security,  <-- REMOVIDO: Columna eliminada de planet_assets
-            "infraestructura_defensiva": 0
-        }
-
-        # Insertar Asset y recuperar ID generado (V7.4)
-        asset_response = db.table("planet_assets").insert(asset_data).execute()
-        if not asset_response or not asset_response.data:
-            log_event("❌ Error crítico: No se pudo crear el asset planetario.", player_id, is_error=True)
+        if not created_asset:
+            log_event("❌ Error crítico: No se pudo crear el asset planetario mediante create_planet_asset.", player_id, is_error=True)
             return False
 
-        planet_asset_id = asset_response.data[0]['id']
-        log_event(f"Asset planetario creado con ID: {planet_asset_id}", player_id)
+        planet_asset_id = created_asset['id']
         
-        # Actualizar Planeta (Source of Truth de Seguridad y Población)
-        # FIX V6.0: Separación de updates para evitar race condition con triggers DB
-        
-        # Paso 1: Asignar Población y Dueño (Trigger puede dispararse aquí)
-        # V7.5: Asignación explícita de orbital_owner_id = player_id para evitar penalización económica inicial
-        db.table("planets").update({
-            "surface_owner_id": player_id,
-            "orbital_owner_id": player_id, # FIX CRÍTICO: Soberanía completa inicial
-            "population": initial_pop
-        }).eq("id", target_planet['id']).execute()
-        
-        log_event(f"Persisting calculated security override for planet {target_planet['id']}...", player_id)
-
-        # Paso 2: Forzar Seguridad Calculada (Sobreescribe Trigger)
-        db.table("planets").update({
-            "security": float(initial_security),
-            "security_breakdown": security_breakdown
-        }).eq("id", target_planet['id']).execute()
+        # Recuperar seguridad calculada por el repositorio para logging (opcional)
+        # La función create_planet_asset ya maneja el update de soberanía y seguridad en tabla 'planets'.
+        log_event(f"Asset planetario creado con ID: {planet_asset_id}. Población: {initial_pop}B", player_id)
         
         # 4. Inventario y FOW
         apply_genesis_inventory(player_id)
@@ -243,7 +204,7 @@ def genesis_protocol(player_id: int) -> bool:
         # 5. Generación de Tripulación Inicial (Opcional/Manual en UI)
         # _deploy_starting_crew(player_id, target_planet['id'])
         
-        log_event(f"✅ Protocolo Génesis completado. Base: {base_name}. Pob: {initial_pop}B. Seg: {initial_security} (Bioma: {target_planet.get('biome', 'Unknown')})", player_id)
+        log_event(f"✅ Protocolo Génesis completado. Base: {base_name}. Pob: {initial_pop}B. (Bioma: {target_planet.get('biome', 'Unknown')})", player_id)
         return True
 
     except Exception as e:

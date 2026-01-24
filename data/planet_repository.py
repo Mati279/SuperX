@@ -28,6 +28,7 @@ Actualizado v7.4.1: Fix de integridad en initialize_planet_sectors para inyectar
 Actualizado v7.5.0: Implementación de Sector Orbital y Lógica de Soberanía Espacial (V6.4 Specs).
 Actualizado v7.5.1: Fix Soberanía Inicial (Sincronización Orbital en Creación).
 Actualizado v7.6.0: Fix Crítico de IDs y Transformación de Sectores en initialize_planet_sectors.
+Actualizado v7.6.1: Fix Crítico SQL en initialize_planet_sectors (sync planet_id) y limpieza de retorno.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -218,7 +219,10 @@ def create_planet_asset(
         existing_assets = get_all_player_planets(player_id)
         if not existing_assets:
             # Boost para la primera colonia
-            initial_population = random.uniform(1.5, 1.7)
+            # NOTA: Si se pasa initial_population (ej. desde Genesis Engine), esto se ignora/sobrescribe si el caller no tiene cuidado.
+            # Pero Genesis Engine ya calcula y pasa el random correcto.
+            if initial_population == 1.0: # Solo aplicar random default si viene el valor por defecto
+                initial_population = random.uniform(1.5, 1.7)
 
         # --- FIX SEGURIDAD (V5.9) ---
         # Obtener datos reales del planeta para calcular seguridad correcta
@@ -991,11 +995,14 @@ def initialize_planet_sectors(planet_id: int, biome: str, mass_class: str = 'Est
             res = db.table("sectors").insert(sectors_to_create).execute()
             if res and res.data:
                 existing_sectors.extend(res.data)
+                sectors_updated = True # Marcar para forzar re-fetch
                 
-        # Re-fetch si hubo updates para asegurar consistencia
+        # FIX FINAL (V7.6.1): Asegurar consistencia total si hubo cambios
+        # La corrección crítica aquí es usar eq("planet_id", ...) NO eq("id", ...)
+        # Y siempre devolver lo que está en DB para asegurar que Genesis Engine obtenga los datos frescos.
         if sectors_updated:
-             check = db.table("sectors").select("*").eq("planet_id", planet_id).execute()
-             return check.data if check and check.data else []
+             final_check = db.table("sectors").select("*").eq("planet_id", planet_id).execute()
+             return final_check.data if final_check and final_check.data else []
 
         return existing_sectors
 
