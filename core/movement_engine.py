@@ -172,23 +172,31 @@ def calculate_movement_cost(
     """
     Calcula ticks y costo de energía para un movimiento.
 
+    Reglas de Negocio V10.1:
+    - SECTOR_SURFACE, SURFACE_ORBIT, INTER_RING: Tiempo = 0 (instantáneo)
+    - WARP desde Orbit o Ring > 0: Costo de energía x2 (penalización gravitacional)
+    - WARP desde Sector Estelar (Ring 0): Costo normal
+
     Returns:
         Tuple[int, int]: (ticks_required, energy_cost)
     """
     ticks = 0
     energy = 0
 
+    # V10.1: Obtener ring de origen para penalización WARP
+    origin_ring = unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring
+
     if movement_type == MovementType.SECTOR_SURFACE:
-        ticks = TICKS_SECTOR_TO_SECTOR
+        # V10.1: Movimiento intra-planeta = instantáneo
+        ticks = 0
 
     elif movement_type == MovementType.SURFACE_ORBIT:
-        ticks = TICKS_SURFACE_TO_ORBIT  # 0 (instantáneo)
+        # V10.1: Superficie <-> Órbita = instantáneo
+        ticks = 0
 
     elif movement_type == MovementType.INTER_RING:
-        origin_ring = unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring
-        dest_ring = destination.ring
-        ring_diff = abs(origin_ring - dest_ring)
-        ticks = TICKS_BETWEEN_RINGS_SHORT if ring_diff <= RING_THRESHOLD_FOR_LONG_TRAVEL else TICKS_BETWEEN_RINGS_LONG
+        # V10.1: Movimiento entre anillos dentro del mismo sistema = instantáneo
+        ticks = 0
 
     elif movement_type == MovementType.STARLANE:
         starlane = find_starlane_between(unit.location_system_id, destination.system_id)
@@ -202,6 +210,11 @@ def calculate_movement_cost(
 
         ticks = WARP_TICKS_BASE + int(distance / 10) * WARP_TICKS_PER_10_DISTANCE
         energy = int(WARP_ENERGY_COST_PER_UNIT_DISTANCE * distance * ship_count)
+
+        # V10.1: Penalización gravitacional - WARP desde órbita o anillo planetario
+        # Si el origen NO es Sector Estelar (Ring 0), el costo de energía se duplica
+        if origin_ring > 0:
+            energy = energy * 2
 
     return ticks, energy
 
@@ -426,29 +439,43 @@ def estimate_travel_time(
     origin_system_id: int,
     dest_system_id: int,
     origin_ring: int = 0,
-    dest_ring: int = 0
+    dest_ring: int = 0,
+    ship_count: int = 1
 ) -> Dict[str, Any]:
     """
     Estima el tiempo de viaje entre dos ubicaciones.
     Útil para la UI y planificación.
 
+    V10.1: Actualizado con nuevas reglas de negocio:
+    - Movimientos intra-sistema = instantáneos (0 ticks)
+    - WARP desde Ring > 0 = penalización 2x energía
+
+    Args:
+        origin_system_id: Sistema de origen
+        dest_system_id: Sistema destino
+        origin_ring: Anillo de origen (para penalización WARP)
+        dest_ring: Anillo destino
+        ship_count: Número de naves (para cálculo de energía)
+
     Returns:
         Dict con información de la ruta y tiempo estimado
     """
-    # Mismo sistema
+    # Mismo sistema - V10.1: Todos instantáneos
     if origin_system_id == dest_system_id:
         ring_diff = abs(origin_ring - dest_ring)
         if ring_diff == 0:
             return {
                 'route_type': 'local',
                 'ticks': 0,
-                'description': 'Movimiento local'
+                'is_instant': True,
+                'description': 'Movimiento local (instantáneo)'
             }
-        ticks = TICKS_BETWEEN_RINGS_SHORT if ring_diff <= RING_THRESHOLD_FOR_LONG_TRAVEL else TICKS_BETWEEN_RINGS_LONG
+        # V10.1: Inter-ring ahora es instantáneo
         return {
             'route_type': 'inter_ring',
-            'ticks': ticks,
-            'description': f'Movimiento entre anillos ({ring_diff} anillos)'
+            'ticks': 0,
+            'is_instant': True,
+            'description': f'Movimiento entre anillos ({ring_diff} anillos) - Instantáneo'
         }
 
     # Buscar starlane
@@ -461,18 +488,30 @@ def estimate_travel_time(
             'starlane_id': starlane.get('id'),
             'distance': distance,
             'ticks': ticks,
+            'is_instant': False,
             'description': f'Vía Starlane (distancia: {distance:.1f})'
         }
 
     # Warp
     distance = calculate_euclidean_distance(origin_system_id, dest_system_id)
     ticks = WARP_TICKS_BASE + int(distance / 10) * WARP_TICKS_PER_10_DISTANCE
-    energy_cost = int(WARP_ENERGY_COST_PER_UNIT_DISTANCE * distance)  # Por nave
+    energy_cost_base = int(WARP_ENERGY_COST_PER_UNIT_DISTANCE * distance * ship_count)
+
+    # V10.1: Penalización gravitacional si origen no es Sector Estelar
+    warp_penalty = origin_ring > 0
+    energy_cost_final = energy_cost_base * 2 if warp_penalty else energy_cost_base
+
+    desc = f'Salto Warp (distancia: {distance:.1f}, energía: {energy_cost_final})'
+    if warp_penalty:
+        desc += ' ⚠️ Penalización gravitacional x2'
 
     return {
         'route_type': 'warp',
         'distance': distance,
         'ticks': ticks,
-        'energy_cost_per_ship': energy_cost,
-        'description': f'Salto Warp (distancia: {distance:.1f}, energía: {energy_cost}/nave)'
+        'is_instant': False,
+        'energy_cost': energy_cost_final,
+        'energy_cost_base': energy_cost_base,
+        'has_gravity_penalty': warp_penalty,
+        'description': desc
     }

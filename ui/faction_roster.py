@@ -436,7 +436,7 @@ def _render_unit_row(
     available_chars: List[dict],
     available_troops: List[dict]
 ):
-    """Renderiza unidad con header expandible: nombre + botón gestión en misma fila."""
+    """Renderiza unidad con header expandible: nombre + botones de gestión y movimiento."""
     unit_id = unit["id"]
     name = unit.get("name", "Unidad")
     members = unit.get("members", [])
@@ -447,8 +447,20 @@ def _render_unit_row(
 
     # Header compacto con expander
     with st.expander(f"{icon} 🎖️ **{name}** ({len(members)}/8) {status_emoji}", expanded=False):
-        # Botón gestión en la parte superior del contenido expandido
-        col_info, col_btn = st.columns([4, 1])
+        # Botones de acción en la parte superior del contenido expandido
+        col_info, col_move, col_btn = st.columns([3, 1, 1])
+
+        # Botón de movimiento (solo si no está en tránsito)
+        with col_move:
+            if status != "TRANSIT":
+                if st.button("🚀", key=f"move_unit_{unit_id}", help="Mover Unidad"):
+                    st.session_state.selected_unit_movement = unit_id
+                    st.session_state.current_page = "Control de Movimiento"
+                    st.rerun()
+            else:
+                st.markdown("✈️", help="En tránsito")
+
+        # Botón de gestión
         with col_btn:
             if st.button("⚙️", key=f"manage_unit_{unit_id}", help="Gestionar unidad"):
                 manage_unit_dialog(unit, player_id, available_chars, available_troops)
