@@ -8,6 +8,7 @@ Gestiona:
 4. Costos de Warp
 Actualizado V11.3: Lógica de Movimiento Local y restricciones diarias (local_moves_count).
 Refactorizado V11.4: Fix bloqueo prematuro en movimientos locales (permite 2 movimientos antes de lock).
+Refactorizado V13.0: Navegación estratificada, tiempos físicos entre anillos y restricciones de salto desde sectores.
 """
 
 from typing import Optional, Dict, Any, Tuple, List
@@ -196,9 +197,15 @@ def calculate_movement_cost(
     Calcula ticks y costo de energía para un movimiento.
 
     Reglas de Negocio V10.1:
-    - SECTOR_SURFACE, SURFACE_ORBIT, INTER_RING: Tiempo = 0 (instantáneo)
+    - SECTOR_SURFACE, SURFACE_ORBIT: Tiempo = 0 (instantáneo)
     - WARP desde Orbit o Ring > 0: Costo de energía x2 (penalización gravitacional)
     - WARP desde Sector Estelar (Ring 0): Costo normal
+    
+    Reglas de Negocio V13.0:
+    - INTER_RING: Ahora tiene costo temporal basado en distancia absoluta.
+      Distancia = abs(Ring A - Ring B).
+      Si distancia <= 3 -> 1 Tick.
+      Si distancia > 3 -> 2 Ticks.
 
     Returns:
         Tuple[int, int]: (ticks_required, energy_cost)
@@ -218,8 +225,14 @@ def calculate_movement_cost(
         ticks = 0
 
     elif movement_type == MovementType.INTER_RING:
-        # V10.1: Movimiento entre anillos dentro del mismo sistema = instantáneo
-        ticks = 0
+        # V13.0: Movimiento entre anillos tiene "peso" físico
+        dest_ring = destination.ring
+        distance = abs(origin_ring - dest_ring)
+        
+        if distance <= RING_THRESHOLD_FOR_LONG_TRAVEL:
+            ticks = TICKS_BETWEEN_RINGS_SHORT # 1
+        else:
+            ticks = TICKS_BETWEEN_RINGS_LONG # 2
 
     elif movement_type == MovementType.STARLANE:
         starlane = find_starlane_between(unit.location_system_id, destination.system_id)
@@ -253,6 +266,7 @@ def validate_movement_request(
     Valida que un movimiento sea posible.
     V11.3: Implementa restricciones de local_moves_count.
     V11.4: Permite movimientos locales si local_moves_count < 2 aunque movement_locked sea True.
+    V13.0: Restricción de salto interestelar solo desde Espacio Exterior (Sin Sector asignado).
 
     Returns:
         Tuple[bool, str]: (is_valid, error_message)
@@ -315,6 +329,11 @@ def validate_movement_request(
     if not is_local:
         if unit.local_moves_count > 0:
             return False, "La unidad ha realizado movimientos locales. No puede iniciar tránsito interestelar en este tick."
+        
+        # V13.0: Restricción física de salto
+        # Si la unidad está acoplada a un sector (Planetario u Orbital), no puede saltar.
+        if unit.location_sector_id is not None:
+            return False, "Debes salir al espacio exterior para iniciar un tránsito interestelar o un salto"
 
     return True, ""
 
@@ -385,7 +404,7 @@ def initiate_movement(
 
     # Ejecutar movimiento
     if ticks == 0:
-        # Movimiento instantáneo (superficie <-> órbita o local)
+        # Movimiento instantáneo (superficie <-> órbita o local instantáneo)
         # V11.4: Pasamos el contador actual para decidir si bloquear
         success, applied_lock = _execute_instant_movement(
             unit_id, 
@@ -408,13 +427,14 @@ def initiate_movement(
             )
         return MovementResult(success=False, error_message="Error ejecutando movimiento instantáneo")
     else:
-        # Movimiento con duración (Interestelar)
+        # Movimiento con duración (Interestelar o Inter-Ring)
         starlane = None
         starlane_id = None
         if movement_type == MovementType.STARLANE:
             starlane = find_starlane_between(unit.location_system_id, destination.system_id)
             starlane_id = starlane.get('id') if starlane else None
 
+        # V13.0: Inter-Ring ahora puede caer aquí si tiene ticks > 0.
         success = start_unit_transit(
             unit_id=unit_id,
             destination_data=destination.to_dict(),
@@ -502,14 +522,20 @@ def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
         unit_name = unit_data.get('name', f'Unit {unit_id}')
         player_id = unit_data.get('player_id')
         dest_system = unit_data.get('transit_destination_system_id')
+        
+        # V13.0: Si es movimiento intra-sistema (Inter-Ring), dest_system podría ser None en la DB o igual al origen.
+        # update_unit_location_advanced maneja la actualización final.
 
         # Completar tránsito
         success = complete_unit_transit(unit_id, current_tick)
 
         if success:
             # Obtener nombre del sistema destino
-            dest_system_data = get_system_by_id(dest_system)
-            dest_name = dest_system_data.get('name', f'Sistema {dest_system}') if dest_system_data else f'Sistema {dest_system}'
+            # Si dest_system es None (movimiento local), usamos el sistema actual de la unidad (que debería estar en la DB)
+            dest_name = "Destino Local"
+            if dest_system:
+                dest_system_data = get_system_by_id(dest_system)
+                dest_name = dest_system_data.get('name', f'Sistema {dest_system}') if dest_system_data else f'Sistema {dest_system}'
 
             arrivals.append({
                 'unit_id': unit_id,
@@ -519,7 +545,7 @@ def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
                 'destination_system_id': dest_system
             })
 
-            log_event(f"✅ Unidad '{unit_name}' ha llegado a {dest_name}", player_id)
+            log_event(f"✅ Unidad '{unit_name}' ha completado su maniobra hacia {dest_name}", player_id)
         else:
             log_event(f"❌ Error completando tránsito de unidad {unit_id}", player_id, is_error=True)
 
@@ -537,9 +563,8 @@ def estimate_travel_time(
     Estima el tiempo de viaje entre dos ubicaciones.
     Útil para la UI y planificación.
 
-    V10.1: Actualizado con nuevas reglas de negocio:
-    - Movimientos intra-sistema = instantáneos (0 ticks)
-    - WARP desde Ring > 0 = penalización 2x energía
+    V10.1: Actualizado con nuevas reglas de negocio.
+    V13.0: Actualizado con tiempos físicos para Inter-Ring basados en distancia.
 
     Args:
         origin_system_id: Sistema de origen
@@ -551,7 +576,7 @@ def estimate_travel_time(
     Returns:
         Dict con información de la ruta y tiempo estimado
     """
-    # Mismo sistema - V10.1: Todos instantáneos
+    # Mismo sistema
     if origin_system_id == dest_system_id:
         ring_diff = abs(origin_ring - dest_ring)
         if ring_diff == 0:
@@ -561,12 +586,18 @@ def estimate_travel_time(
                 'is_instant': True,
                 'description': 'Movimiento local (instantáneo)'
             }
-        # V10.1: Inter-ring ahora es instantáneo
+        
+        # V13.0: Inter-ring con costo temporal
+        if ring_diff <= RING_THRESHOLD_FOR_LONG_TRAVEL:
+            ticks = TICKS_BETWEEN_RINGS_SHORT # 1
+        else:
+            ticks = TICKS_BETWEEN_RINGS_LONG # 2
+            
         return {
             'route_type': 'inter_ring',
-            'ticks': 0,
-            'is_instant': True,
-            'description': f'Movimiento entre anillos ({ring_diff} anillos) - Instantáneo'
+            'ticks': ticks,
+            'is_instant': False,
+            'description': f'Maniobra orbital ({ring_diff} anillos de distancia)'
         }
 
     # Buscar starlane

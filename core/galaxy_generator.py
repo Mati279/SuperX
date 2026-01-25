@@ -48,7 +48,7 @@ class GalaxyGenerator:
                 sectors=[]  # V8.0: Inicializar sectores estelares
             )
 
-            # V8.0: Generar sector estelar para el sistema
+            # V8.0: Generar sector estelar para el sistema (Concepto Anillo 0)
             new_system.sectors = self._generate_stellar_sector(new_system)
 
             # Determinar si el sistema está civilizado
@@ -123,10 +123,15 @@ class GalaxyGenerator:
             base_defense = random.randint(10, 30)
             
             planet_id = (system.id * 100) + j
+            
+            # FIX TAREA 1: Nomenclatura basada en Anillo Orbital
+            # El nombre ahora refleja explícitamente la posición orbital (ej: System-001-R3)
+            planet_name = f"{system.name}-R{ring}"
+
             new_planet = Planet(
                 id=planet_id,
                 system_id=system.id,
-                name=f"{system.name}-{j+1}",
+                name=planet_name,
                 biome=biome,
                 is_habitable=PLANET_BIOMES[biome].get('habitability', 0) > 0.4, 
                 orbital_ring=ring,
@@ -394,6 +399,7 @@ class GalaxyGenerator:
         """
         V8.0: Genera el sector estelar para un sistema.
         El sector estelar permite construcción de megaestructuras a nivel de sistema.
+        CONCEPTUALMENTE: Este es el 'Anillo 0' del sistema (Orbita Estelar/Solar).
 
         Args:
             system: El sistema para el cual generar el sector estelar.

@@ -1,4 +1,4 @@
-# core/movement_constants.py
+# core/movement_constants.py (Completo)
 """
 Constantes del Motor de Movimiento V10.0.
 Define tiempos de viaje, costos y reglas de navegación.
@@ -12,13 +12,13 @@ TICKS_SURFACE_TO_ORBIT = 0           # Instantáneo pero bloquea movimiento
 MOVEMENT_LOCK_ON_ORBIT_CHANGE = True # Activa movement_locked tras subir/bajar
 
 # --- TICKS DE VIAJE (ENTRE ANILLOS) ---
-TICKS_BETWEEN_RINGS_SHORT = 1        # ≤3 anillos de diferencia
-TICKS_BETWEEN_RINGS_LONG = 2         # >3 anillos de diferencia
+TICKS_BETWEEN_RINGS_SHORT = 1        # <= 3 anillos de diferencia
+TICKS_BETWEEN_RINGS_LONG = 2         # > 3 anillos de diferencia
 RING_THRESHOLD_FOR_LONG_TRAVEL = 3   # Umbral para viaje largo
 
 # --- STARLANES ---
 STARLANE_DISTANCE_THRESHOLD = 10.0   # Distancia para viaje corto
-TICKS_STARLANE_SHORT = 1             # Starlane con distancia ≤ threshold
+TICKS_STARLANE_SHORT = 1             # Starlane con distancia <= threshold
 TICKS_STARLANE_LONG = 2              # Starlane con distancia > threshold
 
 # --- WARP (Sin Starlane - Viaje FTL Directo) ---
