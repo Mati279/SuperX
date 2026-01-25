@@ -5,14 +5,25 @@ Interactúa con las tablas 'units', 'troops' y 'unit_members'.
 Implementa persistencia de composición y gestión de estado.
 V9.0: Implementación inicial.
 V10.0: Funciones de tránsito, ubicación avanzada y detección.
+V11.1: Persistencia de ubicación en Tropas y lógica de disolución segura.
 """
 
 from typing import Optional, List, Dict, Any
 from data.database import get_supabase
-from core.models import UnitSchema, TroopSchema, UnitStatus
+from core.models import UnitSchema, TroopSchema, UnitStatus, LocationRing
 
-def create_troop(player_id: int, name: str, troop_type: str, level: int = 1) -> Optional[Dict[str, Any]]:
-    """Crea una nueva tropa en la DB."""
+def create_troop(
+    player_id: int, 
+    name: str, 
+    troop_type: str, 
+    level: int = 1,
+    location_data: Optional[Dict[str, Any]] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Crea una nueva tropa en la DB.
+    Args:
+        location_data: Dict opcional con system_id, planet_id, sector_id, ring.
+    """
     db = get_supabase()
     try:
         data = {
@@ -20,8 +31,17 @@ def create_troop(player_id: int, name: str, troop_type: str, level: int = 1) -> 
             "name": name,
             "type": troop_type,
             "level": level,
-            "combats_at_current_level": 0
+            "combats_at_current_level": 0,
+            "ring": 0 # Default safe value
         }
+        
+        # V11.1: Asignar ubicación si se provee
+        if location_data:
+            data["location_system_id"] = location_data.get("system_id")
+            data["location_planet_id"] = location_data.get("planet_id")
+            data["location_sector_id"] = location_data.get("sector_id")
+            data["ring"] = location_data.get("ring", 0)
+
         response = db.table("troops").insert(data).execute()
         if response.data:
             return response.data[0]
@@ -54,6 +74,24 @@ def update_troop_stats(troop_id: int, combats: int, level: Optional[int] = None)
         return bool(response.data)
     except Exception as e:
         print(f"Error updating troop {troop_id}: {e}")
+        return False
+
+def update_troop_location(troop_id: int, location_data: Dict[str, Any]) -> bool:
+    """
+    V11.1: Actualiza la ubicación de una tropa individual.
+    """
+    db = get_supabase()
+    try:
+        data = {
+            "location_system_id": location_data.get("system_id"),
+            "location_planet_id": location_data.get("planet_id"),
+            "location_sector_id": location_data.get("sector_id"),
+            "ring": location_data.get("ring", 0)
+        }
+        response = db.table("troops").update(data).eq("id", troop_id).execute()
+        return bool(response.data)
+    except Exception as e:
+        print(f"Error updating troop location {troop_id}: {e}")
         return False
 
 def delete_troop(troop_id: int) -> bool:
@@ -98,7 +136,8 @@ def create_unit(
             "status": UnitStatus.GROUND.value,
             "location_system_id": location_data.get("system_id"),
             "location_planet_id": location_data.get("planet_id"),
-            "location_sector_id": location_data.get("sector_id")
+            "location_sector_id": location_data.get("sector_id"),
+            "ring": location_data.get("ring", 0)
         }
         response = db.table("units").insert(data).execute()
         if response.data:
@@ -173,17 +212,46 @@ def rename_unit(unit_id: int, new_name: str, player_id: int) -> bool:
 
 def delete_unit(unit_id: int, player_id: int) -> bool:
     """
-    Disuelve una unidad instantáneamente.
-    Los miembros quedan sueltos en la misma ubicación.
+    Disuelve una unidad.
+    V11.1 UPDATE: Antes de borrar, transfiere la ubicación de la unidad a las tropas miembros.
+    Esto previene que las tropas queden 'huérfanas' de ubicación en la DB.
     """
     db = get_supabase()
     try:
-        unit = db.table("units").select("player_id").eq("id", unit_id).single().execute()
-        if not unit.data or unit.data.get("player_id") != player_id:
+        # 1. Obtener la unidad para verificar propiedad y obtener ubicación
+        unit_resp = db.table("units").select("*").eq("id", unit_id).single().execute()
+        if not unit_resp.data or unit_resp.data.get("player_id") != player_id:
             return False
+        
+        unit = unit_resp.data
+        
+        # 2. Obtener miembros tipo 'troop'
+        members_resp = db.table("unit_members")\
+            .select("*")\
+            .eq("unit_id", unit_id)\
+            .eq("entity_type", "troop")\
+            .execute()
+        
+        troop_ids = [m["entity_id"] for m in members_resp.data] if members_resp.data else []
+        
+        # 3. Si hay tropas, actualizar su ubicación a la de la unidad actual
+        if troop_ids:
+            location_update = {
+                "location_system_id": unit.get("location_system_id"),
+                "location_planet_id": unit.get("location_planet_id"),
+                "location_sector_id": unit.get("location_sector_id"),
+                "ring": unit.get("ring", 0)
+            }
+            # Bulk update de tropas
+            db.table("troops").update(location_update).in_("id", troop_ids).execute()
+            
+        # 4. Eliminar miembros (romper vínculo)
         db.table("unit_members").delete().eq("unit_id", unit_id).execute()
+        
+        # 5. Eliminar unidad
         response = db.table("units").delete().eq("id", unit_id).execute()
         return bool(response.data)
+
     except Exception as e:
         print(f"Error deleting unit {unit_id}: {e}")
         return False
@@ -206,6 +274,10 @@ def update_unit_location(unit_id: int, location_data: Dict[str, Any]) -> bool:
             "location_planet_id": location_data.get("planet_id"),
             "location_sector_id": location_data.get("sector_id")
         }
+        # Si se pasa ring, actualizarlo también
+        if "ring" in location_data:
+            data["ring"] = location_data["ring"]
+            
         response = db.table("units").update(data).eq("id", unit_id).execute()
         return bool(response.data)
     except Exception as e:

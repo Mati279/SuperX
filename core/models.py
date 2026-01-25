@@ -12,6 +12,7 @@ Refactor v5.7: Estandarización de nomenclatura 'population' (Fix poblacion).
 Actualizado V9.0: Implementación de Unidades (Units) y Tropas (Troops).
 Actualizado V10.0: Motor de Movimiento, LocationRing, UnitLocation, campos de tránsito.
 Refactorizado V11.0: Geolocalización dinámica en CommanderData.sheet.
+Actualizado V11.1: Persistencia de ubicación en TroopSchema.
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -614,6 +615,7 @@ class TroopSchema(BaseModel):
     """
     Representación de una tropa (entidad de combate genérica).
     Persistido en tabla 'troops'.
+    V11.1: Agregados campos de ubicación y ring.
     """
     model_config = ConfigDict(extra='allow')
     
@@ -624,6 +626,12 @@ class TroopSchema(BaseModel):
     level: int = Field(default=1, ge=1, le=4)
     combats_at_current_level: int = 0
     
+    # V11.1: Ubicación persistente
+    location_system_id: Optional[int] = None
+    location_planet_id: Optional[int] = None
+    location_sector_id: Optional[int] = None
+    ring: LocationRing = LocationRing.STELLAR
+
     @property
     def combats_required_for_next_level(self) -> int:
         """Regla V9.0: 2 * nivel actual."""
@@ -631,6 +639,9 @@ class TroopSchema(BaseModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'TroopSchema':
+        # Convertir ring de int a enum si viene de DB
+        if 'ring' in data and isinstance(data['ring'], int):
+            data['ring'] = LocationRing(data['ring'])
         return cls(**data)
 
 class UnitMemberSchema(BaseModel):
