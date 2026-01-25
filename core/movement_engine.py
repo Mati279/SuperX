@@ -10,6 +10,7 @@ Actualizado V11.3: Lógica de Movimiento Local y restricciones diarias (local_mo
 Refactorizado V11.4: Fix bloqueo prematuro en movimientos locales (permite 2 movimientos antes de lock).
 Refactorizado V13.0: Navegación estratificada, tiempos físicos entre anillos y restricciones de salto desde sectores.
 Refactorizado V13.1: Fix bloqueo en validación local. Se inyecta MovementType en validación para omitir chequeos de distancia en movimientos orbitales/superficie.
+Refactorizado V13.2: Reordenamiento de prioridades en determine_movement_type para evitar falsos positivos de INTER_RING en movimientos planetarios.
 """
 
 from typing import Optional, Dict, Any, Tuple, List
@@ -143,6 +144,7 @@ def determine_movement_type(
 ) -> MovementType:
     """
     Determina el tipo de movimiento basado en origen y destino.
+    Refactor V13.2: Prioridad a comprobaciones de mismo planeta/sector antes que comprobaciones de anillo.
     """
     # Cambio de sistema = interestelar
     if origin_system != dest_system:
@@ -153,7 +155,18 @@ def determine_movement_type(
 
     # --- LÓGICA INTRA-SISTEMA ---
 
-    # CASO ESPECIAL: Mismo anillo, transición Órbita <-> Espacio.
+    # 1. Prioridad: Mismo planeta (Movimiento Superficie/Órbita)
+    # Esto debe chequearse ANTES de comparar anillos para evitar que una pequeña discrepancia
+    # de anillos (si la órbita y superficie tienen distinta definición de anillo) lo marque como INTER_RING.
+    if origin_planet == dest_planet and origin_planet is not None:
+        # Superficie <-> Órbita (sector NULL = órbita, sector NOT NULL = superficie)
+        if (origin_sector is None and dest_sector is not None) or \
+           (origin_sector is not None and dest_sector is None):
+            return MovementType.SURFACE_ORBIT
+        # Sector a sector en superficie
+        return MovementType.SECTOR_SURFACE
+
+    # 2. Prioridad: Mismo anillo, transición Órbita <-> Espacio (mismo planeta ya fue filtrado arriba).
     # Se trata como SURFACE_ORBIT para que sea instantáneo (0 ticks).
     if origin_ring == dest_ring:
         is_origin_orbit = origin_planet is not None
@@ -163,24 +176,12 @@ def determine_movement_type(
         if is_origin_orbit != is_dest_orbit:
             return MovementType.SURFACE_ORBIT
 
-    # Diferente anillo = inter-ring
+    # 3. Diferente anillo = inter-ring
+    # Ahora es seguro retornar esto porque ya filtramos los casos de mismo planeta.
     if origin_ring != dest_ring:
         return MovementType.INTER_RING
 
-    # Mismo anillo...
-    
-    # ...y planeta pero diferente sector
-    if origin_planet == dest_planet and origin_planet is not None:
-        # Superficie <-> Órbita (sector NULL = órbita, sector NOT NULL = superficie)
-        if (origin_sector is None and dest_sector is not None) or \
-           (origin_sector is not None and dest_sector is None):
-            return MovementType.SURFACE_ORBIT
-        # Sector a sector en superficie
-        return MovementType.SECTOR_SURFACE
-
-    # Mismo sistema, mismo anillo, diferente planeta (o entrar/salir órbita en mismo anillo)
-    # Nota: El caso Órbita <-> Espacio ya fue capturado arriba si origin_ring == dest_ring.
-    # Esto capturaría movimiento entre dos órbitas de planetas distintos en el mismo anillo (raro pero posible).
+    # 4. Mismo sistema, mismo anillo, diferente planeta
     if origin_planet != dest_planet:
          return MovementType.INTER_RING
          
@@ -272,6 +273,7 @@ def validate_movement_request(
     V11.4: Permite movimientos locales si local_moves_count < 2 aunque movement_locked sea True.
     V13.0: Restricción de salto interestelar solo desde Espacio Exterior.
     V13.1: Validación de distancia de anillos selectiva basada en movement_type.
+    V13.2: Lógica de distancia estricta para INTER_RING.
 
     Returns:
         Tuple[bool, str]: (is_valid, error_message)
@@ -330,12 +332,12 @@ def validate_movement_request(
              if planet and planet.get("orbital_ring") != origin_ring:
                  return False, f"Solo puedes entrar en órbita desde el Anillo {planet.get('orbital_ring')}."
         
-        # V13.1: Validar distancia máxima entre anillos SOLO si es movimiento INTER_RING
-        # Omitimos esto para SURFACE_ORBIT y SECTOR_SURFACE ya que son movimientos locales dentro del mismo marco orbital.
+        # V13.1 / V13.2: Validar distancia máxima entre anillos SOLO si es movimiento INTER_RING
+        # Omitimos explícitamente esto para SURFACE_ORBIT y SECTOR_SURFACE.
         if movement_type == MovementType.INTER_RING:
             dist_rings = abs(origin_ring - destination.ring)
             if dist_rings > 3:
-                return False, f"La distancia entre anillos ({dist_rings}) es demasiado grande para un solo salto (Máx: 3)"
+                return False, f"La maniobra inter-anillo excede el límite de salto (Máx: 3 anillos, actual: {dist_rings})."
 
     # Restricción 2: Bloqueo de tránsito interestelar si ya se movió localmente
     if not is_local:
@@ -362,6 +364,7 @@ def initiate_movement(
     Inicia el movimiento de una unidad hacia un destino.
     Valida recursos, actualiza estado a TRANSIT si aplica.
     V11.3: Incrementa local_moves_count si es movimiento local.
+    V13.2: Usa el tipo de movimiento determinado para validación precisa.
 
     Args:
         unit_id: ID de la unidad a mover
@@ -380,7 +383,6 @@ def initiate_movement(
     unit = UnitSchema.from_dict(unit_data)
 
     # Determinar tipo de movimiento ANTES de validar
-    # V13.1: Esto permite pasar el tipo a la validación para lógica condicional
     origin_ring_val = unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring
     
     movement_type = determine_movement_type(
@@ -394,7 +396,8 @@ def initiate_movement(
         dest_ring=destination.ring
     )
 
-    # Validar movimiento (incluye restricciones V11.3, V11.4 y V13.1)
+    # Validar movimiento (incluye restricciones V11.3, V11.4, V13.1 y V13.2)
+    # Se pasa movement_type para validación condicional
     is_valid, error_msg = validate_movement_request(unit, destination, player_id, movement_type)
     if not is_valid:
         return MovementResult(success=False, error_message=error_msg)
