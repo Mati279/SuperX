@@ -13,6 +13,7 @@ Actualizado v5.1.8: Fuente de Verdad Unificada (SQL Knowledge System).
 Actualizado v5.1.9: Visualización estrictamente basada en KnowledgeLevel.
 Fix v5.2.0: Corrección de falso positivo en "already_investigated" por comparación de strings en Enum.
 Fix v5.2.1: Eliminación de constante de ubicación obsoleta (Refactorización v4.3.1).
+Refactorizado V10: Integración con coordenadas SQL (get_player_base_coordinates) y limpieza de lógica local.
 """
 
 import streamlit as st
@@ -41,11 +42,9 @@ from data.world_repository import (
     get_world_state,
     get_investigating_target_info
 )
-from data.planet_repository import (
-    get_all_player_planets,
-    get_planet_sectors_status
-)
-from core.world_constants import SECTOR_TYPE_URBAN
+# TAREA 4: Importamos el nuevo helper y eliminamos las funciones viejas
+from data.planet_repository import get_player_base_coordinates
+
 from data.log_repository import log_event
 # Modificación: Eliminada DEFAULT_RECRUIT_LOCATION por ser obsoleta en v4.3.1
 from config.app_constants import DEFAULT_RECRUIT_RANK, DEFAULT_RECRUIT_STATUS
@@ -76,62 +75,8 @@ ATTR_ABBREVIATIONS = {
     "presencia": "PRE"
 }
 
-
-def _get_active_base_location(player_id: int) -> Dict[str, Any]:
-    """
-    Obtiene la ubicación de la base primaria del jugador para el reclutamiento.
-
-    Returns:
-        Dict con: system_id, planet_id, sector_id, nombre_asentamiento
-        Si no hay base, retorna dict vacío con valores None.
-    """
-    location_data = {
-        "system_id": None,
-        "planet_id": None,
-        "sector_id": None,
-        "nombre_asentamiento": None
-    }
-
-    try:
-        # 1. Obtener todas las bases/planetas del jugador
-        player_planets = get_all_player_planets(player_id)
-
-        if not player_planets:
-            return location_data
-
-        # 2. Tomar el primer asset como base activa por defecto
-        primary_base = player_planets[0]
-        planet_id = primary_base.get("planet_id")
-
-        # Extraer datos del JOIN con planets (si existe)
-        planets_data = primary_base.get("planets", {})
-        system_id = planets_data.get("system_id") or primary_base.get("system_id")
-
-        location_data["system_id"] = system_id
-        location_data["planet_id"] = planet_id
-        location_data["nombre_asentamiento"] = primary_base.get("nombre_asentamiento", "Base")
-
-        # 3. Buscar el sector urbano del planeta
-        if planet_id:
-            sectors = get_planet_sectors_status(planet_id, player_id)
-
-            # Priorizar sector urbano
-            urban_sector = next(
-                (s for s in sectors if s.get("sector_type") == SECTOR_TYPE_URBAN),
-                None
-            )
-
-            if urban_sector:
-                location_data["sector_id"] = urban_sector.get("id")
-            elif sectors:
-                # Fallback: usar primer sector disponible si no hay urbano
-                location_data["sector_id"] = sectors[0].get("id")
-
-    except Exception as e:
-        # Fallback silencioso para no romper el flujo de reclutamiento
-        print(f"Warning: Error obteniendo base activa: {e}")
-
-    return location_data
+# TAREA 4: Función local _get_active_base_location ELIMINADA.
+# Se usa directamente data.planet_repository.get_player_base_coordinates
 
 
 def _get_skill_color(value: int) -> str:
@@ -426,8 +371,8 @@ def _process_recruitment_ui(player_id: int, candidate: Dict[str, Any], player_cr
     Refactor V10: Incluye ubicación real de la base del jugador.
     """
     try:
-        # Obtener ubicación de la base activa del jugador
-        base_location = _get_active_base_location(player_id)
+        # TAREA 4: Obtener ubicación desde la Fuente de Verdad (SQL)
+        base_location = get_player_base_coordinates(player_id)
 
         new_credits, update_data = process_recruitment(
             player_id,
@@ -535,8 +480,9 @@ def show_recruitment_center():
                 from services.character_generation_service import generate_character_pool
                 try:
                     with st.spinner("Generando pool de emergencia..."):
-                        # Obtener ubicación de la base activa para los candidatos
-                        base_loc = _get_active_base_location(player_id)
+                        # TAREA 4: Obtener ubicación de la base activa para los candidatos desde SQL
+                        base_loc = get_player_base_coordinates(player_id)
+                        
                         generate_character_pool(
                             player_id,
                             pool_size=3,

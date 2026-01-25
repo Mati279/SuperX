@@ -9,6 +9,7 @@ Actualizado v5.1.6: Soporte para 'initial_knowledge_level' en reclutamiento dire
 Actualizado v5.2.0: Restricción de Origen a Biomas Habitables y mejora de Lore.
 Corrección v5.2.1: Uso de cliente Supabase para consultas de planetas (Fix ImportError).
 Actualizado V9.0: Soporte para coordenadas precisas (Hero Spawn) en RecruitmentContext.
+Refactorizado V10: Inyección de coordenadas SQL en diccionario de retorno y limpieza de JSON.
 """
 
 import random
@@ -547,10 +548,13 @@ def generate_random_character_with_ai(
             "ubicacion_local": location_name,
             "rol_asignado": CharacterRole.NONE.value,
             "accion_actual": "Esperando asignación",
-            "ubicacion": { # V9.0/V10: Estructura explícita con IDs de sector
+            # NOTA V10: Se mantiene temporalmente para que el repositorio extraiga los datos a SQL.
+            # La función _extract_and_clean_data en character_repository.py se encargará de
+            # hacer el pop() de este diccionario para que NO persista en el JSON final.
+            "ubicacion": { 
                 "system_id": location_system_id,
                 "planet_id": context.location_planet_id,
-                "sector_id": location_sector_id,  # Refactor V10: Usar variable local
+                "sector_id": location_sector_id,
                 "ubicacion_local": location_name
             }
         }

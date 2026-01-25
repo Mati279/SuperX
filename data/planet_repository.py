@@ -40,6 +40,7 @@ Actualizado v8.2.1: Fix Not-Null Constraint (Inyección de pops_required y energ
 Actualizado v8.3.0: Business Logic para HQ Único (Reemplazo de Constraint DB).
 Actualizado v9.1.0: Implementación de Seguridad de Sistema (Recálculo automático en cascada).
 Actualizado v9.2.0: Reglas de Soberanía Conflictiva y Excepción de Construcción Orbital (Bypass de Flota).
+Actualizado v10.0: Helper get_player_base_coordinates para Ubicación SQL.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -198,6 +199,61 @@ def get_all_player_planets(player_id: int) -> List[Dict[str, Any]]:
     except Exception as e:
         log_event(f"Error obteniendo planetas del jugador: {e}", player_id, is_error=True)
         return []
+
+
+def get_player_base_coordinates(player_id: int) -> Dict[str, Any]:
+    """
+    Obtiene las coordenadas (System, Planet, Sector) de la base principal del jugador.
+    Prioriza el Sector Urbano del primer planeta colonizado.
+    Helper para la refactorización de ubicación (V10).
+    """
+    coords = {
+        "system_id": None,
+        "planet_id": None,
+        "sector_id": None,
+        "nombre_asentamiento": None
+    }
+    
+    try:
+        # 1. Obtener activos del jugador (Asumimos el primero como base principal)
+        assets = get_all_player_planets(player_id)
+        if not assets:
+            return coords
+            
+        base_asset = assets[0]
+        planet_id = base_asset.get("planet_id")
+        
+        # Extraer datos del activo y del planeta (JOIN)
+        coords["planet_id"] = planet_id
+        coords["nombre_asentamiento"] = base_asset.get("nombre_asentamiento", "Base Principal")
+        
+        # Datos del sistema (desde el join con planets o directo)
+        planet_data = base_asset.get("planets", {})
+        coords["system_id"] = planet_data.get("system_id") or base_asset.get("system_id")
+        
+        # 2. Buscar Sector Urbano para spawn preciso
+        if planet_id:
+            db = _get_db()
+            sector_res = db.table("sectors")\
+                .select("id")\
+                .eq("planet_id", planet_id)\
+                .eq("sector_type", SECTOR_TYPE_URBAN)\
+                .maybe_single()\
+                .execute()
+                
+            if sector_res and sector_res.data:
+                coords["sector_id"] = sector_res.data.get("id")
+            else:
+                # Fallback: Cualquier sector del planeta
+                fallback = db.table("sectors").select("id").eq("planet_id", planet_id).limit(1).execute()
+                if fallback and fallback.data:
+                    coords["sector_id"] = fallback.data[0].get("id")
+
+        return coords
+
+    except Exception as e:
+        log_event(f"Error obteniendo coordenadas base: {e}", player_id, is_error=True)
+        return coords
 
 
 def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]]:

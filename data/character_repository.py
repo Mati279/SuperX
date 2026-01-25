@@ -11,6 +11,7 @@ Actualizado v5.1.8: Persistencia robusta de KnowledgeLevel (Fix Source of Truth)
 Actualizado v5.1.9: Fix Critical Mismatch Column (observer_player_id -> player_id).
 Actualizado v5.2.0: Fix ImportError COMMANDER_LOCATION (Refactorización de Ubicaciones).
 Actualizado v5.2.1: Soporte para actualización de ubicacion_local en reclutamiento.
+Refactorizado v10.0: Purga de ubicación en JSON (Ubicación SQL como Source of Truth).
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -69,6 +70,7 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
     EXTRACT & CLEAN PATTERN (Refactorizado v5.1.4).
     Separa los datos que van a columnas SQL (Fuente de Verdad) de los que se quedan en JSON.
     Convierte nombres de roles a IDs numéricos para compatibilidad SQL.
+    Refactor V10: Elimina la ubicación del JSON tras extraerla.
     """
     stats = copy.deepcopy(full_stats)
     columns = {}
@@ -109,15 +111,17 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
         
         # Sincronización de Rol como INTEGER ID (Fix 22P02)
         columns["rol"] = ROLE_ID_MAP.get(rol_text, 0)
-        
         columns["estado_id"] = STATUS_ID_MAP.get(rol_text, 1)
         
+        # Extracción de coordenadas SQL si existen en el JSON (para migración o creación)
         loc = stats["estado"].get("ubicacion", {})
         if isinstance(loc, dict):
             columns["location_system_id"] = loc.get("system_id")
             columns["location_planet_id"] = loc.get("planet_id")
             columns["location_sector_id"] = loc.get("sector_id")
-            stats["estado"].pop("ubicacion", None)
+        
+        # TAREA 2: Limpieza obligatoria. La ubicación NO debe persistir en JSON.
+        stats["estado"].pop("ubicacion", None)
         
         stats["estado"].pop("rol_asignado", None)
         
@@ -225,11 +229,8 @@ def create_commander(
             "estado": {
                 "estados_activos": [COMMANDER_STATUS],
                 "rol_asignado": CharacterRole.COMMANDER.value,
-                "accion_actual": "Iniciando mandato",
-                # Modificado v5.2.1: Uso de literal en lugar de COMMANDER_LOCATION (Legacy)
-                "ubicacion": {
-                   "system_id": None, "planet_id": None, "sector_id": None, "ubicacion_local": "Puente de Mando"
-                }
+                "accion_actual": "Iniciando mandato"
+                # TAREA 2: Ubicación eliminada del JSON (Manejada por SQL o valores nulos por defecto)
             }
         }
 
@@ -506,6 +507,7 @@ def recruit_candidate_db(character_id: int, update_dict: Dict[str, Any]) -> Opti
     Wrapper específico para reclutar: Convierte dict de alto nivel a columnas SQL validas.
     Soluciona error de columnas inexistentes ('estado', 'ubicacion') en update_character al reclutar.
     Refactor V10: Incluye columnas de ubicación física (system_id, planet_id, sector_id).
+    Tarea 2: Elimina lógica de actualización de JSON de ubicación.
     """
     try:
         char = get_character_by_id(character_id)
@@ -516,8 +518,7 @@ def recruit_candidate_db(character_id: int, update_dict: Dict[str, Any]) -> Opti
         # 1. Aplicar cambios al JSON
         new_rank = update_dict.get("rango", "Recluta")
         new_status_str = update_dict.get("estado", "Disponible")
-        new_location_local = update_dict.get("ubicacion_local")
-
+        
         # Extraer IDs de ubicación física (Refactor V10)
         new_system_id = update_dict.get("location_system_id")
         new_planet_id = update_dict.get("location_planet_id")
@@ -530,19 +531,10 @@ def recruit_candidate_db(character_id: int, update_dict: Dict[str, Any]) -> Opti
         stats["estado"]["estados_activos"] = [new_status_str]
         stats["estado"]["rol_asignado"] = "Sin Asignar" # Reset rol logic
 
-        # Manejo de Ubicación completa (Refactor V10)
-        if "ubicacion" not in stats["estado"]:
-            stats["estado"]["ubicacion"] = {}
-
-        # Actualizar estructura completa de ubicación en JSON
-        if new_system_id is not None:
-            stats["estado"]["ubicacion"]["system_id"] = new_system_id
-        if new_planet_id is not None:
-            stats["estado"]["ubicacion"]["planet_id"] = new_planet_id
-        if new_sector_id is not None:
-            stats["estado"]["ubicacion"]["sector_id"] = new_sector_id
-        if new_location_local:
-            stats["estado"]["ubicacion"]["ubicacion_local"] = new_location_local
+        # TAREA 2: Eliminar actualización de ubicación en JSON.
+        # Eliminadas las líneas que escribían en stats["estado"]["ubicacion"].
+        # Limpieza proactiva: asegurar que no quede basura en el JSON.
+        stats["estado"].pop("ubicacion", None)
 
         # 2. Preparar Payload SQL
         # Mapeo explicito de estado (texto -> ID)
