@@ -13,6 +13,7 @@ Actualizado v5.2.0: Fix ImportError COMMANDER_LOCATION (Refactorización de Ubic
 Actualizado v5.2.1: Soporte para actualización de ubicacion_local en reclutamiento.
 Refactorizado v10.0: Purga de ubicación en JSON (Ubicación SQL como Source of Truth).
 Refactorizado v10.2: Asignación automática de ubicación base para Comandante (Create/Update).
+Refactorizado v11.0: Geolocalización dinámica (Joins con planets y assets).
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -421,10 +422,18 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
         raise RuntimeError(f"Error guardando personaje: {e}")
 
 def get_all_characters_by_player_id(player_id: int) -> list[Dict[str, Any]]:
+    """
+    Obtiene todos los personajes del jugador con JOIN a planetas y assets.
+    Actualizado V11.0: Incluye 'planets' y 'planet_assets' para resolver nombre de ubicación.
+    """
     try:
-        response = _get_db().table("characters").select("*").eq("player_id", player_id).execute()
+        # Join con planets (por location_planet_id) y anidado planet_assets (del planeta)
+        # Esto permite resolver el nombre del planeta y si el jugador tiene una colonia allí.
+        query = "*, planets:location_planet_id(name, planet_assets(nombre_asentamiento, player_id))"
+        response = _get_db().table("characters").select(query).eq("player_id", player_id).execute()
         return response.data if response.data else []
     except Exception:
+        # Fallback silencioso en caso de error de sintaxis/conexión
         return []
 
 get_all_player_characters = get_all_characters_by_player_id

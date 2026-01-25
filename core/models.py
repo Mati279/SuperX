@@ -11,6 +11,7 @@ Refactor v5.2: Seguridad movida a tabla 'planets'.
 Refactor v5.7: Estandarización de nomenclatura 'population' (Fix poblacion).
 Actualizado V9.0: Implementación de Unidades (Units) y Tropas (Troops).
 Actualizado V10.0: Motor de Movimiento, LocationRing, UnitLocation, campos de tránsito.
+Refactorizado V11.0: Geolocalización dinámica en CommanderData.sheet.
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -367,6 +368,9 @@ class CommanderData(BaseModel):
     location_planet_id: Optional[int] = None
     location_sector_id: Optional[int] = None
     
+    # Datos unidos (Joined Data) - Refactor V11.0
+    planets: Optional[Dict[str, Any]] = None 
+    
     # Legacy/Fallback (Se mantienen para UI simple)
     ubicacion: str = "Base Principal"
     estado: str = "Disponible"
@@ -423,11 +427,30 @@ class CommanderData(BaseModel):
             # Sincronización de rol operativo (ya hidratado por el validator)
             full_stats["estado"]["rol_asignado"] = self.rol if self.rol else "Sin Asignar"
             
+            # --- V11.0: Resolución Dinámica de Ubicación ---
+            resolved_loc_name = self.ubicacion # Fallback
+            
+            # Si el personaje está en tránsito, esa información prevalece
+            if self.estado_id == 6: # En Tránsito
+                resolved_loc_name = "En Tránsito"
+            elif self.planets:
+                # Prioridad 2: Nombre del planeta
+                planet_name = self.planets.get("name", "Planeta Desconocido")
+                resolved_loc_name = planet_name
+                
+                # Prioridad 1: Nombre de la colonia (asset) del jugador en ese planeta
+                assets = self.planets.get("planet_assets", [])
+                if assets and isinstance(assets, list) and self.player_id:
+                    # Buscar activo que pertenezca al jugador dueño del personaje
+                    my_asset = next((a for a in assets if a.get("player_id") == self.player_id), None)
+                    if my_asset and my_asset.get("nombre_asentamiento"):
+                        resolved_loc_name = my_asset.get("nombre_asentamiento")
+
             full_stats["estado"]["ubicacion"] = {
                 "system_id": self.location_system_id,
                 "planet_id": self.location_planet_id,
                 "sector_id": self.location_sector_id,
-                "ubicacion_local": self.ubicacion 
+                "ubicacion_local": resolved_loc_name 
             }
 
             return CharacterSchema(**full_stats)
