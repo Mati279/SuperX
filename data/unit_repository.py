@@ -6,11 +6,69 @@ Implementa persistencia de composición y gestión de estado.
 V9.0: Implementación inicial.
 V10.0: Funciones de tránsito, ubicación avanzada y detección.
 V11.1: Persistencia de ubicación en Tropas y lógica de disolución segura.
+V11.2: Hidratación de nombres en miembros de unidad (Fix Schema Validation).
 """
 
 from typing import Optional, List, Dict, Any
 from data.database import get_supabase
 from core.models import UnitSchema, TroopSchema, UnitStatus, LocationRing
+
+# --- HELPER FUNCTIONS (INTERNAL) ---
+
+def _hydrate_member_names(members: List[Dict[str, Any]]) -> None:
+    """
+    Hidrata una lista de miembros de unidad con el nombre de la entidad.
+    Realiza consultas en lote para optimizar rendimiento.
+    Modifica la lista in-place agregando el campo 'name'.
+    """
+    if not members:
+        return
+
+    db = get_supabase()
+    
+    # 1. Recolectar IDs únicos por tipo
+    char_ids = list({m["entity_id"] for m in members if m["entity_type"] == "character"})
+    troop_ids = list({m["entity_id"] for m in members if m["entity_type"] == "troop"})
+    
+    char_map = {}
+    troop_map = {}
+
+    # 2. Consultar Nombres de Personajes
+    if char_ids:
+        try:
+            # Characters usa la columna 'nombre'
+            resp = db.table("characters").select("id, nombre").in_("id", char_ids).execute()
+            if resp.data:
+                char_map = {item["id"]: item["nombre"] for item in resp.data}
+        except Exception as e:
+            print(f"Error hydrating characters batch: {e}")
+
+    # 3. Consultar Nombres de Tropas
+    if troop_ids:
+        try:
+            # Troops usa la columna 'name'
+            resp = db.table("troops").select("id, name").in_("id", troop_ids).execute()
+            if resp.data:
+                troop_map = {item["id"]: item["name"] for item in resp.data}
+        except Exception as e:
+            print(f"Error hydrating troops batch: {e}")
+
+    # 4. Asignar nombres a los miembros
+    for m in members:
+        e_id = m["entity_id"]
+        e_type = m["entity_type"]
+        
+        assigned_name = "Entidad Desconocida"
+        
+        if e_type == "character":
+            assigned_name = char_map.get(e_id, f"Personaje {e_id} (No encontrado)")
+        elif e_type == "troop":
+            assigned_name = troop_map.get(e_id, f"Tropa {e_id} (No encontrada)")
+            
+        m["name"] = assigned_name
+
+
+# --- TROOPS ---
 
 def create_troop(
     player_id: int, 
@@ -148,31 +206,37 @@ def create_unit(
         return None
 
 def get_units_by_player(player_id: int) -> List[Dict[str, Any]]:
-    """Obtiene todas las unidades del jugador con sus miembros."""
+    """
+    Obtiene todas las unidades del jugador con sus miembros.
+    V11.2: Hidrata los miembros con el campo 'name' para cumplir con UnitMemberSchema.
+    """
     db = get_supabase()
     try:
-        # Obtenemos unidades
+        # 1. Obtenemos unidades
         units_resp = db.table("units").select("*").eq("player_id", player_id).execute()
         units = units_resp.data
         if not units:
             return []
         
-        # Obtenemos miembros para estas unidades
+        # 2. Obtenemos miembros para estas unidades
         unit_ids = [u["id"] for u in units]
         members_resp = db.table("unit_members").select("*").in_("unit_id", unit_ids).execute()
-        members_by_unit = {}
         
-        # Agrupar miembros
-        for m in members_resp.data:
+        all_members = members_resp.data if members_resp.data else []
+        
+        # 3. Hidratación de nombres (V11.2)
+        if all_members:
+            _hydrate_member_names(all_members)
+
+        # 4. Agrupar miembros por unidad
+        members_by_unit = {}
+        for m in all_members:
             uid = m["unit_id"]
             if uid not in members_by_unit:
                 members_by_unit[uid] = []
-            
-            # Hydrate simple name/details based on type could be done here 
-            # or in a higher service layer. Repository just returns raw refs + data.
             members_by_unit[uid].append(m)
             
-        # Attach to units
+        # 5. Adjuntar a unidades
         for u in units:
             u["members"] = members_by_unit.get(u["id"], [])
             
@@ -182,6 +246,10 @@ def get_units_by_player(player_id: int) -> List[Dict[str, Any]]:
         return []
 
 def get_unit_by_id(unit_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene una unidad por ID y sus miembros hidratados.
+    V11.2: Implementa hidratación de nombres.
+    """
     db = get_supabase()
     try:
         response = db.table("units").select("*").eq("id", unit_id).execute()
@@ -189,8 +257,16 @@ def get_unit_by_id(unit_id: int) -> Optional[Dict[str, Any]]:
             return None
         
         unit = response.data[0]
+        
+        # Obtener miembros
         members_resp = db.table("unit_members").select("*").eq("unit_id", unit_id).execute()
-        unit["members"] = members_resp.data
+        members = members_resp.data if members_resp.data else []
+        
+        # Hidratar miembros (V11.2)
+        if members:
+            _hydrate_member_names(members)
+            
+        unit["members"] = members
         return unit
     except Exception as e:
         print(f"Error fetching unit {unit_id}: {e}")
