@@ -13,7 +13,7 @@ Actualizado v5.2.0: Fix ImportError COMMANDER_LOCATION (Refactorización de Ubic
 Actualizado v5.2.1: Soporte para actualización de ubicacion_local en reclutamiento.
 Refactorizado v10.0: Purga de ubicación en JSON (Ubicación SQL como Source of Truth).
 Refactorizado v10.2: Asignación automática de ubicación base para Comandante (Create/Update).
-Refactorizado v11.0: Geolocalización dinámica (Joins con planets y assets).
+Refactorizado v11.1: Hotfix Fetch & Stitch para garantizar carga de personajes.
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -423,17 +423,71 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
 
 def get_all_characters_by_player_id(player_id: int) -> list[Dict[str, Any]]:
     """
-    Obtiene todos los personajes del jugador con JOIN a planetas y assets.
-    Actualizado V11.0: Incluye 'planets' y 'planet_assets' para resolver nombre de ubicación.
+    Obtiene todos los personajes del jugador.
+    Versión V11.1 (Hotfix): Fetch & Stitch manual para evitar errores de JOIN en PostgREST.
+    Garantiza que siempre se devuelvan los personajes, enriqueciendo ubicación si es posible.
     """
     try:
-        # Join con planets (por location_planet_id) y anidado planet_assets (del planeta)
-        # Esto permite resolver el nombre del planeta y si el jugador tiene una colonia allí.
-        query = "*, planets:location_planet_id(name, planet_assets(nombre_asentamiento, player_id))"
-        response = _get_db().table("characters").select(query).eq("player_id", player_id).execute()
-        return response.data if response.data else []
-    except Exception:
-        # Fallback silencioso en caso de error de sintaxis/conexión
+        # 1. Recuperar personajes (Query Simple y Segura)
+        # Esto asegura que los personajes SIEMPRE se carguen, incluso si la info de planetas falla.
+        response = _get_db().table("characters").select("*").eq("player_id", player_id).execute()
+        chars = response.data if response.data else []
+        
+        if not chars:
+            return []
+
+        # 2. Recolectar IDs de planetas para enriquecimiento
+        # Filtramos None y 0 para no buscar IDs inválidos
+        planet_ids = list(set([c["location_planet_id"] for c in chars if c.get("location_planet_id")]))
+        
+        if not planet_ids:
+            return chars
+
+        # 3. Fetch de Nombres de Planetas y Assets (Enriquecimiento opcional)
+        try:
+            # Traer nombres de planetas
+            planets_response = _get_db().table("planets")\
+                .select("id, name")\
+                .in_("id", planet_ids)\
+                .execute()
+            
+            planets_map = {p["id"]: p for p in planets_response.data} if planets_response.data else {}
+
+            # Traer assets del jugador en esos planetas (para nombre de colonia)
+            assets_response = _get_db().table("planet_assets")\
+                .select("planet_id, nombre_asentamiento, player_id")\
+                .eq("player_id", player_id)\
+                .in_("planet_id", planet_ids)\
+                .execute()
+                
+            assets_map = {} 
+            if assets_response.data:
+                for asset in assets_response.data:
+                    pid = asset["planet_id"]
+                    if pid not in assets_map: assets_map[pid] = []
+                    assets_map[pid].append(asset)
+
+            # 4. Stitching (Costura de datos en memoria)
+            for char in chars:
+                pid = char.get("location_planet_id")
+                if pid and pid in planets_map:
+                    # Inyección compatible con la estructura que espera CommanderData.planets
+                    # Esto simula el JOIN que intentamos antes pero de forma segura.
+                    planet_data = planets_map[pid].copy()
+                    planet_data["planet_assets"] = assets_map.get(pid, [])
+                    char["planets"] = planet_data
+                    
+        except Exception as e:
+            # Si falla el enriquecimiento (ej. tabla no existe, error de red parcial),
+            # logueamos advertencia pero NO fallamos la función completa.
+            # Los personajes se devolverán igual, solo que sin nombre de ubicación bonito.
+            log_event(f"Warning: Error enriqueciendo ubicaciones: {e}", player_id)
+
+        return chars
+
+    except Exception as e:
+        log_event(f"Error crítico fetching roster: {e}", player_id, is_error=True)
+        # Si falla la query principal, ahí sí retornamos vacío.
         return []
 
 get_all_player_characters = get_all_characters_by_player_id
