@@ -3,9 +3,11 @@
 Comando - Vista jerárquica de personajes, tropas y unidades organizados por ubicación.
 V11.1: Hidratación de nombres, filtrado de sistemas, UI compacta, gestión mejorada.
 V11.2: Restauración de flujo inicial "Reunir al personal".
+V11.3: Reclutamiento jerárquico inicial con feedback visual mejorado.
 """
 
 import streamlit as st
+import time
 from typing import Dict, List, Any, Optional, Set, Tuple
 
 from data.character_repository import (
@@ -761,22 +763,45 @@ def render_comando_page():
             col_center = st.columns([1, 2, 1])
             with col_center[1]:
                 if st.button("Reunir al personal", type="primary", use_container_width=True):
-                    with st.spinner("Reclutando personal inicial..."):
-                        # Generar 6 personajes iniciales (Nivel 1)
-                        success_count = 0
-                        for _ in range(6):
+                    # Configuración jerárquica: 1x L5, 2x L3, 4x L1
+                    recruitment_config = [
+                        (5, KnowledgeLevel.KNOWN, "Oficial de Mando"),
+                        (3, KnowledgeLevel.KNOWN, "Oficial Técnico"),
+                        (3, KnowledgeLevel.KNOWN, "Oficial Táctico"),
+                        (1, KnowledgeLevel.UNKNOWN, "Recluta"),
+                        (1, KnowledgeLevel.UNKNOWN, "Recluta"),
+                        (1, KnowledgeLevel.UNKNOWN, "Recluta"),
+                        (1, KnowledgeLevel.UNKNOWN, "Recluta")
+                    ]
+                    
+                    success_count = 0
+                    total_ops = len(recruitment_config)
+
+                    # Feedback visual y bloqueo con st.status
+                    with st.status("Estableciendo cadena de mando...", expanded=True) as status:
+                        for idx, (level, k_level, label) in enumerate(recruitment_config):
+                            status.update(label=f"Reclutando {label} (Nivel {level}) - [{idx+1}/{total_ops}]...")
                             try:
-                                # Usamos recruit_character_with_ai que maneja la lógica de ubicación base
-                                recruit_character_with_ai(player_id=player_id, min_level=1, max_level=1)
+                                # recruit_character_with_ai usa el context interno para hallar la base
+                                recruit_character_with_ai(
+                                    player_id=player_id, 
+                                    min_level=level, 
+                                    max_level=level,
+                                    initial_knowledge_level=k_level
+                                )
+                                st.write(f"✅ {label} reclutado exitosamente.")
                                 success_count += 1
                             except Exception as e:
-                                print(f"Error generando personal inicial: {e}")
+                                st.write(f"❌ Error reclutando {label}: {e}")
+                                print(f"Error en reclutamiento inicial ({label}): {e}")
                         
                         if success_count > 0:
-                            st.success(f"{success_count} operarios reclutados exitosamente.")
+                            status.update(label="¡Personal reunido! Iniciando sistemas...", state="complete", expanded=False)
+                            time.sleep(0.5) # Pausa estética breve
                             st.rerun()
                         else:
-                            st.error("Error crítico al reclutar personal.")
+                            status.update(label="Fallo crítico en el reclutamiento.", state="error")
+                            st.error("No se pudo establecer la facción. Intenta nuevamente.")
             return
 
         # Si hay personal, continuar con carga normal
