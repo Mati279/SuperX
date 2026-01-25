@@ -8,6 +8,7 @@ V11.4: Filtro de seguridad para excluir candidatos (Status 7) del Roster.
 V11.5: Encabezados dinámicos con métricas y visibilidad estricta de nodos vacíos.
 V11.6: Visibilidad permanente de órbita en planetas activos.
 V12.0: Integración de diálogo de movimiento, gestión avanzada de miembros y contadores locales.
+V13.0: Restricción de reclutamiento orbital (solo personal local).
 """
 
 import streamlit as st
@@ -115,8 +116,7 @@ def create_unit_dialog(
     """Dialog para crear una nueva unidad con estado limpio."""
     st.subheader("Formar Nueva Unidad")
 
-    if is_orbit:
-        st.info("En órbita puedes embarcar personal de superficie.")
+    # V13.0: Eliminado mensaje de "embarcar personal de superficie"
 
     # Usar keys únicas basadas en sector para evitar estado persistente
     key_prefix = f"create_{sector_id}"
@@ -285,14 +285,8 @@ def manage_unit_dialog(
                 ):
                     slot = current_count
                     # Encontrar el siguiente slot libre (naive approach, append)
-                    # Mejor: buscar max slot index + 1
                     current_slots = [m.get("slot_index", 0) for m in members]
                     next_slot = max(current_slots) + 1 if current_slots else 0
-                    
-                    # Como removemos por slot, puede haber huecos, pero para append simple usamos max+1
-                    # Ajuste: Si usamos lista ordenada, slot = len(members) es seguro si no hay huecos intermedios forzados.
-                    # El repositorio usa append si no hay conflicto, pero remove borra el registro específico.
-                    # Para seguridad, usamos un contador incremental desde el max actual.
                     
                     cursor = next_slot
                     for cid in add_chars:
@@ -593,15 +587,11 @@ def _render_sector_content(
     units = location_index["units_by_sector"].get(sector_id, [])
     chars = location_index["chars_by_sector"].get(sector_id, [])
 
-    # Para órbita: incluir entidades de superficie para crear unidad
-    orbit_chars: List[dict] = []
-    if is_space and all_planet_sector_ids:
-        for sid in all_planet_sector_ids:
-            orbit_chars.extend(location_index["chars_by_sector"].get(sid, []))
-
+    # V13.0: Eliminada la inclusión de orbit_chars (personal de superficie) en órbita.
+    # Ahora solo se usa 'chars', que es la gente que está físicamente en este sector.
+    
     # Personajes disponibles (no asignados a unidad)
-    available_chars_here = [c for c in (chars + orbit_chars if is_space else chars)
-                           if c["id"] not in assigned_char_ids]
+    available_chars_here = [c for c in chars if c["id"] not in assigned_char_ids]
 
     # Tropas no tienen ubicación suelta, pero si las hubiera, filtrar no asignadas
     available_troops_here = [t for t in all_troops if t["id"] not in assigned_troop_ids]
@@ -774,13 +764,9 @@ def _render_system_node(
         key = (system_id, r)
         units = location_index["units_by_system_ring"].get(key, [])
         sys_u_count += len(units)
-        # Nota: Los personajes sueltos en espacio profundo sin sector específico no se están indexando en 'chars_by_sector'
-        # ni 'units_by_system_ring' en la lógica actual de _build_location_index para chars.
-        # Asumimos que los chars en espacio están en tránsito (otro nodo) o en sectores orbitales (Planetas).
 
     # 2. Contenido de Planetas
     for planet in planets:
-        # Nota: Llamamos a la DB aquí. Es necesario para el resumen.
         p_sectors = get_planet_sectors_status(planet["id"], player_id)
         for s in p_sectors:
             sid = s["id"]
@@ -844,8 +830,6 @@ def _render_starlanes_section(
     units_in_transit = location_index.get("units_in_transit", [])
 
     if not units_in_transit:
-        # Si no hay unidades en tránsito, esta sección ni debería llamarse desde el main loop si queremos strict visibility total
-        # pero la función padre lo controla con if location_index["units_in_transit"]
         return
 
     for unit in units_in_transit:
@@ -894,19 +878,10 @@ def render_comando_page():
         all_characters = get_all_player_characters(player_id)
         
         # FILTRO DE SEGURIDAD V11.4/11.5:
-        # Usamos 'all_characters' para métricas globales (incluye candidatos).
-        # Usamos 'roster_characters' para la visualización en mapa (excluye candidatos).
         roster_characters = [c for c in all_characters if c.get("status_id") != CharacterStatus.CANDIDATE.value]
         
         # --- NUEVO: Flujo inicial de reclutamiento ---
-        # Verificar sobre roster_characters para ver si hay personal activo
         non_commander_count = sum(1 for c in roster_characters if not c.get("es_comandante", False))
-        
-        # Si no hay nadie en el roster (salvo quizás el comandante si cuenta), pero vamos a asumir que
-        # si la lista está vacía o solo tiene al jugador (si fuera el caso)
-        # La lógica original usaba 'characters', que ahora es 'all_characters'.
-        # Si hay candidatos pero no roster activo, quizás querramos mostrar el botón.
-        # Mantenemos lógica: si no hay personal activo (excluyendo comandante), sugerimos reclutar.
         
         if non_commander_count == 0:
             st.info("La facción se está estableciendo. Necesitas personal para operar.")
@@ -959,7 +934,7 @@ def render_comando_page():
         units = get_units_by_player(player_id)
         systems = get_all_systems_from_db()
 
-        # Mapas de nombres para hidratación (usando todos para que no falle si una unidad tiene un candidato asignado por error)
+        # Mapas de nombres para hidratación
         char_map: Dict[int, str] = {c["id"]: c.get("nombre", f"Personaje {c['id']}") for c in all_characters}
         troop_map: Dict[int, str] = {t["id"]: t.get("name", f"Tropa {t['id']}") for t in troops}
 
@@ -976,8 +951,6 @@ def render_comando_page():
         systems_with_presence = _get_systems_with_presence(location_index, roster_characters, assigned_chars)
 
     # Estadísticas rápidas
-    # Personajes: Muestra Total (incluyendo candidatos)
-    # Sueltos: Muestra Solo Roster sueltos (los candidatos no deberían estar en el mapa)
     roster_loose_chars = len(roster_characters) - len([cid for cid in assigned_chars if any(c["id"] == cid for c in roster_characters)])
     
     col1, col2, col3 = st.columns(3)
