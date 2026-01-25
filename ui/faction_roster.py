@@ -10,6 +10,7 @@ V11.6: Visibilidad permanente de órbita en planetas activos.
 V12.0: Integración de diálogo de movimiento, gestión avanzada de miembros y contadores locales.
 V13.0: Restricción de reclutamiento orbital (solo personal local).
 V13.5: Fix Agrupación - Tránsito intra-sistema (SCO) se muestra en el sistema, no en Starlanes.
+V14.1: Integración del Centro de Alertas Tácticas y Panel de Simulación de Detección.
 """
 
 import streamlit as st
@@ -42,6 +43,12 @@ from core.models import CommanderData, KnowledgeLevel, CharacterStatus, UnitStat
 from ui.character_sheet import render_character_sheet
 from services.character_generation_service import recruit_character_with_ai
 from ui.movement_console import render_movement_console
+
+# V14.1: Componentes Tácticos
+from ui.components.tactical import (
+    render_tactical_alert_center,
+    render_debug_simulation_panel
+)
 
 
 # --- CSS COMPACTO ---
@@ -1001,7 +1008,7 @@ def render_comando_page():
 
     # Estadísticas rápidas
     roster_loose_chars = len(roster_characters) - len([cid for cid in assigned_chars if any(c["id"] == cid for c in roster_characters)])
-    
+
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Personajes", len(all_characters), f"{roster_loose_chars} sueltos (Roster)")
@@ -1009,6 +1016,11 @@ def render_comando_page():
         st.metric("Unidades", len(units))
     with col3:
         st.metric("En Tránsito", len(location_index["units_in_transit"]))
+
+    # V14.1: Centro de Alertas Tácticas (Detección de contactos enemigos)
+    if units:
+        with st.expander("📡 Centro de Alertas Tácticas", expanded=False):
+            render_tactical_alert_center(player_id, units, show_header=False)
 
     st.divider()
 
@@ -1032,6 +1044,10 @@ def render_comando_page():
         st.divider()
         with st.expander("🌌 Rutas Estelares (Starlanes)", expanded=True):
             _render_starlanes_section(location_index, player_id, [], [])
+
+    # V14.1: Panel de Debug para Simulación de Detección
+    st.divider()
+    render_debug_simulation_panel(player_id, units)
 
 
 # Alias para compatibilidad
