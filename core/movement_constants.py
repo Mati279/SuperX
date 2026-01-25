@@ -34,6 +34,7 @@ INTERDICTION_MODULE_ID = "interdictor_field"  # ID del módulo que permite inter
 # --- LÍMITES DE UNIDADES ---
 MAX_UNIT_SLOTS = 8                   # Capacidad máxima de slots por unidad
 MIN_CHARACTERS_PER_UNIT = 1          # Mínimo 1 personaje (líder) por unidad
+MAX_LOCAL_MOVES_PER_TURN = 2         # Máximo de movimientos locales (intra-sistema) por turno antes del bloqueo
 
 # --- ANILLOS PLANETARIOS ---
 RING_STELLAR = 0                     # Sector Estelar (espacio profundo del sistema)
