@@ -12,12 +12,14 @@ Feature: Visualización de Soberanía (Controlador de Sistema y Planetas).
 Actualizado V7.9.0: Actualización de etiquetas de interfaz para Soberanía.
 Actualizado V8.0: Visualización de Sectores Estelares y Megaestructuras.
 Refactor Debug V8.1: Control de Soberanía por Player ID (sin facción obligatoria).
+Feature Debug V8.2: Herramienta de Regla para medición de distancias euclidianas.
 """
 import json
 import math
 import streamlit as st
 import streamlit.components.v1 as components
 from core.world_constants import BUILDING_TYPES
+from core.movement_engine import calculate_euclidean_distance
 from data.database import get_supabase
 from data.planet_repository import (
     get_all_player_planets,
@@ -674,9 +676,17 @@ def _render_interactive_galaxy_map():
         system_stats[sid]['sec_sum'] += sec
         system_stats[sid]['count'] += 1
 
+    # Preparar posiciones escaladas para la UI y la lógica de regla
+    canvas_width, canvas_height = 1400, 900
+    scaled_positions = _scale_positions(systems, canvas_width, canvas_height)
+
     # --- UI DE CONTROL ---
     systems_sorted = sorted(systems, key=lambda s: s.get('id', 0))
     player_home_system_id, _ = _get_player_home_info()
+
+    # Variables para la herramienta de Regla
+    ruler_data_json = "{}"
+    ruler_dist_text = ""
 
     col_map, col_controls = st.columns([5, 2])
     with col_controls:
@@ -698,6 +708,43 @@ def _render_interactive_galaxy_map():
         show_routes = st.toggle("Mostrar rutas", value=True)
         star_scale = st.slider("Tamaño relativo", 0.8, 2.0, 1.0, 0.05)
 
+        # --- HERRAMIENTA DE REGLA (DEBUG V8.2) ---
+        if st.session_state.get("debug_omniscience", False):
+            st.markdown("---")
+            st.caption("🔧 Herramientas de Debug")
+            use_ruler = st.toggle("📏 Herramienta de Regla", key="debug_ruler_active")
+            
+            if use_ruler and st.session_state.preview_system_id:
+                # Filtrar lista para no incluir el sistema actual
+                target_options = [s for s in systems_sorted if s['id'] != st.session_state.preview_system_id]
+                target_names = {s['id']: s.get('name', f"Sys {s['id']}") for s in target_options}
+                
+                ruler_target_id = st.selectbox(
+                    "Ruler Target", 
+                    options=[s['id'] for s in target_options],
+                    format_func=lambda x: target_names[x]
+                )
+                
+                if ruler_target_id:
+                    # Cálculo backend
+                    dist = calculate_euclidean_distance(st.session_state.preview_system_id, ruler_target_id)
+                    st.metric("Distancia Debug", f"{dist:.2f}", delta_color="off")
+                    
+                    # Preparar datos visuales si ambos tienen posición escalada
+                    start_id = st.session_state.preview_system_id
+                    if start_id in scaled_positions and ruler_target_id in scaled_positions:
+                        p1 = scaled_positions[start_id]
+                        p2 = scaled_positions[ruler_target_id]
+                        ruler_dict = {
+                            "active": True,
+                            "x1": round(p1[0], 2),
+                            "y1": round(p1[1], 2),
+                            "x2": round(p2[0], 2),
+                            "y2": round(p2[1], 2)
+                        }
+                        ruler_data_json = json.dumps(ruler_dict)
+
+        # --- PREVIEW PANEL ---
         if st.session_state.preview_system_id is not None:
             preview_sys = next((s for s in systems if s['id'] == st.session_state.preview_system_id), None)
             if preview_sys:
@@ -724,9 +771,6 @@ def _render_interactive_galaxy_map():
                     st.session_state.map_view = "system"
                     st.rerun()
 
-    canvas_width, canvas_height = 1400, 900
-    scaled_positions = _scale_positions(systems, canvas_width, canvas_height)
-    
     systems_payload = []
     
     # Debug: Saber si estamos en modo omnisciencia (aunque aquí renderizamos todo)
@@ -776,6 +820,7 @@ def _render_interactive_galaxy_map():
         .star.player-home{{stroke:#4dff88;stroke-width:3px;animation:pulse 2s infinite}}
         @keyframes pulse{{0%{{stroke-opacity:0.5}}50%{{stroke-opacity:1}}100%{{stroke-opacity:0.5}}}}
         .route{{stroke:#5b7bff;stroke-opacity:0.2;stroke-width:1.5;pointer-events:none}}
+        .ruler-line{{stroke:#ffff00;stroke-width:2px;stroke-dasharray:5,5;stroke-linecap:round;filter:drop-shadow(0 0 5px #ffff00);pointer-events:none;}}
         #tooltip {{
             position: absolute;
             background: rgba(10, 15, 20, 0.95);
@@ -796,16 +841,31 @@ def _render_interactive_galaxy_map():
         <div id="tooltip"></div>
         <svg id="galaxy-map" viewBox="0 0 {canvas_width} {canvas_height}">
             <g id="routes"></g>
+            <g id="ruler-layer"></g>
             <g id="stars"></g>
         </svg>
     </div>
     <script>
     const systems={systems_json},routes={connections_json},homes=new Set({player_home_json});
-    const sLayer=document.getElementById("stars"),rLayer=document.getElementById("routes");
+    const rulerData={ruler_data_json};
+    const sLayer=document.getElementById("stars"),rLayer=document.getElementById("routes"),ruleLayer=document.getElementById("ruler-layer");
     const tooltip=document.getElementById("tooltip");
 
+    // Render Routes
     routes.forEach(r=>{{const l=document.createElementNS("http://www.w3.org/2000/svg","line");l.setAttribute("x1",r.ax);l.setAttribute("y1",r.ay);l.setAttribute("x2",r.bx);l.setAttribute("y2",r.by);l.classList.add("route");rLayer.appendChild(l)}});
     
+    // Render Ruler (if active)
+    if (rulerData.active) {{
+        const l = document.createElementNS("http://www.w3.org/2000/svg","line");
+        l.setAttribute("x1", rulerData.x1);
+        l.setAttribute("y1", rulerData.y1);
+        l.setAttribute("x2", rulerData.x2);
+        l.setAttribute("y2", rulerData.y2);
+        l.classList.add("ruler-line");
+        ruleLayer.appendChild(l);
+    }}
+
+    // Render Stars
     systems.forEach(s=>{{
         const c=document.createElementNS("http://www.w3.org/2000/svg","circle");
         c.setAttribute("cx",s.x);c.setAttribute("cy",s.y);c.setAttribute("r",s.radius);c.setAttribute("fill",s.color);
