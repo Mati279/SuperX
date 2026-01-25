@@ -9,6 +9,7 @@ V11.5: Encabezados dinámicos con métricas y visibilidad estricta de nodos vac�
 V11.6: Visibilidad permanente de órbita en planetas activos.
 V12.0: Integración de diálogo de movimiento, gestión avanzada de miembros y contadores locales.
 V13.0: Restricción de reclutamiento orbital (solo personal local).
+V13.5: Fix Agrupación - Tránsito intra-sistema (SCO) se muestra en el sistema, no en Starlanes.
 """
 
 import streamlit as st
@@ -37,7 +38,7 @@ from data.planet_repository import (
     get_all_player_planets,
     get_planet_sectors_status,
 )
-from core.models import CommanderData, KnowledgeLevel, CharacterStatus
+from core.models import CommanderData, KnowledgeLevel, CharacterStatus, UnitStatus, LocationRing
 from ui.character_sheet import render_character_sheet
 from services.character_generation_service import recruit_character_with_ai
 from ui.movement_console import render_movement_console
@@ -431,7 +432,25 @@ def _build_location_index(
     # Unidades por ubicación
     for unit in units:
         status = unit.get("status", "GROUND")
+        
+        # V13.5: Lógica de agrupación corregida
         if status == "TRANSIT":
+            origin = unit.get("transit_origin_system_id")
+            dest = unit.get("transit_destination_system_id")
+            
+            # Tránsito Local (SCO): Se queda en el sistema
+            if origin is not None and origin == dest:
+                # Se asigna al sistema origen y al anillo actual (para que aparezca en el nodo correcto)
+                # Si no tiene ring definido, asumimos 0 (Stellar)
+                ring_val = unit.get("ring", 0)
+                if isinstance(ring_val, LocationRing): 
+                    ring_val = ring_val.value
+                
+                key = (origin, ring_val)
+                units_by_system_ring.setdefault(key, []).append(unit)
+                continue
+            
+            # Tránsito Interestelar: Va a la lista global de Starlanes
             units_in_transit.append(unit)
             continue
 
@@ -441,6 +460,9 @@ def _build_location_index(
         else:
             system_id = unit.get("location_system_id")
             ring = unit.get("ring", 0)
+            if isinstance(ring, LocationRing): 
+                ring = ring.value
+                
             if system_id:
                 key = (system_id, ring)
                 units_by_system_ring.setdefault(key, []).append(unit)
@@ -506,7 +528,33 @@ def _render_unit_row(
     
     # Header dinámico con contador de movimientos
     moves_badge = f"[Movs: {local_moves}/2]" if local_moves < 2 else "[🛑 Sin Movs]"
-    header_text = f"{icon} 🎖️ **{name}** ({len(members)}/8) {status_emoji} {moves_badge}"
+    
+    # V13.5: Formateo de texto para tránsito SCO local
+    if status == "TRANSIT":
+        # Intentar recuperar destino para mostrar SCO R[X] -> R[Y]
+        origin_ring = unit.get("ring", 0)
+        dest_ring = "?"
+        try:
+            # Recuperación robusta del anillo destino
+            dest_ring_raw = unit.get("transit_destination_ring")
+            if dest_ring_raw is not None:
+                dest_ring = dest_ring_raw
+            else:
+                t_data = unit.get("transit_destination_data")
+                if t_data:
+                    if isinstance(t_data, str):
+                        parsed = json.loads(t_data)
+                        dest_ring = parsed.get("ring", "?")
+                    elif isinstance(t_data, dict):
+                        dest_ring = t_data.get("ring", "?")
+        except:
+            pass
+            
+        status_text = f"✈️ SCO R[{origin_ring}] → R[{dest_ring}]"
+    else:
+        status_text = status_emoji
+
+    header_text = f"{icon} 🎖️ **{name}** ({len(members)}/8) {status_text} {moves_badge}"
 
     # Header compacto con expander
     with st.expander(header_text, expanded=False):
@@ -841,38 +889,7 @@ def _render_starlanes_section(
         dest = unit.get("transit_destination_system_id", "?")
         ticks = unit.get("transit_ticks_remaining", 0)
 
-        # --- Tarea 2: Visualización Intra-estelar (SCO) ---
-        is_local_transit = (origin == dest)
-        
-        if is_local_transit:
-            # Recuperar anillo origen
-            # 'ring' en el dict de unidad suele ser int o Enum int
-            origin_ring = unit.get("ring", 0)
-            
-            # Recuperar anillo destino
-            dest_ring = unit.get("transit_destination_ring")
-            if dest_ring is None:
-                # Intentar parsear JSON data
-                try:
-                    t_data = unit.get("transit_destination_data")
-                    if t_data:
-                        if isinstance(t_data, str):
-                            parsed = json.loads(t_data)
-                            dest_ring = parsed.get("ring", "?")
-                        elif isinstance(t_data, dict):
-                            dest_ring = t_data.get("ring", "?")
-                        else:
-                            dest_ring = "?"
-                    else:
-                        dest_ring = "?"
-                except:
-                    dest_ring = "?"
-            
-            header_text = f"🌌 🔄 **{name}** ({len(members)}/8) | SCO R[{origin_ring}] → R[{dest_ring}] | {ticks} ticks"
-        else:
-            header_text = f"🌌 ✈️ **{name}** ({len(members)}/8) | Sistema {origin} → {dest} | {ticks} ticks"
-
-        with st.expander(header_text, expanded=False):
+        with st.expander(f"🌌 ✈️ **{name}** ({len(members)}/8) | Sistema {origin} → {dest} | {ticks} ticks", expanded=False):
             col1, col2 = st.columns([4, 1])
             with col2:
                 if st.button("⚙️", key=f"manage_transit_{unit_id}", help="Gestionar unidad"):

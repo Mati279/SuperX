@@ -8,17 +8,7 @@ V12.2: Fix de bloqueo - UI permite 2 movimientos locales antes de bloquear accio
 V13.0: Refactorización de Navegación - Restricciones físicas estrictas y soporte para maniobras de acople instantáneas.
 V13.3: Refactor visualización SCO (Inter-Ring) y restricción proactiva de distancia en UI.
 V13.4: Visualización mejorada de Maniobras SCO (R[X] -> R[Y]) y bloqueo estricto en UI (>3 anillos).
-
-Flujo:
-1. El jugador selecciona una unidad desde faction_roster (botón 🚀)
-2. Se guarda unit_id en st.session_state.selected_unit_movement
-3. Se muestra este componente (normalmente en un diálogo)
-
-Reglas de Destino según Ubicación (V13.0):
-- Sector Planetario (Superficie): Otro sector / Ascender a órbita.
-- Órbita Planetaria: Bajar a sector / Salir al espacio exterior (Anillo Orbital). *SIN STARLANE/WARP*
-- Anillo (no orbital): Mover a órbita / Otro anillo (existente) / Starlane / WARP.
-- Sector Estelar (Ring 0): Anillos interiores (existentes) / Starlane / WARP.
+V13.5: Persistencia del diálogo tras movimiento local si quedan puntos de movimiento.
 """
 
 import streamlit as st
@@ -42,7 +32,7 @@ from core.movement_engine import (
     initiate_movement,
     find_starlane_between,
 )
-from core.movement_constants import RING_STELLAR, RING_MIN, RING_MAX
+from core.movement_constants import RING_STELLAR, RING_MIN, RING_MAX, MAX_LOCAL_MOVES_PER_TURN
 from data.world_repository import get_world_state
 
 
@@ -914,12 +904,12 @@ def render_movement_console():
 
     # --- V12.2: FIX BLOQUEO - Validar bloqueo pero permitir 2 movimientos locales ---
     if unit.movement_locked:
-        if unit.local_moves_count < 2:
-             st.info(f"⚠️ Unidad parcialmente fatigada. Queda **{2 - unit.local_moves_count}** movimiento local disponible este tick.")
+        if unit.local_moves_count < MAX_LOCAL_MOVES_PER_TURN:
+             st.info(f"⚠️ Unidad parcialmente fatigada. Queda **{MAX_LOCAL_MOVES_PER_TURN - unit.local_moves_count}** movimiento local disponible este tick.")
         else:
             st.warning("🔒 Esta unidad ha alcanzado su límite de movimientos y está bloqueada hasta el próximo tick.")
             if unit.local_moves_count > 0:
-                 st.caption(f"Movimientos locales realizados: {unit.local_moves_count}/2")
+                 st.caption(f"Movimientos locales realizados: {unit.local_moves_count}/{MAX_LOCAL_MOVES_PER_TURN}")
             return
 
     # Determinar tipo de ubicación y mostrar opciones correspondientes
@@ -973,7 +963,7 @@ def render_movement_console():
                 if result.energy_cost > 0:
                     st.info(f"Energía consumida: {result.energy_cost} células")
 
-            # --- V12.2 / Tarea 1: Lógica de Persistencia ---
+            # --- V13.5: Lógica de Persistencia ---
             # Si es movimiento local y quedan acciones, NO cerrar el diálogo.
             should_close = True
             
@@ -987,11 +977,12 @@ def render_movement_console():
                     # pero usaremos UnitSchema para consistencia con la lógica de arriba.
                     updated_unit = UnitSchema.from_dict(updated_unit_data)
                     
-                    # Límite hardcodeado de 2 movimientos por turno (según lógica UI existente)
-                    if updated_unit.local_moves_count < 2:
+                    # Límite usando constante
+                    if updated_unit.local_moves_count < MAX_LOCAL_MOVES_PER_TURN:
                         should_close = False
                         # Feedback visual de que puede seguir moviéndose
-                        st.toast(f"✅ Posición actualizada. Movimientos restantes: {2 - updated_unit.local_moves_count}")
+                        remaining = MAX_LOCAL_MOVES_PER_TURN - updated_unit.local_moves_count
+                        st.toast(f"✅ Posición actualizada. Movimientos restantes: {remaining}")
 
             if should_close:
                 st.session_state.selected_unit_movement = None
