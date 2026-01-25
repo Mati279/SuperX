@@ -13,7 +13,7 @@ MOVEMENT_LOCK_ON_ORBIT_CHANGE = True # Activa movement_locked tras subir/bajar
 
 # --- TICKS DE VIAJE (ENTRE ANILLOS) ---
 TICKS_BETWEEN_RINGS_SHORT = 1        # Costo unificado para cualquier salto entre anillos (Max dist 3)
-ENERGY_COST_LONG_INTER_RING = 3      # Costo de energía por nave para saltos > 3 anillos
+ENERGY_COST_LONG_INTER_RING = 2      # Costo de energía por nave para saltos > 3 anillos
 
 # --- STARLANES ---
 STARLANE_DISTANCE_THRESHOLD = 10.0   # Distancia para viaje corto
