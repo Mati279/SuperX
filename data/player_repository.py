@@ -330,6 +330,25 @@ def delete_player_account(player_id: int) -> bool:
     print(f"⚠️ [DEBUG] Iniciando borrado completo en cascada para cuenta ID {player_id}")
     
     try:
+        # 0. Borrar Estructura Militar (Unidades y Tropas)
+        # Importante: Borrar miembros antes que unidades para evitar FK constraints.
+        try:
+            # Obtener IDs de unidades para borrar sus miembros
+            units_resp = db.table("units").select("id").eq("player_id", player_id).execute()
+            unit_ids = [u['id'] for u in units_resp.data] if units_resp.data else []
+            
+            if unit_ids:
+                db.table("unit_members").delete().in_("unit_id", unit_ids).execute()
+                print(f"  - Tabla 'unit_members' limpiada ({len(unit_ids)} unidades afectadas).")
+            
+            db.table("units").delete().eq("player_id", player_id).execute()
+            print("  - Tabla 'units' limpiada.")
+            
+            db.table("troops").delete().eq("player_id", player_id).execute()
+            print("  - Tabla 'troops' limpiada.")
+        except Exception as e:
+            print(f"  - Warning: Fallo al limpiar estructura militar: {e}")
+
         # 1. Borrar Conocimiento de Tripulación (Evita que el nuevo usuario "herede" conocimiento)
         try:
             db.table("character_knowledge").delete().eq("player_id", player_id).execute()
@@ -406,6 +425,17 @@ def reset_player_progress(player_id: int) -> bool:
             
         # --- FASE 1: WIPE (Limpieza Profunda) ---
         
+        # PRE-A: Limpiar Estructura Militar (Unidades y Tropas)
+        try:
+            units_resp = db.table("units").select("id").eq("player_id", player_id).execute()
+            unit_ids = [u['id'] for u in units_resp.data] if units_resp.data else []
+            if unit_ids:
+                db.table("unit_members").delete().in_("unit_id", unit_ids).execute()
+            db.table("units").delete().eq("player_id", player_id).execute()
+            db.table("troops").delete().eq("player_id", player_id).execute()
+        except Exception as e:
+            print(f"Warning cleaning military during reset: {e}")
+
         # A. Limpiar Exploración
         db.table("player_exploration").delete().eq("player_id", player_id).execute()
         

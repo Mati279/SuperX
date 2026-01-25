@@ -1,7 +1,8 @@
-# ui/faction_roster.py
+# ui/faction_roster.py (Completo)
 """
 Comando - Vista jerárquica de personajes, tropas y unidades organizados por ubicación.
 V11.1: Hidratación de nombres, filtrado de sistemas, UI compacta, gestión mejorada.
+V11.2: Restauración de flujo inicial "Reunir al personal".
 """
 
 import streamlit as st
@@ -30,6 +31,7 @@ from data.planet_repository import (
 )
 from core.models import CommanderData, KnowledgeLevel
 from ui.character_sheet import render_character_sheet
+from services.character_generation_service import recruit_character_with_ai
 
 
 # --- CSS COMPACTO ---
@@ -750,6 +752,34 @@ def render_comando_page():
     # Cargar datos
     with st.spinner("Cargando estructura de comando..."):
         characters = get_all_player_characters(player_id)
+        
+        # --- NUEVO: Flujo inicial de reclutamiento ---
+        non_commander_count = sum(1 for c in characters if not c.get("es_comandante", False))
+        
+        if non_commander_count == 0:
+            st.info("La facción se está estableciendo. Necesitas personal para operar.")
+            col_center = st.columns([1, 2, 1])
+            with col_center[1]:
+                if st.button("Reunir al personal", type="primary", use_container_width=True):
+                    with st.spinner("Reclutando personal inicial..."):
+                        # Generar 6 personajes iniciales (Nivel 1)
+                        success_count = 0
+                        for _ in range(6):
+                            try:
+                                # Usamos recruit_character_with_ai que maneja la lógica de ubicación base
+                                recruit_character_with_ai(player_id=player_id, min_level=1, max_level=1)
+                                success_count += 1
+                            except Exception as e:
+                                print(f"Error generando personal inicial: {e}")
+                        
+                        if success_count > 0:
+                            st.success(f"{success_count} operarios reclutados exitosamente.")
+                            st.rerun()
+                        else:
+                            st.error("Error crítico al reclutar personal.")
+            return
+
+        # Si hay personal, continuar con carga normal
         troops = get_troops_by_player(player_id)
         units = get_units_by_player(player_id)
         systems = get_all_systems_from_db()
