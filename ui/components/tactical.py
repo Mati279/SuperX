@@ -1,4 +1,4 @@
-# ui/components/tactical.py
+# ui/components/tactical.py (Completo)
 """
 Componentes de UI para el Sistema de Detección, Conflicto y Emboscada V14.1.
 Incluye:
@@ -8,7 +8,7 @@ Incluye:
 """
 
 import streamlit as st
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Union
 from dataclasses import dataclass
 import random
 
@@ -164,25 +164,37 @@ def _get_enemy_units_at_location(
         return []
 
 
-def _hydrate_unit_from_dict(unit_data: Dict[str, Any]) -> UnitSchema:
-    """Convierte dict de DB a UnitSchema con members hidratados."""
-    # Obtener members si existen
-    members_data = unit_data.get("members", [])
+def _hydrate_unit_from_dict(unit_data: Union[Dict[str, Any], UnitSchema]) -> UnitSchema:
+    """Convierte dict de DB a UnitSchema con members hidratados. Maneja doble hidratación."""
+    # 1. Verificar si ya es un objeto UnitSchema
+    if isinstance(unit_data, UnitSchema):
+        return unit_data
 
-    # Convertir a UnitMemberSchema
+    # Trabajar sobre una copia para no mutar el diccionario original
+    data = unit_data.copy()
+
+    # 2. Obtener members si existen (manejar acceso por dict)
+    members_data = data.get("members", [])
+
+    # 3. Convertir a UnitMemberSchema
     members = []
     if members_data:
         for m in members_data:
-            members.append(UnitMemberSchema(
-                slot_index=m.get("slot_index", 0),
-                entity_type=m.get("entity_type", "character"),
-                entity_id=m.get("entity_id", 0),
-                name=m.get("name", "???"),
-                details=m.get("details")
-            ))
+            if isinstance(m, UnitMemberSchema):
+                members.append(m)
+            else:
+                # Asumimos que es dict y usamos .get()
+                members.append(UnitMemberSchema(
+                    slot_index=m.get("slot_index", 0),
+                    entity_type=m.get("entity_type", "character"),
+                    entity_id=m.get("entity_id", 0),
+                    name=m.get("name", "???"),
+                    details=m.get("details")
+                ))
 
-    unit_data["members"] = members
-    return UnitSchema.from_dict(unit_data)
+    # Actualizar la lista de miembros en el diccionario antes de crear el UnitSchema
+    data["members"] = members
+    return UnitSchema.from_dict(data)
 
 
 def _format_mrg_result(margin: int, result_type: str, is_total: bool = False) -> str:
