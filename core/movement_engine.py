@@ -9,6 +9,7 @@ Gestiona:
 Actualizado V11.3: Lógica de Movimiento Local y restricciones diarias (local_moves_count).
 Refactorizado V11.4: Fix bloqueo prematuro en movimientos locales (permite 2 movimientos antes de lock).
 Refactorizado V13.0: Navegación estratificada, tiempos físicos entre anillos y restricciones de salto desde sectores.
+Refactorizado V13.1: Fix bloqueo en validación local. Se inyecta MovementType en validación para omitir chequeos de distancia en movimientos orbitales/superficie.
 """
 
 from typing import Optional, Dict, Any, Tuple, List
@@ -262,13 +263,15 @@ def calculate_movement_cost(
 def validate_movement_request(
     unit: UnitSchema,
     destination: DestinationData,
-    player_id: int
+    player_id: int,
+    movement_type: MovementType
 ) -> Tuple[bool, str]:
     """
     Valida que un movimiento sea posible.
     V11.3: Implementa restricciones de local_moves_count.
     V11.4: Permite movimientos locales si local_moves_count < 2 aunque movement_locked sea True.
-    V13.0: Restricción de salto interestelar solo desde Espacio Exterior (Sin Sector asignado).
+    V13.0: Restricción de salto interestelar solo desde Espacio Exterior.
+    V13.1: Validación de distancia de anillos selectiva basada en movement_type.
 
     Returns:
         Tuple[bool, str]: (is_valid, error_message)
@@ -327,11 +330,12 @@ def validate_movement_request(
              if planet and planet.get("orbital_ring") != origin_ring:
                  return False, f"Solo puedes entrar en órbita desde el Anillo {planet.get('orbital_ring')}."
         
-        # V13.0: Validar distancia máxima entre anillos (Movimiento Local)
-        # Si la diferencia entre anillos es > 3, no es posible en un solo salto
-        dist_rings = abs(origin_ring - destination.ring)
-        if dist_rings > 3:
-            return False, f"La distancia entre anillos ({dist_rings}) es demasiado grande para un solo salto (Máx: 3)"
+        # V13.1: Validar distancia máxima entre anillos SOLO si es movimiento INTER_RING
+        # Omitimos esto para SURFACE_ORBIT y SECTOR_SURFACE ya que son movimientos locales dentro del mismo marco orbital.
+        if movement_type == MovementType.INTER_RING:
+            dist_rings = abs(origin_ring - destination.ring)
+            if dist_rings > 3:
+                return False, f"La distancia entre anillos ({dist_rings}) es demasiado grande para un solo salto (Máx: 3)"
 
     # Restricción 2: Bloqueo de tránsito interestelar si ya se movió localmente
     if not is_local:
@@ -375,22 +379,25 @@ def initiate_movement(
 
     unit = UnitSchema.from_dict(unit_data)
 
-    # Validar movimiento (incluye restricciones V11.3 y V11.4)
-    is_valid, error_msg = validate_movement_request(unit, destination, player_id)
-    if not is_valid:
-        return MovementResult(success=False, error_message=error_msg)
-
-    # Determinar tipo de movimiento
+    # Determinar tipo de movimiento ANTES de validar
+    # V13.1: Esto permite pasar el tipo a la validación para lógica condicional
+    origin_ring_val = unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring
+    
     movement_type = determine_movement_type(
         origin_system=unit.location_system_id,
         origin_planet=unit.location_planet_id,
         origin_sector=unit.location_sector_id,
-        origin_ring=unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring,
+        origin_ring=origin_ring_val,
         dest_system=destination.system_id,
         dest_planet=destination.planet_id,
         dest_sector=destination.sector_id,
         dest_ring=destination.ring
     )
+
+    # Validar movimiento (incluye restricciones V11.3, V11.4 y V13.1)
+    is_valid, error_msg = validate_movement_request(unit, destination, player_id, movement_type)
+    if not is_valid:
+        return MovementResult(success=False, error_message=error_msg)
 
     # Calcular costos
     ticks, energy_cost = calculate_movement_cost(unit, destination, movement_type)
