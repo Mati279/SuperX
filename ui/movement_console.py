@@ -6,6 +6,7 @@ V12.0: Adaptación para uso en componente/diálogo (eliminación de navegación 
 V12.1: Reorganización de UI - Botones de acción movidos arriba de los selectores e iconografía actualizada.
 V12.2: Fix de bloqueo - UI permite 2 movimientos locales antes de bloquear acciones.
 V13.0: Refactorización de Navegación - Restricciones físicas estrictas y soporte para maniobras de acople instantáneas.
+V13.3: Refactor visualización SCO (Inter-Ring) y restricción proactiva de distancia en UI.
 
 Flujo:
 1. El jugador selecciona una unidad desde faction_roster (botón 🚀)
@@ -131,9 +132,19 @@ def _get_location_display(unit: UnitSchema) -> Dict[str, str]:
 
     if unit.status == UnitStatus.TRANSIT:
         origin_sys = get_system_by_id(unit.transit_origin_system_id)
-        dest_sys = get_system_by_id(unit.transit_destination_system_id)
-        info['system'] = f"{origin_sys.get('name', '?') if origin_sys else '?'} → {dest_sys.get('name', '?') if dest_sys else '?'}"
-        info['status_text'] = f"En Tránsito ({unit.transit_ticks_remaining} ticks)"
+        
+        # V13.3: Detección de movimiento local (SCO)
+        is_local_transit = unit.transit_origin_system_id == unit.transit_destination_system_id
+        
+        if is_local_transit:
+            # En tránsito local, el sistema es el mismo
+            info['system'] = origin_sys.get('name', '?') if origin_sys else '?'
+            info['status_text'] = f"Maniobra Orbital ({unit.transit_ticks_remaining} ticks)"
+        else:
+            dest_sys = get_system_by_id(unit.transit_destination_system_id)
+            info['system'] = f"{origin_sys.get('name', '?') if origin_sys else '?'} → {dest_sys.get('name', '?') if dest_sys else '?'}"
+            info['status_text'] = f"En Tránsito ({unit.transit_ticks_remaining} ticks)"
+            
         info['status_class'] = 'loc-transit'
         return info
 
@@ -447,6 +458,7 @@ def _render_ring_options(
     """
     Opciones cuando la unidad está en un anillo (no en órbita).
     V13.0: Selector de anillo dinámico.
+    V13.3: Validación proactiva de distancia (<= 3 anillos).
     """
     st.markdown("#### Opciones de Movimiento")
 
@@ -535,7 +547,14 @@ def _render_ring_options(
                 with action_container:
                     _render_cost_display(estimate)
 
-                    if st.button("Iniciar Maniobra", type="primary", key="btn_ring_space", use_container_width=True):
+                    # V13.3: Validación proactiva de distancia
+                    dist_rings = abs(current_ring - selected_ring)
+                    is_too_far = dist_rings > 3
+                    
+                    if is_too_far:
+                        st.error(f"❌ Distancia excesiva ({dist_rings} anillos). Máximo permitido: 3 por maniobra.")
+                    
+                    if st.button("Iniciar Maniobra", type="primary", key="btn_ring_space", use_container_width=True, disabled=is_too_far):
                         selected_dest = DestinationData(
                             system_id=system_id,
                             planet_id=None,
@@ -634,6 +653,7 @@ def _render_stellar_options(
 ) -> Optional[Tuple[DestinationData, MovementType]]:
     """
     Opciones cuando la unidad está en el Sector Estelar (Ring 0).
+    V13.3: Validación proactiva de distancia.
     """
     st.markdown("#### Opciones de Movimiento")
 
@@ -675,7 +695,14 @@ def _render_stellar_options(
                 with action_container:
                     _render_cost_display(estimate)
 
-                    if st.button("Iniciar Maniobra", type="primary", key="btn_ring_stellar", use_container_width=True):
+                    # V13.3: Validación proactiva de distancia
+                    dist_rings = abs(current_ring - selected_ring)
+                    is_too_far = dist_rings > 3
+                    
+                    if is_too_far:
+                        st.error(f"❌ Distancia excesiva ({dist_rings} anillos). Máximo permitido: 3 por maniobra.")
+
+                    if st.button("Iniciar Maniobra", type="primary", key="btn_ring_stellar", use_container_width=True, disabled=is_too_far):
                         selected_dest = DestinationData(
                             system_id=system_id,
                             planet_id=None,
@@ -767,23 +794,54 @@ def _render_stellar_options(
 
 def _render_transit_info(unit: UnitSchema):
     """Muestra información cuando la unidad está en tránsito."""
-    st.warning("Esta unidad está en tránsito interestelar")
+    # V13.3: Lógica mejorada para mostrar tránsitos intra-sistema (SCO)
+    
+    is_local_transit = unit.transit_origin_system_id == unit.transit_destination_system_id
+    
+    if is_local_transit:
+        # Intento de recuperar datos de anillo destino (si están disponibles en el esquema/dict de la unidad)
+        # Nota: UnitSchema podría no tener los datos crudos del destino desglosados más allá del JSON.
+        # Aquí inferimos para la UI.
+        try:
+            # Recuperar el anillo destino desde la data de la unidad si es accesible
+            dest_ring = "?"
+            if hasattr(unit, 'transit_destination_data') and isinstance(unit.transit_destination_data, dict):
+                dest_ring = unit.transit_destination_data.get('ring', '?')
+            
+            # Usar '?' o Ring 0 si no se puede determinar, pero idealmente mostraríamos R[Origen] -> R[Dest]
+            # Como fallback visual usamos SCO genérico si no tenemos los datos precisos
+            st.warning(f"SCO: Maniobra Orbital en curso")
+            origin_sys = get_system_by_id(unit.transit_origin_system_id)
+            sys_name = origin_sys.get('name', '???') if origin_sys else '???'
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Sistema", sys_name)
+            with col2:
+                st.metric("Ticks Restantes", unit.transit_ticks_remaining)
+                
+        except Exception:
+            st.warning("Maniobra orbital en curso")
+            
+    else:
+        # Tránsito Interestelar Estándar
+        st.warning("Esta unidad está en tránsito interestelar")
 
-    origin_sys = get_system_by_id(unit.transit_origin_system_id)
-    dest_sys = get_system_by_id(unit.transit_destination_system_id)
+        origin_sys = get_system_by_id(unit.transit_origin_system_id)
+        dest_sys = get_system_by_id(unit.transit_destination_system_id)
 
-    origin_name = origin_sys.get('name', '???') if origin_sys else '???'
-    dest_name = dest_sys.get('name', '???') if dest_sys else '???'
+        origin_name = origin_sys.get('name', '???') if origin_sys else '???'
+        dest_name = dest_sys.get('name', '???') if dest_sys else '???'
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Origen", origin_name)
-    with col2:
-        st.metric("Destino", dest_name)
-    with col3:
-        st.metric("Ticks Restantes", unit.transit_ticks_remaining)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Origen", origin_name)
+        with col2:
+            st.metric("Destino", dest_name)
+        with col3:
+            st.metric("Ticks Restantes", unit.transit_ticks_remaining)
 
-    # Barra de progreso
+    # Barra de progreso común
     if unit.transit_end_tick and unit.transit_origin_system_id:
         world_state = get_world_state()
         current_tick = world_state.get('current_tick', 0)

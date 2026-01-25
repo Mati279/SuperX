@@ -11,12 +11,14 @@ Refactorizado V11.4: Fix bloqueo prematuro en movimientos locales (permite 2 mov
 Refactorizado V13.0: Navegación estratificada, tiempos físicos entre anillos y restricciones de salto desde sectores.
 Refactorizado V13.1: Fix bloqueo en validación local. Se inyecta MovementType en validación para omitir chequeos de distancia en movimientos orbitales/superficie.
 Refactorizado V13.2: Reordenamiento de prioridades en determine_movement_type para evitar falsos positivos de INTER_RING en movimientos planetarios.
+Refactorizado V13.3: Fix bug de llegada a Ring 0 en tránsitos locales y manejo explícito de datos de destino.
 """
 
 from typing import Optional, Dict, Any, Tuple, List
 from dataclasses import dataclass
 from enum import Enum
 import math
+import json
 
 from core.models import UnitSchema, UnitStatus, LocationRing
 from core.movement_constants import (
@@ -453,6 +455,7 @@ def initiate_movement(
             starlane_id = starlane.get('id') if starlane else None
 
         # V13.0: Inter-Ring ahora puede caer aquí si tiene ticks > 0 (siempre 1 tick ahora)
+        # Se guarda el destination.to_dict() que contiene el campo 'ring'
         success = start_unit_transit(
             unit_id=unit_id,
             destination_data=destination.to_dict(),
@@ -524,6 +527,9 @@ def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
     """
     Procesa las llegadas de unidades en tránsito.
     Llamado durante la fase de Decremento del tick.
+    
+    V13.3: Corrige el bug de 'Ring 0' asegurando que la ubicación se actualiza
+    explícitamente con los datos guardados en transit_destination_data.
 
     Returns:
         Lista de diccionarios con información de cada llegada
@@ -539,26 +545,57 @@ def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
         player_id = unit_data.get('player_id')
         dest_system = unit_data.get('transit_destination_system_id')
         
-        # V13.0: Si es movimiento intra-sistema (Inter-Ring), dest_system podría ser None en la DB o igual al origen.
-        # update_unit_location_advanced maneja la actualización final.
+        # V13.3: Extraer datos completos del destino
+        # Esto es crucial para movimientos Inter-Ring donde el sistema es el mismo pero el anillo cambia.
+        dest_json = unit_data.get('transit_destination_data')
+        dest_data = {}
+        if isinstance(dest_json, str):
+            try:
+                dest_data = json.loads(dest_json)
+            except json.JSONDecodeError:
+                dest_data = {}
+        elif isinstance(dest_json, dict):
+            dest_data = dest_json
+        
+        # Recuperar valores específicos o usar defaults si fallara la lectura
+        target_ring = dest_data.get('ring', 0)
+        target_planet = dest_data.get('planet_id')
+        target_sector = dest_data.get('sector_id')
+        
+        # Asegurar sistema de destino (si es movimiento local, dest_system podría ser None en algunos esquemas antiguos, 
+        # pero normalmente start_unit_transit lo guarda). Si es None, usar el actual.
+        final_system_id = dest_system if dest_system else unit_data.get('location_system_id')
 
-        # Completar tránsito
+        # Determinar status final
+        new_status = UnitStatus.GROUND if target_sector is not None else UnitStatus.SPACE
+
+        # V13.3: Actualización explícita de ubicación antes de completar el tránsito.
+        # Esto sobrescribe cualquier valor por defecto que complete_unit_transit pudiera poner.
+        update_success = update_unit_location_advanced(
+            unit_id=unit_id,
+            system_id=final_system_id,
+            planet_id=target_planet,
+            sector_id=target_sector,
+            ring=target_ring,
+            status=new_status
+        )
+
+        # Completar tránsito (limpiar flags)
         success = complete_unit_transit(unit_id, current_tick)
 
-        if success:
+        if success and update_success:
             # Obtener nombre del sistema destino
-            # Si dest_system es None (movimiento local), usamos el sistema actual de la unidad (que debería estar en la DB)
             dest_name = "Destino Local"
-            if dest_system:
-                dest_system_data = get_system_by_id(dest_system)
-                dest_name = dest_system_data.get('name', f'Sistema {dest_system}') if dest_system_data else f'Sistema {dest_system}'
+            if final_system_id:
+                dest_system_data = get_system_by_id(final_system_id)
+                dest_name = dest_system_data.get('name', f'Sistema {final_system_id}') if dest_system_data else f'Sistema {final_system_id}'
 
             arrivals.append({
                 'unit_id': unit_id,
                 'unit_name': unit_name,
                 'player_id': player_id,
                 'destination': dest_name,
-                'destination_system_id': dest_system
+                'destination_system_id': final_system_id
             })
 
             log_event(f"✅ Unidad '{unit_name}' ha completado su maniobra hacia {dest_name}", player_id)
