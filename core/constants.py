@@ -48,6 +48,7 @@ SKILL_MAPPING: Dict[str, Tuple[str, str]] = {
     "Recopilación de Información": ("intelecto", "voluntad"), # RENOMBRADO de 'Análisis de datos'
     "Ingeniería inversa": ("intelecto", "tecnica"),
     "Evaluación de amenazas": ("intelecto", "presencia"),
+    "Detección": ("intelecto", "voluntad"),
     # 5. Sigilo e Infiltración
     "Sigilo físico": ("agilidad", "voluntad"),
     "Infiltración urbana": ("agilidad", "intelecto"),
@@ -70,7 +71,8 @@ SKILL_MAPPING: Dict[str, Tuple[str, str]] = {
     "Resistencia física": ("fuerza", "voluntad"),
     "Supervivencia en entornos hostiles": ("voluntad", "fuerza"),
     "Atletismo": ("fuerza", "agilidad"),
-    "Orientación y exploración": ("intelecto", "agilidad")
+    "Orientación y exploración": ("intelecto", "agilidad"),
+    "Caza": ("agilidad", "intelecto")
 }
 
 # Unificado con Módulo 19.2: Pool de 60 puntos para un personaje Nivel 6 de inicio
