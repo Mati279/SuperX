@@ -12,9 +12,7 @@ TICKS_SURFACE_TO_ORBIT = 0           # Instantáneo pero bloquea movimiento
 MOVEMENT_LOCK_ON_ORBIT_CHANGE = True # Activa movement_locked tras subir/bajar
 
 # --- TICKS DE VIAJE (ENTRE ANILLOS) ---
-TICKS_BETWEEN_RINGS_SHORT = 1        # <= 3 anillos de diferencia
-TICKS_BETWEEN_RINGS_LONG = 2         # > 3 anillos de diferencia
-RING_THRESHOLD_FOR_LONG_TRAVEL = 3   # Umbral para viaje largo
+TICKS_BETWEEN_RINGS_SHORT = 1        # Costo unificado para cualquier salto entre anillos (Max dist 3)
 
 # --- STARLANES ---
 STARLANE_DISTANCE_THRESHOLD = 10.0   # Distancia para viaje corto

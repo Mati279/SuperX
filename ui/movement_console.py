@@ -5,7 +5,7 @@ V10.1: Implementación inicial con opciones dinámicas según ubicación.
 V12.0: Adaptación para uso en componente/diálogo (eliminación de navegación de página).
 V12.1: Reorganización de UI - Botones de acción movidos arriba de los selectores e iconografía actualizada.
 V12.2: Fix de bloqueo - UI permite 2 movimientos locales antes de bloquear acciones.
-V13.0: Refactorización de Navegación - Restricciones físicas estrictas (sin saltos desde órbita) y selectores de anillos dinámicos.
+V13.0: Refactorización de Navegación - Restricciones físicas estrictas y soporte para maniobras de acople instantáneas.
 
 Flujo:
 1. El jugador selecciona una unidad desde faction_roster (botón 🚀)
@@ -418,6 +418,7 @@ def _render_orbit_options(
         action_container = st.container()
 
         # V13.0: Destino fijo = Anillo orbital del planeta
+        # Al salir al mismo anillo, la distancia es 0 -> Engine retorna 0 ticks/instantáneo.
         estimate = estimate_travel_time(system_id, system_id, current_ring, orbital_ring)
         
         with action_container:
@@ -430,7 +431,8 @@ def _render_orbit_options(
                     sector_id=None,
                     ring=orbital_ring
                 )
-                selected_type = MovementType.INTER_RING
+                # Al salir al mismo anillo, es una maniobra orbital instantánea
+                selected_type = MovementType.SURFACE_ORBIT
 
     if selected_dest and selected_type:
         return (selected_dest, selected_type)
@@ -479,6 +481,7 @@ def _render_ring_options(
                 sectors = get_planet_sectors_status(selected_planet, player_id)
                 orbit_sector = next((s for s in sectors if s.get('sector_type') == 'Orbital'), None)
 
+                # La entrada a órbita en el mismo anillo es instantánea (0 ticks)
                 estimate = estimate_travel_time(system_id, system_id, current_ring, current_ring)
                 
                 with action_container:
@@ -492,7 +495,8 @@ def _render_ring_options(
                                 sector_id=orbit_sector['id'],
                                 ring=current_ring
                             )
-                            selected_type = MovementType.INTER_RING
+                            # Se clasifica como SURFACE_ORBIT para indicar maniobra instantánea
+                            selected_type = MovementType.SURFACE_ORBIT
                     else:
                         st.warning("El planeta no tiene sector orbital definido.")
         else:

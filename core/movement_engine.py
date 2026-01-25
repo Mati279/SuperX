@@ -21,8 +21,6 @@ from core.movement_constants import (
     TICKS_SECTOR_TO_SECTOR,
     TICKS_SURFACE_TO_ORBIT,
     TICKS_BETWEEN_RINGS_SHORT,
-    TICKS_BETWEEN_RINGS_LONG,
-    RING_THRESHOLD_FOR_LONG_TRAVEL,
     STARLANE_DISTANCE_THRESHOLD,
     TICKS_STARLANE_SHORT,
     TICKS_STARLANE_LONG,
@@ -49,7 +47,7 @@ from data.log_repository import log_event
 class MovementType(Enum):
     """Tipos de movimiento posibles."""
     SECTOR_SURFACE = "sector_surface"      # Entre sectores en superficie
-    SURFACE_ORBIT = "surface_orbit"        # Superficie <-> Órbita
+    SURFACE_ORBIT = "surface_orbit"        # Superficie <-> Órbita (o Órbita <-> Espacio mismo anillo)
     INTER_RING = "inter_ring"              # Entre anillos planetarios o Espacio <-> Órbita
     STARLANE = "starlane"                  # Vía starlane
     WARP = "warp"                          # Salto warp (sin starlane)
@@ -152,7 +150,19 @@ def determine_movement_type(
             return MovementType.STARLANE
         return MovementType.WARP
 
-    # Mismo sistema, diferente anillo = inter-ring (o salir de órbita a espacio del anillo)
+    # --- LÓGICA INTRA-SISTEMA ---
+
+    # CASO ESPECIAL: Mismo anillo, transición Órbita <-> Espacio.
+    # Se trata como SURFACE_ORBIT para que sea instantáneo (0 ticks).
+    if origin_ring == dest_ring:
+        is_origin_orbit = origin_planet is not None
+        is_dest_orbit = dest_planet is not None
+        
+        # Si uno está en órbita y el otro en espacio (planet_id None), es un desatraque/atraque en el mismo anillo.
+        if is_origin_orbit != is_dest_orbit:
+            return MovementType.SURFACE_ORBIT
+
+    # Diferente anillo = inter-ring
     if origin_ring != dest_ring:
         return MovementType.INTER_RING
 
@@ -168,11 +178,12 @@ def determine_movement_type(
         return MovementType.SECTOR_SURFACE
 
     # Mismo sistema, mismo anillo, diferente planeta (o entrar/salir órbita en mismo anillo)
-    # Ej: Espacio Ring 1 -> Órbita Planeta en Ring 1
+    # Nota: El caso Órbita <-> Espacio ya fue capturado arriba si origin_ring == dest_ring.
+    # Esto capturaría movimiento entre dos órbitas de planetas distintos en el mismo anillo (raro pero posible).
     if origin_planet != dest_planet:
          return MovementType.INTER_RING
          
-    # Caso por defecto (movimiento en espacio del mismo anillo)
+    # Caso por defecto (movimiento en espacio del mismo anillo a otro punto del mismo anillo sin planeta)
     return MovementType.INTER_RING
 
 
@@ -185,6 +196,7 @@ def is_local_movement(unit: UnitSchema, destination: DestinationData) -> bool:
     if unit.location_system_id != destination.system_id:
         return False
         
+    # Orbit <-> Ring en el mismo sistema es local.
     return True
 
 
@@ -202,13 +214,7 @@ def calculate_movement_cost(
     - WARP desde Sector Estelar (Ring 0): Costo normal
     
     Reglas de Negocio V13.0:
-    - INTER_RING: Ahora tiene costo temporal basado en distancia absoluta.
-      Distancia = abs(Ring A - Ring B).
-      Si distancia <= 3 -> 1 Tick.
-      Si distancia > 3 -> 2 Ticks.
-
-    Returns:
-        Tuple[int, int]: (ticks_required, energy_cost)
+    - INTER_RING: Siempre 1 tick (TICKS_BETWEEN_RINGS_SHORT).
     """
     ticks = 0
     energy = 0
@@ -222,17 +228,13 @@ def calculate_movement_cost(
 
     elif movement_type == MovementType.SURFACE_ORBIT:
         # V10.1: Superficie <-> Órbita = instantáneo
+        # V13.0: Órbita <-> Espacio (mismo anillo) = instantáneo
         ticks = 0
 
     elif movement_type == MovementType.INTER_RING:
-        # V13.0: Movimiento entre anillos tiene "peso" físico
-        dest_ring = destination.ring
-        distance = abs(origin_ring - dest_ring)
-        
-        if distance <= RING_THRESHOLD_FOR_LONG_TRAVEL:
-            ticks = TICKS_BETWEEN_RINGS_SHORT # 1
-        else:
-            ticks = TICKS_BETWEEN_RINGS_LONG # 2
+        # V13.0: Movimiento entre anillos ahora siempre es 1 tick si es válido
+        # La validación de distancia se hace en validate_movement_request
+        ticks = TICKS_BETWEEN_RINGS_SHORT
 
     elif movement_type == MovementType.STARLANE:
         starlane = find_starlane_between(unit.location_system_id, destination.system_id)
@@ -324,6 +326,12 @@ def validate_movement_request(
              planet = get_planet_by_id(destination.planet_id)
              if planet and planet.get("orbital_ring") != origin_ring:
                  return False, f"Solo puedes entrar en órbita desde el Anillo {planet.get('orbital_ring')}."
+        
+        # V13.0: Validar distancia máxima entre anillos (Movimiento Local)
+        # Si la diferencia entre anillos es > 3, no es posible en un solo salto
+        dist_rings = abs(origin_ring - destination.ring)
+        if dist_rings > 3:
+            return False, f"La distancia entre anillos ({dist_rings}) es demasiado grande para un solo salto (Máx: 3)"
 
     # Restricción 2: Bloqueo de tránsito interestelar si ya se movió localmente
     if not is_local:
@@ -434,7 +442,7 @@ def initiate_movement(
             starlane = find_starlane_between(unit.location_system_id, destination.system_id)
             starlane_id = starlane.get('id') if starlane else None
 
-        # V13.0: Inter-Ring ahora puede caer aquí si tiene ticks > 0.
+        # V13.0: Inter-Ring ahora puede caer aquí si tiene ticks > 0 (siempre 1 tick ahora)
         success = start_unit_transit(
             unit_id=unit_id,
             destination_data=destination.to_dict(),
@@ -495,8 +503,6 @@ def _execute_instant_movement(
             update_unit_movement_lock(unit_id, locked=True)
             was_locked = True
         else:
-            # Asegurarse que no esté lockeado (por si acaso viene true de otro lado, aunque update_unit_movement_lock normalmente solo pone true o false)
-            # En este caso, solo queremos poner True si es el ultimo, si es el primero lo dejamos como este (que debería ser False).
             pass
 
     return success, was_locked
@@ -587,11 +593,8 @@ def estimate_travel_time(
                 'description': 'Movimiento local (instantáneo)'
             }
         
-        # V13.0: Inter-ring con costo temporal
-        if ring_diff <= RING_THRESHOLD_FOR_LONG_TRAVEL:
-            ticks = TICKS_BETWEEN_RINGS_SHORT # 1
-        else:
-            ticks = TICKS_BETWEEN_RINGS_LONG # 2
+        # V13.0: Inter-ring unificado (1 Tick)
+        ticks = TICKS_BETWEEN_RINGS_SHORT
             
         return {
             'route_type': 'inter_ring',
