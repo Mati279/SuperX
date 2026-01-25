@@ -4,6 +4,7 @@ Control de Movimiento - Vista para gestionar el movimiento de unidades.
 V10.1: Implementación inicial con opciones dinámicas según ubicación.
 V12.0: Adaptación para uso en componente/diálogo (eliminación de navegación de página).
 V12.1: Reorganización de UI - Botones de acción movidos arriba de los selectores e iconografía actualizada.
+V12.2: Fix de bloqueo - UI permite 2 movimientos locales antes de bloquear acciones.
 
 Flujo:
 1. El jugador selecciona una unidad desde faction_roster (botón 🚀)
@@ -940,13 +941,18 @@ def render_movement_console():
     # En modo diálogo, no necesitamos botón de "Volver" ya que se puede cerrar el modal.
     # st.divider()
 
-    # Verificar si está bloqueada
+    # --- V12.2: FIX BLOQUEO - Validar bloqueo pero permitir 2 movimientos locales ---
     if unit.movement_locked:
-        st.warning("🔒 Esta unidad acaba de realizar un movimiento y está bloqueada hasta el próximo tick.")
-        # Mostrar cuenta de movimientos si es relevante
-        if unit.local_moves_count > 0:
-             st.caption(f"Movimientos locales realizados: {unit.local_moves_count}")
-        return
+        # Si está bloqueada, verificamos si aún tiene cupo para movimientos locales
+        if unit.local_moves_count < 2:
+             st.info(f"⚠️ Unidad parcialmente fatigada. Queda **{2 - unit.local_moves_count}** movimiento local disponible este tick.")
+             # CONTINUAR: No retornamos, permitimos renderizar opciones.
+             # El motor validará que sea un movimiento local y no interestelar.
+        else:
+            st.warning("🔒 Esta unidad ha alcanzado su límite de movimientos y está bloqueada hasta el próximo tick.")
+            if unit.local_moves_count > 0:
+                 st.caption(f"Movimientos locales realizados: {unit.local_moves_count}/2")
+            return
 
     # Determinar tipo de ubicación y mostrar opciones correspondientes
     movement_result: Optional[Tuple[DestinationData, MovementType]] = None

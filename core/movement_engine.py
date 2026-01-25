@@ -7,6 +7,7 @@ Gestiona:
 3. Iniciación y resolución de tránsitos
 4. Costos de Warp
 Actualizado V11.3: Lógica de Movimiento Local y restricciones diarias (local_moves_count).
+Refactorizado V11.4: Fix bloqueo prematuro en movimientos locales (permite 2 movimientos antes de lock).
 """
 
 from typing import Optional, Dict, Any, Tuple, List
@@ -251,6 +252,7 @@ def validate_movement_request(
     """
     Valida que un movimiento sea posible.
     V11.3: Implementa restricciones de local_moves_count.
+    V11.4: Permite movimientos locales si local_moves_count < 2 aunque movement_locked sea True.
 
     Returns:
         Tuple[bool, str]: (is_valid, error_message)
@@ -263,10 +265,6 @@ def validate_movement_request(
     if unit.status == UnitStatus.TRANSIT:
         return False, "La unidad ya está en tránsito"
 
-    # Validar que no está bloqueada por movimiento reciente
-    if unit.movement_locked:
-        return False, "La unidad no puede moverse este tick (movimiento bloqueado)"
-
     # Validar que tiene al menos un miembro
     if len(unit.members) == 0:
         return False, "La unidad está vacía, no puede moverse"
@@ -278,11 +276,21 @@ def validate_movement_request(
         unit.location_sector_id == destination.sector_id and
         origin_ring == destination.ring):
         return False, "El destino es igual al origen"
-        
-    # --- V11.3: VALIDACIONES DE MOVIMIENTO LOCAL Y RESTRICCIONES ---
-    
+
+    # --- V11.3 / V11.4: LOGICA DE BLOQUEO Y MOVIMIENTO LOCAL ---
+
     is_local = is_local_movement(unit, destination)
-    
+
+    # Validar bloqueo de movimiento (movement_locked)
+    # V11.4: Si está bloqueada, SOLO permitimos si es movimiento local Y aún tiene cupo (count < 2)
+    if unit.movement_locked:
+        allow_override = False
+        if is_local and unit.local_moves_count < 2:
+            allow_override = True
+        
+        if not allow_override:
+            return False, "La unidad no puede moverse este tick (movimiento bloqueado o sin acciones disponibles)"
+
     # Restricción 1: Límite de movimientos locales (Max 2)
     if is_local:
         if unit.local_moves_count >= 2:
@@ -340,7 +348,7 @@ def initiate_movement(
 
     unit = UnitSchema.from_dict(unit_data)
 
-    # Validar movimiento (incluye restricciones V11.3)
+    # Validar movimiento (incluye restricciones V11.3 y V11.4)
     is_valid, error_msg = validate_movement_request(unit, destination, player_id)
     if not is_valid:
         return MovementResult(success=False, error_message=error_msg)
@@ -378,7 +386,14 @@ def initiate_movement(
     # Ejecutar movimiento
     if ticks == 0:
         # Movimiento instantáneo (superficie <-> órbita o local)
-        success = _execute_instant_movement(unit_id, destination, movement_type)
+        # V11.4: Pasamos el contador actual para decidir si bloquear
+        success, applied_lock = _execute_instant_movement(
+            unit_id, 
+            destination, 
+            movement_type, 
+            current_local_moves=unit.local_moves_count
+        )
+        
         if success:
             # V11.3: Incrementar contador de movimientos locales
             increment_unit_local_moves(unit_id)
@@ -389,7 +404,7 @@ def initiate_movement(
                 movement_type=movement_type,
                 ticks_required=0,
                 is_instant=True,
-                movement_locked=MOVEMENT_LOCK_ON_ORBIT_CHANGE
+                movement_locked=applied_lock # Refleja si realmente se bloqueó
             )
         return MovementResult(success=False, error_message="Error ejecutando movimiento instantáneo")
     else:
@@ -423,11 +438,18 @@ def initiate_movement(
 def _execute_instant_movement(
     unit_id: int,
     destination: DestinationData,
-    movement_type: MovementType
-) -> bool:
+    movement_type: MovementType,
+    current_local_moves: int = 0
+) -> Tuple[bool, bool]:
     """
     Ejecuta un movimiento instantáneo (0 ticks).
     Usado para superficie <-> órbita y movimientos locales.
+    
+    V11.4: Lógica de bloqueo inteligente.
+    Solo aplica movement_locked=True si se alcanza el límite de movimientos locales (2).
+    
+    Returns:
+        Tuple[bool, bool]: (success, was_locked)
     """
     # Determinar nuevo status
     new_status = UnitStatus.GROUND if destination.sector_id is not None else UnitStatus.SPACE
@@ -441,11 +463,23 @@ def _execute_instant_movement(
         ring=destination.ring,
         status=new_status
     )
-
+    
+    was_locked = False
     if success and MOVEMENT_LOCK_ON_ORBIT_CHANGE:
-        update_unit_movement_lock(unit_id, locked=True)
+        # V11.4: Regla de 2 movimientos.
+        # Si current_local_moves es 0, este es el 1er movimiento -> NO lockear (permite el 2do).
+        # Si current_local_moves es 1, este es el 2do movimiento -> LOCK.
+        # Si current_local_moves >= 2, ya debería haber sido validado antes, pero por seguridad -> LOCK.
+        
+        if current_local_moves >= 1:
+            update_unit_movement_lock(unit_id, locked=True)
+            was_locked = True
+        else:
+            # Asegurarse que no esté lockeado (por si acaso viene true de otro lado, aunque update_unit_movement_lock normalmente solo pone true o false)
+            # En este caso, solo queremos poner True si es el ultimo, si es el primero lo dejamos como este (que debería ser False).
+            pass
 
-    return success
+    return success, was_locked
 
 
 # --- FUNCIONES DE PROCESAMIENTO DE TRÁNSITO ---
