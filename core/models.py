@@ -13,6 +13,7 @@ Actualizado V9.0: Implementación de Unidades (Units) y Tropas (Troops).
 Actualizado V10.0: Motor de Movimiento, LocationRing, UnitLocation, campos de tránsito.
 Refactorizado V11.0: Geolocalización dinámica en CommanderData.sheet.
 Actualizado V11.1: Persistencia de ubicación en TroopSchema.
+Actualizado V11.2: Unidades - Campo local_moves_count para límite de movimientos diarios.
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -716,6 +717,9 @@ class UnitSchema(BaseModel):
     transit_ticks_remaining: int = 0        # Ticks restantes de viaje
     transit_origin_system_id: Optional[int] = None
     transit_destination_system_id: Optional[int] = None
+    
+    # V11.2: Control de movimientos locales diarios
+    local_moves_count: int = Field(default=0, ge=0)
 
     # Composición (máximo 8 slots)
     members: List[UnitMemberSchema] = Field(default_factory=list)

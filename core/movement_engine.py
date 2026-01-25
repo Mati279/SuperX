@@ -1,4 +1,4 @@
-# core/movement_engine.py
+# core/movement_engine.py (Completo)
 """
 Motor de Movimiento V10.0.
 Gestiona:
@@ -6,6 +6,7 @@ Gestiona:
 2. Validación de rutas
 3. Iniciación y resolución de tránsitos
 4. Costos de Warp
+Actualizado V11.3: Lógica de Movimiento Local y restricciones diarias (local_moves_count).
 """
 
 from typing import Optional, Dict, Any, Tuple, List
@@ -34,9 +35,11 @@ from data.unit_repository import (
     complete_unit_transit,
     update_unit_location_advanced,
     update_unit_movement_lock,
-    get_units_in_transit_arriving_at_tick
+    get_units_in_transit_arriving_at_tick,
+    increment_unit_local_moves
 )
 from data.world_repository import get_system_by_id, get_starlanes_from_db
+from data.planet_repository import get_planet_by_id
 from data.player_repository import get_player_finances, update_player_resources
 from data.log_repository import log_event
 
@@ -45,7 +48,7 @@ class MovementType(Enum):
     """Tipos de movimiento posibles."""
     SECTOR_SURFACE = "sector_surface"      # Entre sectores en superficie
     SURFACE_ORBIT = "surface_orbit"        # Superficie <-> Órbita
-    INTER_RING = "inter_ring"              # Entre anillos planetarios
+    INTER_RING = "inter_ring"              # Entre anillos planetarios o Espacio <-> Órbita
     STARLANE = "starlane"                  # Vía starlane
     WARP = "warp"                          # Salto warp (sin starlane)
 
@@ -147,12 +150,14 @@ def determine_movement_type(
             return MovementType.STARLANE
         return MovementType.WARP
 
-    # Mismo sistema, diferente anillo = inter-ring
+    # Mismo sistema, diferente anillo = inter-ring (o salir de órbita a espacio del anillo)
     if origin_ring != dest_ring:
         return MovementType.INTER_RING
 
-    # Mismo anillo y planeta pero diferente sector
-    if origin_planet == dest_planet:
+    # Mismo anillo...
+    
+    # ...y planeta pero diferente sector
+    if origin_planet == dest_planet and origin_planet is not None:
         # Superficie <-> Órbita (sector NULL = órbita, sector NOT NULL = superficie)
         if (origin_sector is None and dest_sector is not None) or \
            (origin_sector is not None and dest_sector is None):
@@ -160,8 +165,25 @@ def determine_movement_type(
         # Sector a sector en superficie
         return MovementType.SECTOR_SURFACE
 
-    # Mismo sistema, mismo anillo, diferente planeta
+    # Mismo sistema, mismo anillo, diferente planeta (o entrar/salir órbita en mismo anillo)
+    # Ej: Espacio Ring 1 -> Órbita Planeta en Ring 1
+    if origin_planet != dest_planet:
+         return MovementType.INTER_RING
+         
+    # Caso por defecto (movimiento en espacio del mismo anillo)
     return MovementType.INTER_RING
+
+
+def is_local_movement(unit: UnitSchema, destination: DestinationData) -> bool:
+    """
+    Determina si un movimiento se considera 'Local' (intra-sistema).
+    Tipos Locales: SECTOR_SURFACE, SURFACE_ORBIT, INTER_RING (dentro del mismo sistema).
+    """
+    # Si cambia de sistema, es interestelar (no local)
+    if unit.location_system_id != destination.system_id:
+        return False
+        
+    return True
 
 
 def calculate_movement_cost(
@@ -228,6 +250,7 @@ def validate_movement_request(
 ) -> Tuple[bool, str]:
     """
     Valida que un movimiento sea posible.
+    V11.3: Implementa restricciones de local_moves_count.
 
     Returns:
         Tuple[bool, str]: (is_valid, error_message)
@@ -249,11 +272,41 @@ def validate_movement_request(
         return False, "La unidad está vacía, no puede moverse"
 
     # Validar que el destino es diferente al origen
+    origin_ring = unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring
     if (unit.location_system_id == destination.system_id and
         unit.location_planet_id == destination.planet_id and
         unit.location_sector_id == destination.sector_id and
-        unit.ring.value == destination.ring):
+        origin_ring == destination.ring):
         return False, "El destino es igual al origen"
+        
+    # --- V11.3: VALIDACIONES DE MOVIMIENTO LOCAL Y RESTRICCIONES ---
+    
+    is_local = is_local_movement(unit, destination)
+    
+    # Restricción 1: Límite de movimientos locales (Max 2)
+    if is_local:
+        if unit.local_moves_count >= 2:
+            return False, f"Límite de movimientos locales alcanzado ({unit.local_moves_count}/2). Espera al próximo tick."
+        
+        # Validación Órbita <-> Anillo (Constraint estricto)
+        # Si se mueve de Órbita a Anillo (espacio), el anillo destino debe ser el anillo orbital del planeta
+        if unit.location_planet_id is not None and destination.planet_id is None:
+            # Salida de órbita -> Espacio
+            planet = get_planet_by_id(unit.location_planet_id)
+            if planet and planet.get("orbital_ring") != destination.ring:
+                return False, f"Solo puedes salir al Anillo {planet.get('orbital_ring')} desde esta órbita."
+                
+        # Si se mueve de Anillo (espacio) a Órbita, el anillo de origen debe ser el anillo orbital del planeta
+        if unit.location_planet_id is None and destination.planet_id is not None:
+             # Espacio -> Entrada en órbita
+             planet = get_planet_by_id(destination.planet_id)
+             if planet and planet.get("orbital_ring") != origin_ring:
+                 return False, f"Solo puedes entrar en órbita desde el Anillo {planet.get('orbital_ring')}."
+
+    # Restricción 2: Bloqueo de tránsito interestelar si ya se movió localmente
+    if not is_local:
+        if unit.local_moves_count > 0:
+            return False, "La unidad ha realizado movimientos locales. No puede iniciar tránsito interestelar en este tick."
 
     return True, ""
 
@@ -269,6 +322,7 @@ def initiate_movement(
     """
     Inicia el movimiento de una unidad hacia un destino.
     Valida recursos, actualiza estado a TRANSIT si aplica.
+    V11.3: Incrementa local_moves_count si es movimiento local.
 
     Args:
         unit_id: ID de la unidad a mover
@@ -286,7 +340,7 @@ def initiate_movement(
 
     unit = UnitSchema.from_dict(unit_data)
 
-    # Validar movimiento
+    # Validar movimiento (incluye restricciones V11.3)
     is_valid, error_msg = validate_movement_request(unit, destination, player_id)
     if not is_valid:
         return MovementResult(success=False, error_message=error_msg)
@@ -323,9 +377,12 @@ def initiate_movement(
 
     # Ejecutar movimiento
     if ticks == 0:
-        # Movimiento instantáneo (superficie <-> órbita)
+        # Movimiento instantáneo (superficie <-> órbita o local)
         success = _execute_instant_movement(unit_id, destination, movement_type)
         if success:
+            # V11.3: Incrementar contador de movimientos locales
+            increment_unit_local_moves(unit_id)
+            
             log_event(f"🚀 Unidad '{unit.name}' ha cambiado de posición (instantáneo)", player_id)
             return MovementResult(
                 success=True,
@@ -336,7 +393,7 @@ def initiate_movement(
             )
         return MovementResult(success=False, error_message="Error ejecutando movimiento instantáneo")
     else:
-        # Movimiento con duración
+        # Movimiento con duración (Interestelar)
         starlane = None
         starlane_id = None
         if movement_type == MovementType.STARLANE:
@@ -370,7 +427,7 @@ def _execute_instant_movement(
 ) -> bool:
     """
     Ejecuta un movimiento instantáneo (0 ticks).
-    Usado para superficie <-> órbita.
+    Usado para superficie <-> órbita y movimientos locales.
     """
     # Determinar nuevo status
     new_status = UnitStatus.GROUND if destination.sector_id is not None else UnitStatus.SPACE

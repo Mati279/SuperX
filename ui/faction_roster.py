@@ -7,6 +7,7 @@ V11.3: Reclutamiento jerárquico inicial con feedback visual mejorado.
 V11.4: Filtro de seguridad para excluir candidatos (Status 7) del Roster.
 V11.5: Encabezados dinámicos con métricas y visibilidad estricta de nodos vacíos.
 V11.6: Visibilidad permanente de órbita en planetas activos.
+V12.0: Integración de diálogo de movimiento, gestión avanzada de miembros y contadores locales.
 """
 
 import streamlit as st
@@ -37,6 +38,7 @@ from data.planet_repository import (
 from core.models import CommanderData, KnowledgeLevel, CharacterStatus
 from ui.character_sheet import render_character_sheet
 from services.character_generation_service import recruit_character_with_ai
+from ui.movement_console import render_movement_console
 
 
 # --- CSS COMPACTO ---
@@ -96,6 +98,10 @@ def view_character_dialog(char_dict: dict, player_id: int):
     """Modal para ver ficha completa de personaje."""
     render_character_sheet(char_dict, player_id)
 
+@st.dialog("Control de Movimiento", width="large")
+def movement_dialog():
+    """Modal para control de movimiento."""
+    render_movement_console()
 
 @st.dialog("Crear Unidad", width="large")
 def create_unit_dialog(
@@ -188,16 +194,115 @@ def manage_unit_dialog(
     available_chars: List[dict],
     available_troops: List[dict]
 ):
-    """Dialog para renombrar, disolver o añadir miembros a una unidad."""
+    """Dialog para renombrar, disolver o añadir/quitar miembros a una unidad."""
     unit_id = unit["id"]
     current_name = unit.get("name", "Unidad")
     members = unit.get("members", [])
     current_count = len(members)
+    
+    # Check locks
+    local_moves = unit.get("local_moves_count", 0)
+    is_locked = local_moves > 0
+    lock_msg = "Acciones restringidas: Unidad ya ha realizado movimientos este tick." if is_locked else ""
 
     st.subheader(f"Gestionar: {current_name}")
+    if is_locked:
+        st.warning(lock_msg)
 
-    # --- TAB 1: RENOMBRAR ---
-    tab_rename, tab_add, tab_dissolve = st.tabs(["Renombrar", "Añadir Miembros", "Disolver"])
+    # --- TAB 1: MIEMBROS ---
+    tab_members, tab_rename, tab_dissolve = st.tabs(["Miembros", "Renombrar", "Disolver"])
+    
+    with tab_members:
+        # 1. Lista de Miembros Actuales
+        st.markdown("##### Miembros Actuales")
+        if members:
+            for m in sorted(members, key=lambda x: x.get("slot_index", 0)):
+                col_name, col_action = st.columns([4, 1])
+                etype = m.get("entity_type", "?")
+                slot = m.get("slot_index", 0)
+                member_name = m.get("name", "???")
+                icon_e = "👤" if etype == "character" else "🪖"
+                
+                with col_name:
+                    st.markdown(f"`[{slot}]` {icon_e} {member_name}")
+                
+                with col_action:
+                    # No se puede quitar si es el último character (líder) a menos que disuelvas
+                    is_last_char = (etype == "character" and len([x for x in members if x["entity_type"] == "character"]) == 1)
+                    
+                    if st.button("❌", key=f"rm_mbr_{unit_id}_{slot}", help="Quitar miembro", disabled=is_locked or is_last_char):
+                        if remove_unit_member(unit_id, slot):
+                            st.success("Miembro removido.")
+                            st.rerun()
+            
+            if len([x for x in members if x["entity_type"] == "character"]) == 1:
+                st.caption("Nota: No puedes quitar al último personaje (Líder). Usa 'Disolver' si deseas eliminar la unidad.")
+        else:
+            st.info("Sin miembros.")
+
+        st.divider()
+
+        # 2. Añadir Miembros
+        st.markdown("##### Añadir Personal")
+        
+        slots_available = 8 - current_count
+        st.caption(f"Slots disponibles: {slots_available}")
+
+        if slots_available <= 0:
+            st.warning("La unidad está llena (8/8).")
+        else:
+            # Personajes disponibles en la ubicación
+            char_opts = {c["id"]: f"👤 {c.get('nombre', '?')} (Nvl {c.get('level', 1)})" for c in available_chars}
+            add_chars: List[int] = st.multiselect(
+                "Añadir Personajes",
+                options=list(char_opts.keys()),
+                format_func=lambda x: char_opts.get(x, str(x)),
+                max_selections=slots_available,
+                key=f"add_chars_{unit_id}",
+                disabled=is_locked
+            )
+
+            remaining = slots_available - len(add_chars)
+
+            troop_opts = {t["id"]: f"🪖 {t.get('name', '?')} ({t.get('type', 'INF')})" for t in available_troops}
+            add_troops: List[int] = st.multiselect(
+                "Añadir Tropas",
+                options=list(troop_opts.keys()),
+                format_func=lambda x: troop_opts.get(x, str(x)),
+                max_selections=max(0, remaining),
+                disabled=remaining <= 0 or is_locked,
+                key=f"add_troops_{unit_id}"
+            )
+
+            total_to_add = len(add_chars) + len(add_troops)
+            if total_to_add > 0:
+                if st.button(
+                    f"Añadir {total_to_add} miembro(s)",
+                    type="primary",
+                    use_container_width=True,
+                    key=f"btn_add_{unit_id}",
+                    disabled=is_locked
+                ):
+                    slot = current_count
+                    # Encontrar el siguiente slot libre (naive approach, append)
+                    # Mejor: buscar max slot index + 1
+                    current_slots = [m.get("slot_index", 0) for m in members]
+                    next_slot = max(current_slots) + 1 if current_slots else 0
+                    
+                    # Como removemos por slot, puede haber huecos, pero para append simple usamos max+1
+                    # Ajuste: Si usamos lista ordenada, slot = len(members) es seguro si no hay huecos intermedios forzados.
+                    # El repositorio usa append si no hay conflicto, pero remove borra el registro específico.
+                    # Para seguridad, usamos un contador incremental desde el max actual.
+                    
+                    cursor = next_slot
+                    for cid in add_chars:
+                        add_unit_member(unit_id, "character", cid, cursor)
+                        cursor += 1
+                    for tid in add_troops:
+                        add_unit_member(unit_id, "troop", tid, cursor)
+                        cursor += 1
+                    st.success(f"{total_to_add} miembro(s) añadido(s).")
+                    st.rerun()
 
     with tab_rename:
         new_name = st.text_input("Nuevo nombre", value=current_name, key=f"rename_{unit_id}")
@@ -213,59 +318,17 @@ def manage_unit_dialog(
             else:
                 st.error("Error al renombrar.")
 
-    # --- TAB 2: AÑADIR MIEMBROS ---
-    with tab_add:
-        slots_available = 8 - current_count
-        st.caption(f"Slots disponibles: {slots_available}")
-
-        if slots_available <= 0:
-            st.warning("La unidad está llena (8/8).")
-        else:
-            # Personajes disponibles en la ubicación
-            char_opts = {c["id"]: f"👤 {c.get('nombre', '?')} (Nvl {c.get('level', 1)})" for c in available_chars}
-            add_chars: List[int] = st.multiselect(
-                "Añadir Personajes",
-                options=list(char_opts.keys()),
-                format_func=lambda x: char_opts.get(x, str(x)),
-                max_selections=slots_available,
-                key=f"add_chars_{unit_id}"
-            )
-
-            remaining = slots_available - len(add_chars)
-
-            troop_opts = {t["id"]: f"🪖 {t.get('name', '?')} ({t.get('type', 'INF')})" for t in available_troops}
-            add_troops: List[int] = st.multiselect(
-                "Añadir Tropas",
-                options=list(troop_opts.keys()),
-                format_func=lambda x: troop_opts.get(x, str(x)),
-                max_selections=max(0, remaining),
-                disabled=remaining <= 0,
-                key=f"add_troops_{unit_id}"
-            )
-
-            total_to_add = len(add_chars) + len(add_troops)
-            if total_to_add > 0:
-                if st.button(
-                    f"Añadir {total_to_add} miembro(s)",
-                    type="primary",
-                    use_container_width=True,
-                    key=f"btn_add_{unit_id}"
-                ):
-                    slot = current_count
-                    for cid in add_chars:
-                        add_unit_member(unit_id, "character", cid, slot)
-                        slot += 1
-                    for tid in add_troops:
-                        add_unit_member(unit_id, "troop", tid, slot)
-                        slot += 1
-                    st.success(f"{total_to_add} miembro(s) añadido(s).")
-                    st.rerun()
-
     # --- TAB 3: DISOLVER ---
     with tab_dissolve:
         st.markdown("**Disolver Unidad**")
         st.caption("Los miembros quedarán sueltos en la ubicación actual.")
-        if st.button("Disolver Unidad", type="secondary", use_container_width=True, key=f"btn_dissolve_{unit_id}"):
+        if st.button(
+            "Disolver Unidad", 
+            type="secondary", 
+            use_container_width=True, 
+            key=f"btn_dissolve_{unit_id}",
+            disabled=is_locked
+        ):
             if delete_unit(unit_id, player_id):
                 st.success("Unidad disuelta.")
                 st.rerun()
@@ -441,22 +504,29 @@ def _render_unit_row(
     name = unit.get("name", "Unidad")
     members = unit.get("members", [])
     status = unit.get("status", "GROUND")
+    local_moves = unit.get("local_moves_count", 0)
 
     icon = "🌌" if is_space else "🌍"
     status_emoji = {"GROUND": "🏕️", "SPACE": "🚀", "TRANSIT": "✈️"}.get(status, "❓")
+    
+    # Header dinámico con contador de movimientos
+    moves_badge = f"[Movs: {local_moves}/2]" if local_moves < 2 else "[🛑 Sin Movs]"
+    header_text = f"{icon} 🎖️ **{name}** ({len(members)}/8) {status_emoji} {moves_badge}"
 
     # Header compacto con expander
-    with st.expander(f"{icon} 🎖️ **{name}** ({len(members)}/8) {status_emoji}", expanded=False):
+    with st.expander(header_text, expanded=False):
         # Botones de acción en la parte superior del contenido expandido
         col_info, col_move, col_btn = st.columns([3, 1, 1])
 
         # Botón de movimiento (solo si no está en tránsito)
         with col_move:
             if status != "TRANSIT":
-                if st.button("🚀", key=f"move_unit_{unit_id}", help="Mover Unidad"):
-                    st.session_state.selected_unit_movement = unit_id
-                    st.session_state.current_page = "Control de Movimiento"
-                    st.rerun()
+                if local_moves >= 2:
+                    st.button("🛑", key=f"move_unit_lock_{unit_id}", disabled=True, help="Límite de movimientos diarios alcanzado")
+                else:
+                    if st.button("🚀", key=f"move_unit_{unit_id}", help="Control de Movimiento"):
+                        st.session_state.selected_unit_movement = unit_id
+                        movement_dialog()
             else:
                 st.markdown("✈️", help="En tránsito")
 
@@ -654,10 +724,12 @@ def _render_planet_node(
                     st.markdown('<div class="comando-section-header">🌍 Superficie</div>', unsafe_allow_html=True)
                     for sector in visible_surface:
                         sector_id = sector["id"]
-                        sector_type = sector.get("sector_type", "Desconocido")
+                        # Fog of War Check para nombre del sector
+                        sector_name = sector.get("sector_type", "Desconocido")
+                        if not sector.get("is_discovered", False):
+                            sector_name = f"Sector Desconocido [ID: {sector_id}]"
 
-                        # No need to check emptiness again, loop filtered it, but _render_sector_content double checks
-                        st.caption(f"**{sector_type}**")
+                        st.caption(f"**{sector_name}**")
                         surface_loc = {
                             "system_id": planet.get("system_id"),
                             "planet_id": planet_id,
@@ -665,7 +737,7 @@ def _render_planet_node(
                         }
                         _render_sector_content(
                             sector_id=sector_id,
-                            sector_type=sector_type,
+                            sector_type=sector_name,
                             player_id=player_id,
                             location_data=surface_loc,
                             location_index=location_index,

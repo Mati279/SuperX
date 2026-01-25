@@ -25,7 +25,6 @@ from .recruitment_center import show_recruitment_center
 from .galaxy_map_page import show_galaxy_map_page
 from .ship_status_page import show_ship_status_page
 from .planet_surface_view import render_planet_surface
-from .movement_console import render_movement_console
 
 # --- IMPORTACIÓN NUEVA: Widget de Resolución MRG ---
 from .mrg_resolution_widget import render_full_mrg_resolution
@@ -75,8 +74,7 @@ def render_main_game_page(cookie_manager):
         "Centro de Reclutamiento": show_recruitment_center,
         "Mapa de la Galaxia": show_galaxy_map_page,
         "Flota": show_ship_status_page,
-        "Superficie": lambda: render_planet_surface(st.session_state.selected_planet_id) if st.session_state.get("selected_planet_id") else st.warning("⚠️ Selecciona un planeta desde el Mapa o Accesos Directos."),
-        "Control de Movimiento": render_movement_console
+        "Superficie": lambda: render_planet_surface(st.session_state.selected_planet_id) if st.session_state.get("selected_planet_id") else st.warning("⚠️ Selecciona un planeta desde el Mapa o Accesos Directos.")
     }
     
     with st.container():

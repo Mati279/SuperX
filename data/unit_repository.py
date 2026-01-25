@@ -7,6 +7,7 @@ V9.0: Implementación inicial.
 V10.0: Funciones de tránsito, ubicación avanzada y detección.
 V11.1: Persistencia de ubicación en Tropas y lógica de disolución segura.
 V11.2: Hidratación de nombres en miembros de unidad (Fix Schema Validation).
+V11.3: Soporte para local_moves_count (movimientos locales limitados).
 """
 
 from typing import Optional, List, Dict, Any
@@ -195,7 +196,8 @@ def create_unit(
             "location_system_id": location_data.get("system_id"),
             "location_planet_id": location_data.get("planet_id"),
             "location_sector_id": location_data.get("sector_id"),
-            "ring": location_data.get("ring", 0)
+            "ring": location_data.get("ring", 0),
+            "local_moves_count": 0
         }
         response = db.table("units").insert(data).execute()
         if response.data:
@@ -676,21 +678,43 @@ def cancel_unit_transit(unit_id: int, current_tick: int) -> bool:
 
 def reset_all_movement_locks() -> int:
     """
-    Resetea todos los movement_locked a False.
+    Resetea movement_locked a False y local_moves_count a 0.
     Llamado al inicio de cada tick.
-    Retorna número de unidades actualizadas.
     """
     db = get_supabase()
     try:
+        # Update masivo o condicional para resetear contadores de turno
+        # Se asume que Supabase permite updates sin where explícito en esta configuración,
+        # o usamos un filtro que abarque a los afectados.
         response = db.table("units")\
-            .update({"movement_locked": False})\
-            .eq("movement_locked", True)\
+            .update({"movement_locked": False, "local_moves_count": 0})\
+            .or_("movement_locked.eq.true,local_moves_count.gt.0")\
             .execute()
         return len(response.data) if response.data else 0
     except Exception as e:
         print(f"Error resetting movement locks: {e}")
         return 0
 
+def increment_unit_local_moves(unit_id: int) -> bool:
+    """
+    Incrementa el contador de movimientos locales de una unidad en 1.
+    Retorna True si la operación fue exitosa.
+    """
+    db = get_supabase()
+    try:
+        # Fetch current
+        unit = db.table("units").select("local_moves_count").eq("id", unit_id).single().execute()
+        if not unit.data: 
+            return False
+            
+        current = unit.data.get("local_moves_count", 0)
+        
+        # Update
+        resp = db.table("units").update({"local_moves_count": current + 1}).eq("id", unit_id).execute()
+        return bool(resp.data)
+    except Exception as e:
+        print(f"Error incrementing moves for unit {unit_id}: {e}")
+        return False
 
 def decrement_transit_ticks() -> int:
     """

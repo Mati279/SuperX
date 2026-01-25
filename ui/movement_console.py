@@ -1,12 +1,13 @@
-# ui/movement_console.py
+# ui/movement_console.py (Completo)
 """
 Control de Movimiento - Vista para gestionar el movimiento de unidades.
 V10.1: Implementación inicial con opciones dinámicas según ubicación.
+V12.0: Adaptación para uso en componente/diálogo (eliminación de navegación de página).
 
 Flujo:
 1. El jugador selecciona una unidad desde faction_roster (botón 🚀)
 2. Se guarda unit_id en st.session_state.selected_unit_movement
-3. Se redirige a esta página donde se muestran opciones de destino
+3. Se muestra este componente (normalmente en un diálogo)
 
 Reglas de Destino según Ubicación:
 - Sector Planetario (Superficie): Otro sector / Ascender a órbita
@@ -182,11 +183,11 @@ def _render_unit_info(unit: UnitSchema, location_info: Dict[str, str]):
     """Renderiza información de la unidad seleccionada."""
     st.markdown(f"""
     <div class="movement-header">
-        <h3>🎖️ {unit.name}</h3>
-        <div>
+        <h4 style="margin:0">🎖️ {unit.name}</h4>
+        <div style="margin-top:5px">
             <span class="location-badge {location_info['status_class']}">{location_info['status_text']}</span>
         </div>
-        <p style="margin-top: 10px; color: #888;">
+        <p style="margin-top: 5px; color: #bbb; font-size: 0.9em">
             Sistema: <strong>{location_info['system']}</strong>
             {f" | Miembros: <strong>{len(unit.members)}/8</strong>" if unit.members else ""}
         </p>
@@ -248,7 +249,7 @@ def _render_surface_options(
     - Mover a otro sector del mismo planeta
     - Ascender a órbita
     """
-    st.subheader("Opciones de Movimiento - Superficie")
+    st.markdown("#### Opciones de Movimiento")
 
     planet_id = unit.location_planet_id
     system_id = unit.location_system_id
@@ -266,10 +267,10 @@ def _render_surface_options(
     selected_dest = None
     selected_type = None
 
-    col1, col2 = st.columns(2)
+    tab1, tab2 = st.tabs(["Mover en Superficie", "Ascender a Órbita"])
 
-    with col1:
-        st.markdown("**🌍 Mover a otro Sector**")
+    with tab1:
+        st.markdown(f"**🌍 Mover a otro Sector de {planet_name}**")
         if surface_sectors:
             # V10.2: Fog of War - Enmascarar sectores no descubiertos
             sector_options = {}
@@ -290,7 +291,7 @@ def _render_surface_options(
                 estimate = estimate_travel_time(system_id, system_id, orbital_ring, orbital_ring)
                 _render_cost_display(estimate)
 
-                if st.button("Mover a Sector", type="primary", key="btn_move_sector"):
+                if st.button("Mover a Sector", type="primary", key="btn_move_sector", use_container_width=True):
                     selected_dest = DestinationData(
                         system_id=system_id,
                         planet_id=planet_id,
@@ -301,14 +302,14 @@ def _render_surface_options(
         else:
             st.info("No hay otros sectores disponibles en este planeta.")
 
-    with col2:
-        st.markdown("**🚀 Ascender a Órbita**")
+    with tab2:
+        st.markdown(f"**🚀 Ascender a Órbita de {planet_name}**")
         if orbit_sector:
-            st.caption(f"Subir a la órbita de {planet_name}")
+            st.caption("Salida de atmósfera hacia espacio orbital.")
             estimate = estimate_travel_time(system_id, system_id, orbital_ring, orbital_ring)
             _render_cost_display(estimate)
 
-            if st.button("Ascender a Órbita", type="primary", key="btn_ascend_orbit"):
+            if st.button("Ascender a Órbita", type="primary", key="btn_ascend_orbit", use_container_width=True):
                 selected_dest = DestinationData(
                     system_id=system_id,
                     planet_id=planet_id,
@@ -336,7 +337,7 @@ def _render_orbit_options(
     - Usar Starlane (si hay conexión)
     - Salto WARP
     """
-    st.subheader("Opciones de Movimiento - Órbita")
+    st.markdown("#### Opciones de Movimiento")
 
     planet_id = unit.location_planet_id
     system_id = unit.location_system_id
@@ -359,7 +360,7 @@ def _render_orbit_options(
     tab1, tab2, tab3, tab4 = st.tabs(["Descender", "Cambiar Anillo", "Starlane", "WARP"])
 
     with tab1:
-        st.markdown("**🌍 Descender a Superficie**")
+        st.markdown(f"**🌍 Descender a Superficie de {planet_name}**")
         if surface_sectors:
             # V10.2: Fog of War - Enmascarar sectores no descubiertos
             sector_options = {}
@@ -380,7 +381,7 @@ def _render_orbit_options(
                 estimate = estimate_travel_time(system_id, system_id, orbital_ring, orbital_ring)
                 _render_cost_display(estimate)
 
-                if st.button("Descender", type="primary", key="btn_descend"):
+                if st.button("Descender", type="primary", key="btn_descend", use_container_width=True):
                     selected_dest = DestinationData(
                         system_id=system_id,
                         planet_id=planet_id,
@@ -411,7 +412,7 @@ def _render_orbit_options(
             estimate = estimate_travel_time(system_id, system_id, current_ring, selected_ring)
             _render_cost_display(estimate)
 
-            if st.button("Mover a Anillo", type="primary", key="btn_ring"):
+            if st.button("Mover a Anillo", type="primary", key="btn_ring", use_container_width=True):
                 selected_dest = DestinationData(
                     system_id=system_id,
                     planet_id=None,  # Ya no está en el planeta
@@ -440,7 +441,7 @@ def _render_orbit_options(
                 estimate = estimate_travel_time(system_id, selected_lane_dest, current_ring, 0)
                 _render_cost_display(estimate)
 
-                if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane"):
+                if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane", use_container_width=True):
                     selected_dest = DestinationData(
                         system_id=selected_lane_dest,
                         planet_id=None,
@@ -476,7 +477,7 @@ def _render_orbit_options(
                 )
                 _render_cost_display(estimate, unit.ship_count)
 
-                if st.button("Iniciar Salto WARP", type="primary", key="btn_warp"):
+                if st.button("Iniciar Salto WARP", type="primary", key="btn_warp", use_container_width=True):
                     selected_dest = DestinationData(
                         system_id=selected_warp_dest,
                         planet_id=None,
@@ -504,7 +505,7 @@ def _render_ring_options(
     - Usar Starlane
     - Salto WARP
     """
-    st.subheader("Opciones de Movimiento - Anillo Espacial")
+    st.markdown("#### Opciones de Movimiento")
 
     system_id = unit.location_system_id
     current_ring = unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring
@@ -540,7 +541,7 @@ def _render_ring_options(
                 _render_cost_display(estimate)
 
                 if orbit_sector:
-                    if st.button("Entrar en Órbita", type="primary", key="btn_enter_orbit"):
+                    if st.button("Entrar en Órbita", type="primary", key="btn_enter_orbit", use_container_width=True):
                         selected_dest = DestinationData(
                             system_id=system_id,
                             planet_id=selected_planet,
@@ -572,7 +573,7 @@ def _render_ring_options(
             estimate = estimate_travel_time(system_id, system_id, current_ring, selected_ring)
             _render_cost_display(estimate)
 
-            if st.button("Mover a Anillo", type="primary", key="btn_ring_space"):
+            if st.button("Mover a Anillo", type="primary", key="btn_ring_space", use_container_width=True):
                 selected_dest = DestinationData(
                     system_id=system_id,
                     planet_id=None,
@@ -601,7 +602,7 @@ def _render_ring_options(
                 estimate = estimate_travel_time(system_id, selected_lane_dest, current_ring, 0)
                 _render_cost_display(estimate)
 
-                if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane_space"):
+                if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane_space", use_container_width=True):
                     selected_dest = DestinationData(
                         system_id=selected_lane_dest,
                         planet_id=None,
@@ -638,7 +639,7 @@ def _render_ring_options(
                 )
                 _render_cost_display(estimate, unit.ship_count)
 
-                if st.button("Iniciar Salto WARP", type="primary", key="btn_warp_space"):
+                if st.button("Iniciar Salto WARP", type="primary", key="btn_warp_space", use_container_width=True):
                     selected_dest = DestinationData(
                         system_id=selected_warp_dest,
                         planet_id=None,
@@ -665,7 +666,7 @@ def _render_stellar_options(
     - Usar Starlane
     - Salto WARP (costo normal - sin penalización)
     """
-    st.subheader("Opciones de Movimiento - Sector Estelar")
+    st.markdown("#### Opciones de Movimiento")
 
     system_id = unit.location_system_id
     current_ring = 0  # Sector Estelar
@@ -696,7 +697,7 @@ def _render_stellar_options(
             estimate = estimate_travel_time(system_id, system_id, current_ring, selected_ring)
             _render_cost_display(estimate)
 
-            if st.button("Mover a Anillo", type="primary", key="btn_ring_stellar"):
+            if st.button("Mover a Anillo", type="primary", key="btn_ring_stellar", use_container_width=True):
                 selected_dest = DestinationData(
                     system_id=system_id,
                     planet_id=None,
@@ -725,7 +726,7 @@ def _render_stellar_options(
                 estimate = estimate_travel_time(system_id, selected_lane_dest, current_ring, 0)
                 _render_cost_display(estimate)
 
-                if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane_stellar"):
+                if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane_stellar", use_container_width=True):
                     selected_dest = DestinationData(
                         system_id=selected_lane_dest,
                         planet_id=None,
@@ -761,7 +762,7 @@ def _render_stellar_options(
                 )
                 _render_cost_display(estimate, unit.ship_count)
 
-                if st.button("Iniciar Salto WARP", type="primary", key="btn_warp_stellar"):
+                if st.button("Iniciar Salto WARP", type="primary", key="btn_warp_stellar", use_container_width=True):
                     selected_dest = DestinationData(
                         system_id=selected_warp_dest,
                         planet_id=None,
@@ -815,8 +816,8 @@ def render_movement_console():
 
     _inject_movement_css()
 
-    st.title("Control de Movimiento")
-
+    # st.title se elimina porque ahora corre dentro de un @st.dialog
+    
     player = get_player()
     if not player:
         st.error("Error de sesión. Por favor, inicia sesión nuevamente.")
@@ -828,12 +829,7 @@ def render_movement_console():
     unit_id = st.session_state.get('selected_unit_movement')
 
     if not unit_id:
-        st.warning("No hay unidad seleccionada para mover.")
-        st.info("Selecciona una unidad desde la página de Comando haciendo clic en el botón 🚀")
-
-        if st.button("Ir a Comando", type="primary"):
-            st.session_state.current_page = "Comando"
-            st.rerun()
+        st.warning("No hay unidad seleccionada.")
         return
 
     # Cargar datos de la unidad
@@ -861,19 +857,15 @@ def render_movement_console():
     location_info = _get_location_display(unit)
     _render_unit_info(unit, location_info)
 
-    # Botón para volver a Comando
-    col_back, col_spacer = st.columns([1, 3])
-    with col_back:
-        if st.button("← Volver a Comando"):
-            st.session_state.selected_unit_movement = None
-            st.session_state.current_page = "Comando"
-            st.rerun()
-
-    st.divider()
+    # En modo diálogo, no necesitamos botón de "Volver" ya que se puede cerrar el modal.
+    # st.divider()
 
     # Verificar si está bloqueada
     if unit.movement_locked:
-        st.warning("Esta unidad acaba de realizar un movimiento y está bloqueada hasta el próximo tick.")
+        st.warning("🔒 Esta unidad acaba de realizar un movimiento y está bloqueada hasta el próximo tick.")
+        # Mostrar cuenta de movimientos si es relevante
+        if unit.local_moves_count > 0:
+             st.caption(f"Movimientos locales realizados: {unit.local_moves_count}")
         return
 
     # Determinar tipo de ubicación y mostrar opciones correspondientes
@@ -927,9 +919,8 @@ def render_movement_console():
                 if result.energy_cost > 0:
                     st.info(f"Energía consumida: {result.energy_cost} células")
 
-            # Limpiar selección y redirigir
+            # Limpiar selección y cerrar diálogo (rerun forza el refresco del estado padre)
             st.session_state.selected_unit_movement = None
-            st.session_state.current_page = "Comando"
             st.rerun()
         else:
             st.error(f"Error: {result.error_message}")
