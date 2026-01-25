@@ -11,12 +11,13 @@ V12.0: Integración de diálogo de movimiento, gestión avanzada de miembros y c
 V13.0: Restricción de reclutamiento orbital (solo personal local).
 V13.5: Fix Agrupación - Tránsito intra-sistema (SCO) se muestra en el sistema, no en Starlanes.
 V14.1: Integración del Centro de Alertas Tácticas y Panel de Simulación de Detección.
+Refactor V15.0: Compatibilidad Híbrida Pydantic V2/Dict para Unidades y Miembros.
 """
 
 import streamlit as st
 import time
 import json
-from typing import Dict, List, Any, Optional, Set, Tuple
+from typing import Dict, List, Any, Optional, Set, Tuple, Union
 
 from data.character_repository import (
     get_all_player_characters,
@@ -49,6 +50,41 @@ from ui.components.tactical import (
     render_tactical_alert_center,
     render_debug_simulation_panel
 )
+
+
+# --- HELPERS DE ACCESO SEGURO (PYDANTIC V2 COMPATIBILITY) ---
+
+def get_prop(obj: Any, key: str, default: Any = None) -> Any:
+    """
+    Obtiene una propiedad de forma segura ya sea de un Diccionario o de un Modelo Pydantic/Objeto.
+    Reemplaza a obj.get(key, default).
+    """
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+def set_prop(obj: Any, key: str, value: Any) -> None:
+    """
+    Establece una propiedad de forma segura en un Diccionario o Modelo.
+    """
+    if isinstance(obj, dict):
+        obj[key] = value
+    else:
+        # Asume que el objeto es mutable (Pydantic models por defecto lo son)
+        if hasattr(obj, key):
+            setattr(obj, key, value)
+        else:
+            # Si el modelo permite extra fields o es dinámico
+            try:
+                setattr(obj, key, value)
+            except AttributeError:
+                pass # No se pudo setear, ignorar en modelos estrictos
+
+def sort_key_by_prop(key: str, default: Any = 0):
+    """
+    Retorna una función lambda para usar en sorted() o .sort() compatible con Dict y Objetos.
+    """
+    return lambda x: getattr(x, key, default) if not isinstance(x, dict) else x.get(key, default)
 
 
 # --- CSS COMPACTO ---
@@ -104,8 +140,10 @@ def _inject_compact_css():
 # --- DIALOGS ---
 
 @st.dialog("Ficha de Personal", width="large")
-def view_character_dialog(char_dict: dict, player_id: int):
+def view_character_dialog(char: Any, player_id: int):
     """Modal para ver ficha completa de personaje."""
+    # Convertir a dict si es modelo para el renderizador legacy
+    char_dict = char.model_dump() if hasattr(char, 'model_dump') else char
     render_character_sheet(char_dict, player_id)
 
 @st.dialog("Control de Movimiento", width="large")
@@ -118,14 +156,12 @@ def create_unit_dialog(
     sector_id: int,
     player_id: int,
     location_data: Dict[str, Any],
-    available_chars: List[dict],
-    available_troops: List[dict],
+    available_chars: List[Any],
+    available_troops: List[Any],
     is_orbit: bool = False
 ):
     """Dialog para crear una nueva unidad con estado limpio."""
     st.subheader("Formar Nueva Unidad")
-
-    # V13.0: Eliminado mensaje de "embarcar personal de superficie"
 
     # Usar keys únicas basadas en sector para evitar estado persistente
     key_prefix = f"create_{sector_id}"
@@ -138,8 +174,22 @@ def create_unit_dialog(
 
     st.markdown("**Seleccionar Miembros** (Máx 8, Mín 1 Personaje)")
 
-    # Personajes disponibles (ya filtrados, no asignados)
-    char_options = {c["id"]: f"👤 {c.get('nombre', 'Sin nombre')} (Nvl {c.get('level', 1)})" for c in available_chars}
+    # Helper para obtener ID y Nombre
+    def _opt(obj, type_icon):
+        oid = get_prop(obj, "id")
+        # Compatibilidad con campos 'nombre' (char) vs 'name' (troop)
+        oname = get_prop(obj, "nombre") or get_prop(obj, "name") or "Sin nombre"
+        lvl = get_prop(obj, "level", 1)
+        # Tropas tienen 'type', chars no
+        extra = f"({get_prop(obj, 'type', 'INF')})" if type_icon == "🪖" else f"(Nvl {lvl})"
+        return oid, f"{type_icon} {oname} {extra}"
+
+    # Personajes disponibles
+    char_options = {}
+    for c in available_chars:
+        cid, clabel = _opt(c, "👤")
+        char_options[cid] = clabel
+
     selected_char_ids: List[int] = st.multiselect(
         "Personajes (Líder obligatorio)",
         options=list(char_options.keys()),
@@ -150,8 +200,12 @@ def create_unit_dialog(
 
     remaining_slots = 8 - len(selected_char_ids)
 
-    # Tropas disponibles (ya filtradas, no asignadas)
-    troop_options = {t["id"]: f"🪖 {t.get('name', 'Tropa')} ({t.get('type', 'INF')})" for t in available_troops}
+    # Tropas disponibles
+    troop_options = {}
+    for t in available_troops:
+        tid, tlabel = _opt(t, "🪖")
+        troop_options[tid] = tlabel
+
     selected_troop_ids: List[int] = st.multiselect(
         "Tropas",
         options=list(troop_options.keys()),
@@ -182,7 +236,7 @@ def create_unit_dialog(
     if st.button("Crear Unidad", type="primary", disabled=not can_create, use_container_width=True):
         new_unit = create_unit(player_id, unit_name.strip(), location_data)
         if new_unit:
-            unit_id = new_unit["id"]
+            unit_id = new_unit["id"] if isinstance(new_unit, dict) else new_unit.id
             slot = 0
             for char_id in selected_char_ids:
                 add_unit_member(unit_id, "character", char_id, slot)
@@ -198,19 +252,20 @@ def create_unit_dialog(
 
 @st.dialog("Gestionar Unidad", width="large")
 def manage_unit_dialog(
-    unit: dict,
+    unit: Any,
     player_id: int,
-    available_chars: List[dict],
-    available_troops: List[dict]
+    available_chars: List[Any],
+    available_troops: List[Any]
 ):
     """Dialog para renombrar, disolver o añadir/quitar miembros a una unidad."""
-    unit_id = unit["id"]
-    current_name = unit.get("name", "Unidad")
-    members = unit.get("members", [])
+    # Acceso seguro a propiedades de unidad
+    unit_id = get_prop(unit, "id")
+    current_name = get_prop(unit, "name", "Unidad")
+    members = get_prop(unit, "members", [])
     current_count = len(members)
     
     # Check locks
-    local_moves = unit.get("local_moves_count", 0)
+    local_moves = get_prop(unit, "local_moves_count", 0)
     is_locked = local_moves > 0
     lock_msg = "Acciones restringidas: Unidad ya ha realizado movimientos este tick." if is_locked else ""
 
@@ -225,11 +280,16 @@ def manage_unit_dialog(
         # 1. Lista de Miembros Actuales
         st.markdown("##### Miembros Actuales")
         if members:
-            for m in sorted(members, key=lambda x: x.get("slot_index", 0)):
+            # Sort seguro
+            sorted_members = sorted(members, key=sort_key_by_prop("slot_index", 0))
+            
+            for m in sorted_members:
                 col_name, col_action = st.columns([4, 1])
-                etype = m.get("entity_type", "?")
-                slot = m.get("slot_index", 0)
-                member_name = m.get("name", "???")
+                
+                # Acceso seguro a propiedades de miembro
+                etype = get_prop(m, "entity_type", "?")
+                slot = get_prop(m, "slot_index", 0)
+                member_name = get_prop(m, "name", "???")
                 icon_e = "👤" if etype == "character" else "🪖"
                 
                 with col_name:
@@ -237,14 +297,17 @@ def manage_unit_dialog(
                 
                 with col_action:
                     # No se puede quitar si es el último character (líder) a menos que disuelvas
-                    is_last_char = (etype == "character" and len([x for x in members if x["entity_type"] == "character"]) == 1)
+                    # Contar caracteres de forma segura
+                    char_count = sum(1 for x in members if get_prop(x, "entity_type") == "character")
+                    is_last_char = (etype == "character" and char_count == 1)
                     
                     if st.button("❌", key=f"rm_mbr_{unit_id}_{slot}", help="Quitar miembro", disabled=is_locked or is_last_char):
                         if remove_unit_member(unit_id, slot):
                             st.success("Miembro removido.")
                             st.rerun()
             
-            if len([x for x in members if x["entity_type"] == "character"]) == 1:
+            char_count = sum(1 for x in members if get_prop(x, "entity_type") == "character")
+            if char_count == 1:
                 st.caption("Nota: No puedes quitar al último personaje (Líder). Usa 'Disolver' si deseas eliminar la unidad.")
         else:
             st.info("Sin miembros.")
@@ -261,7 +324,13 @@ def manage_unit_dialog(
             st.warning("La unidad está llena (8/8).")
         else:
             # Personajes disponibles en la ubicación
-            char_opts = {c["id"]: f"👤 {c.get('nombre', '?')} (Nvl {c.get('level', 1)})" for c in available_chars}
+            char_opts = {}
+            for c in available_chars:
+                cid = get_prop(c, "id")
+                cname = get_prop(c, "nombre") or "Sin Nombre"
+                clvl = get_prop(c, "level", 1)
+                char_opts[cid] = f"👤 {cname} (Nvl {clvl})"
+
             add_chars: List[int] = st.multiselect(
                 "Añadir Personajes",
                 options=list(char_opts.keys()),
@@ -273,7 +342,13 @@ def manage_unit_dialog(
 
             remaining = slots_available - len(add_chars)
 
-            troop_opts = {t["id"]: f"🪖 {t.get('name', '?')} ({t.get('type', 'INF')})" for t in available_troops}
+            troop_opts = {}
+            for t in available_troops:
+                tid = get_prop(t, "id")
+                tname = get_prop(t, "name") or "Sin Nombre"
+                ttype = get_prop(t, "type", "INF")
+                troop_opts[tid] = f"🪖 {tname} ({ttype})"
+
             add_troops: List[int] = st.multiselect(
                 "Añadir Tropas",
                 options=list(troop_opts.keys()),
@@ -294,7 +369,7 @@ def manage_unit_dialog(
                 ):
                     slot = current_count
                     # Encontrar el siguiente slot libre (naive approach, append)
-                    current_slots = [m.get("slot_index", 0) for m in members]
+                    current_slots = [get_prop(m, "slot_index", 0) for m in members]
                     next_slot = max(current_slots) + 1 if current_slots else 0
                     
                     cursor = next_slot
@@ -341,14 +416,15 @@ def manage_unit_dialog(
 
 # --- HELPERS DE DATOS ---
 
-def _get_assigned_entity_ids(units: List[dict]) -> Tuple[Set[int], Set[int]]:
+def _get_assigned_entity_ids(units: List[Any]) -> Tuple[Set[int], Set[int]]:
     """Retorna sets de IDs de characters y troops asignados a unidades."""
     assigned_chars: Set[int] = set()
     assigned_troops: Set[int] = set()
     for unit in units:
-        for member in unit.get("members", []):
-            etype = member.get("entity_type")
-            eid = member.get("entity_id")
+        members = get_prop(unit, "members", [])
+        for member in members:
+            etype = get_prop(member, "entity_type")
+            eid = get_prop(member, "entity_id")
             if etype == "character":
                 assigned_chars.add(eid)
             elif etype == "troop":
@@ -357,25 +433,32 @@ def _get_assigned_entity_ids(units: List[dict]) -> Tuple[Set[int], Set[int]]:
 
 
 def _hydrate_unit_members(
-    units: List[dict],
+    units: List[Any],
     char_map: Dict[int, str],
     troop_map: Dict[int, str]
-) -> List[dict]:
-    """Inyecta nombres reales en los miembros de cada unidad."""
+) -> List[Any]:
+    """Inyecta nombres reales en los miembros de cada unidad (Compatible Híbrido)."""
     for unit in units:
-        for member in unit.get("members", []):
-            eid = member.get("entity_id")
-            etype = member.get("entity_type")
+        members = get_prop(unit, "members", [])
+        for member in members:
+            eid = get_prop(member, "entity_id")
+            etype = get_prop(member, "entity_type")
+            
+            name = f"{etype} {eid}" # Fallback
             if etype == "character":
-                member["name"] = char_map.get(eid, f"Personaje {eid}")
+                name = char_map.get(eid, f"Personaje {eid}")
             elif etype == "troop":
-                member["name"] = troop_map.get(eid, f"Tropa {eid}")
+                name = troop_map.get(eid, f"Tropa {eid}")
+            
+            # Set seguro usando helper
+            set_prop(member, "name", name)
+            
     return units
 
 
 def _get_systems_with_presence(
     location_index: dict,
-    characters: List[dict],
+    characters: List[Any],
     assigned_char_ids: Set[int]
 ) -> Set[int]:
     """Obtiene IDs de sistemas donde hay presencia del jugador."""
@@ -384,7 +467,7 @@ def _get_systems_with_presence(
     # Desde unidades por sector
     for sector_id, unit_list in location_index["units_by_sector"].items():
         for u in unit_list:
-            sid = u.get("location_system_id")
+            sid = get_prop(u, "location_system_id")
             if sid:
                 system_ids.add(sid)
 
@@ -395,15 +478,16 @@ def _get_systems_with_presence(
 
     # Desde personajes sueltos
     for char in characters:
-        if char["id"] not in assigned_char_ids:
-            sys_id = char.get("location_system_id")
+        cid = get_prop(char, "id")
+        if cid not in assigned_char_ids:
+            sys_id = get_prop(char, "location_system_id")
             if sys_id:
                 system_ids.add(sys_id)
 
     # Desde chars_by_sector (inferir sistema desde planeta)
     for sector_id, char_list in location_index["chars_by_sector"].items():
         for c in char_list:
-            sys_id = c.get("location_system_id")
+            sys_id = get_prop(c, "location_system_id")
             if sys_id:
                 system_ids.add(sys_id)
 
@@ -411,8 +495,8 @@ def _get_systems_with_presence(
 
 
 def _build_location_index(
-    characters: List[dict],
-    units: List[dict],
+    characters: List[Any],
+    units: List[Any],
     assigned_char_ids: Set[int]
 ) -> Dict[str, Any]:
     """
@@ -423,33 +507,33 @@ def _build_location_index(
     - 'units_by_system_ring': {(system_id, ring): [units]}
     - 'units_in_transit': [units]
     """
-    chars_by_sector: Dict[int, List[dict]] = {}
-    units_by_sector: Dict[int, List[dict]] = {}
-    units_by_system_ring: Dict[Tuple[int, int], List[dict]] = {}
-    units_in_transit: List[dict] = []
+    chars_by_sector: Dict[int, List[Any]] = {}
+    units_by_sector: Dict[int, List[Any]] = {}
+    units_by_system_ring: Dict[Tuple[int, int], List[Any]] = {}
+    units_in_transit: List[Any] = []
 
     # Personajes sueltos por sector
     for char in characters:
-        if char["id"] in assigned_char_ids:
+        cid = get_prop(char, "id")
+        if cid in assigned_char_ids:
             continue
-        sector_id = char.get("location_sector_id")
+        sector_id = get_prop(char, "location_sector_id")
         if sector_id:
             chars_by_sector.setdefault(sector_id, []).append(char)
 
     # Unidades por ubicación
     for unit in units:
-        status = unit.get("status", "GROUND")
+        status = get_prop(unit, "status", "GROUND")
         
         # V13.5: Lógica de agrupación corregida
         if status == "TRANSIT":
-            origin = unit.get("transit_origin_system_id")
-            dest = unit.get("transit_destination_system_id")
+            origin = get_prop(unit, "transit_origin_system_id")
+            dest = get_prop(unit, "transit_destination_system_id")
             
             # Tránsito Local (SCO): Se queda en el sistema
             if origin is not None and origin == dest:
-                # Se asigna al sistema origen y al anillo actual (para que aparezca en el nodo correcto)
-                # Si no tiene ring definido, asumimos 0 (Stellar)
-                ring_val = unit.get("ring", 0)
+                # Se asigna al sistema origen y al anillo actual
+                ring_val = get_prop(unit, "ring", 0)
                 if isinstance(ring_val, LocationRing): 
                     ring_val = ring_val.value
                 
@@ -461,12 +545,12 @@ def _build_location_index(
             units_in_transit.append(unit)
             continue
 
-        sector_id = unit.get("location_sector_id")
+        sector_id = get_prop(unit, "location_sector_id")
         if sector_id:
             units_by_sector.setdefault(sector_id, []).append(unit)
         else:
-            system_id = unit.get("location_system_id")
-            ring = unit.get("ring", 0)
+            system_id = get_prop(unit, "location_system_id")
+            ring = get_prop(unit, "ring", 0)
             if isinstance(ring, LocationRing): 
                 ring = ring.value
                 
@@ -493,12 +577,12 @@ def _render_loyalty_badge(loyalty: int) -> str:
     return f'<span class="loyalty-high">{loyalty}%</span>'
 
 
-def _render_character_row(char: dict, player_id: int, is_space: bool):
+def _render_character_row(char: Any, player_id: int, is_space: bool):
     """Renderiza fila de personaje suelto."""
-    char_id = char["id"]
-    nombre = char.get("nombre", "???")
-    nivel = char.get("level", 1)
-    loyalty = char.get("loyalty", 50)
+    char_id = get_prop(char, "id")
+    nombre = get_prop(char, "nombre", "???")
+    nivel = get_prop(char, "level", 1)
+    loyalty = get_prop(char, "loyalty", 50)
 
     icon = "🌌" if is_space else "🌍"
     loc_class = "loc-space" if is_space else "loc-ground"
@@ -517,18 +601,18 @@ def _render_character_row(char: dict, player_id: int, is_space: bool):
 
 
 def _render_unit_row(
-    unit: dict,
+    unit: Any,
     player_id: int,
     is_space: bool,
-    available_chars: List[dict],
-    available_troops: List[dict]
+    available_chars: List[Any],
+    available_troops: List[Any]
 ):
     """Renderiza unidad con header expandible: nombre + botones de gestión y movimiento."""
-    unit_id = unit["id"]
-    name = unit.get("name", "Unidad")
-    members = unit.get("members", [])
-    status = unit.get("status", "GROUND")
-    local_moves = unit.get("local_moves_count", 0)
+    unit_id = get_prop(unit, "id")
+    name = get_prop(unit, "name", "Unidad")
+    members = get_prop(unit, "members", [])
+    status = get_prop(unit, "status", "GROUND")
+    local_moves = get_prop(unit, "local_moves_count", 0)
 
     icon = "🌌" if is_space else "🌍"
     status_emoji = {"GROUND": "🏕️", "SPACE": "🚀", "TRANSIT": "✈️"}.get(status, "❓")
@@ -539,15 +623,15 @@ def _render_unit_row(
     # V13.5: Formateo de texto para tránsito SCO local
     if status == "TRANSIT":
         # Intentar recuperar destino para mostrar SCO R[X] -> R[Y]
-        origin_ring = unit.get("ring", 0)
+        origin_ring = get_prop(unit, "ring", 0)
         dest_ring = "?"
         try:
             # Recuperación robusta del anillo destino
-            dest_ring_raw = unit.get("transit_destination_ring")
+            dest_ring_raw = get_prop(unit, "transit_destination_ring")
             if dest_ring_raw is not None:
                 dest_ring = dest_ring_raw
             else:
-                t_data = unit.get("transit_destination_data")
+                t_data = get_prop(unit, "transit_destination_data")
                 if t_data:
                     if isinstance(t_data, str):
                         parsed = json.loads(t_data)
@@ -588,10 +672,13 @@ def _render_unit_row(
         # Lista de miembros
         if members:
             st.caption("Composición:")
-            for m in sorted(members, key=lambda x: x.get("slot_index", 0)):
-                etype = m.get("entity_type", "?")
-                slot = m.get("slot_index", 0)
-                member_name = m.get("name", "???")
+            # Sort seguro
+            sorted_members = sorted(members, key=sort_key_by_prop("slot_index", 0))
+            
+            for m in sorted_members:
+                etype = get_prop(m, "entity_type", "?")
+                slot = get_prop(m, "slot_index", 0)
+                member_name = get_prop(m, "name", "???")
 
                 if etype == "character":
                     st.markdown(f"`[{slot}]` 👤 {member_name}")
@@ -605,8 +692,8 @@ def _render_create_unit_button(
     sector_id: int,
     player_id: int,
     location_data: Dict[str, Any],
-    available_chars: List[dict],
-    available_troops: List[dict],
+    available_chars: List[Any],
+    available_troops: List[Any],
     is_orbit: bool = False
 ):
     """Renderiza botón para crear unidad si hay entidades disponibles."""
@@ -635,22 +722,19 @@ def _render_sector_content(
     is_space: bool,
     assigned_char_ids: Set[int],
     assigned_troop_ids: Set[int],
-    all_troops: List[dict],
+    all_troops: List[Any],
     planet_id: Optional[int] = None,
     all_planet_sector_ids: Optional[Set[int]] = None
 ):
     """Renderiza contenido de un sector (unidades + personajes sueltos + botón crear)."""
     units = location_index["units_by_sector"].get(sector_id, [])
     chars = location_index["chars_by_sector"].get(sector_id, [])
-
-    # V13.0: Eliminada la inclusión de orbit_chars (personal de superficie) en órbita.
-    # Ahora solo se usa 'chars', que es la gente que está físicamente en este sector.
     
     # Personajes disponibles (no asignados a unidad)
-    available_chars_here = [c for c in chars if c["id"] not in assigned_char_ids]
+    available_chars_here = [c for c in chars if get_prop(c, "id") not in assigned_char_ids]
 
     # Tropas no tienen ubicación suelta, pero si las hubiera, filtrar no asignadas
-    available_troops_here = [t for t in all_troops if t["id"] not in assigned_troop_ids]
+    available_troops_here = [t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids]
     
     # Determinar si hay contenido real para mostrar
     has_units = len(units) > 0
@@ -688,7 +772,7 @@ def _render_planet_node(
     location_index: dict,
     assigned_char_ids: Set[int],
     assigned_troop_ids: Set[int],
-    all_troops: List[dict],
+    all_troops: List[Any],
     is_priority: bool
 ):
     """Renderiza un nodo de planeta con órbita y sectores."""
@@ -732,12 +816,10 @@ def _render_planet_node(
     
     if has_content:
         header = f"🪐 {planet_name} | 👥({u_count}) - 🪐({surf_count}) - 🌌({space_count})"
-        # is_priority ayuda a decidir si arranca expandido, pero si tiene contenido lo mostramos
         should_expand = is_priority
         
         with st.expander(header, expanded=should_expand):
             if orbit_sector:
-                # Mostrar siempre la órbita si el planeta es visible
                 st.markdown('<div class="comando-section-header">🌌 Órbita</div>', unsafe_allow_html=True)
                 orbit_loc = {
                     "system_id": planet.get("system_id"),
@@ -759,7 +841,6 @@ def _render_planet_node(
                 )
 
             if surface_sectors:
-                # Filtrar sectores de superficie con contenido
                 visible_surface = []
                 for s in surface_sectors:
                     sid = s["id"]
@@ -770,7 +851,6 @@ def _render_planet_node(
                     st.markdown('<div class="comando-section-header">🌍 Superficie</div>', unsafe_allow_html=True)
                     for sector in visible_surface:
                         sector_id = sector["id"]
-                        # Fog of War Check para nombre del sector
                         sector_name = sector.get("sector_type", "Desconocido")
                         if not sector.get("is_discovered", False):
                             sector_name = f"Sector Desconocido [ID: {sector_id}]"
@@ -800,7 +880,7 @@ def _render_system_node(
     location_index: dict,
     assigned_char_ids: Set[int],
     assigned_troop_ids: Set[int],
-    all_troops: List[dict],
+    all_troops: List[Any],
     is_priority: bool
 ):
     """Renderiza un nodo de sistema con sectores estelares, anillos y planetas."""
@@ -851,7 +931,7 @@ def _render_system_node(
             if stellar_units:
                 st.markdown('<div class="comando-section-header">🌌 Sector Estelar</div>', unsafe_allow_html=True)
                 available_chars_space: List[dict] = []
-                available_troops_space = [t for t in all_troops if t["id"] not in assigned_troop_ids]
+                available_troops_space = [t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids]
                 for unit in stellar_units:
                     _render_unit_row(unit, player_id, is_space=True,
                                     available_chars=available_chars_space,
@@ -866,12 +946,11 @@ def _render_system_node(
                     for unit in ring_units:
                         _render_unit_row(unit, player_id, is_space=True,
                                         available_chars=[],
-                                        available_troops=[t for t in all_troops if t["id"] not in assigned_troop_ids])
+                                        available_troops=[t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids])
 
             # Planetas ordenados
             planets_sorted = sorted(planets, key=lambda p: p.get("orbital_ring", 1))
             for planet in planets_sorted:
-                # El nodo planeta hará su propia verificación de visibilidad
                 _render_planet_node(planet, player_id, location_index,
                                    assigned_char_ids, assigned_troop_ids, all_troops, is_priority)
 
@@ -879,8 +958,8 @@ def _render_system_node(
 def _render_starlanes_section(
     location_index: dict,
     player_id: int,
-    available_chars: List[dict],
-    available_troops: List[dict]
+    available_chars: List[Any],
+    available_troops: List[Any]
 ):
     """Renderiza sección de unidades en tránsito por starlanes."""
     units_in_transit = location_index.get("units_in_transit", [])
@@ -889,12 +968,12 @@ def _render_starlanes_section(
         return
 
     for unit in units_in_transit:
-        unit_id = unit["id"]
-        name = unit.get("name", "Unidad")
-        members = unit.get("members", [])
-        origin = unit.get("transit_origin_system_id", "?")
-        dest = unit.get("transit_destination_system_id", "?")
-        ticks = unit.get("transit_ticks_remaining", 0)
+        unit_id = get_prop(unit, "id")
+        name = get_prop(unit, "name", "Unidad")
+        members = get_prop(unit, "members", [])
+        origin = get_prop(unit, "transit_origin_system_id", "?")
+        dest = get_prop(unit, "transit_destination_system_id", "?")
+        ticks = get_prop(unit, "transit_ticks_remaining", 0)
 
         with st.expander(f"🌌 ✈️ **{name}** ({len(members)}/8) | Sistema {origin} → {dest} | {ticks} ticks", expanded=False):
             col1, col2 = st.columns([4, 1])
@@ -904,10 +983,14 @@ def _render_starlanes_section(
 
             if members:
                 st.caption("Composición:")
-                for m in sorted(members, key=lambda x: x.get("slot_index", 0)):
-                    etype = m.get("entity_type", "?")
-                    slot = m.get("slot_index", 0)
-                    member_name = m.get("name", "???")
+                # Fix V15.0: Sort seguro para Pydantic Models y Dicts
+                sorted_members = sorted(members, key=sort_key_by_prop("slot_index", 0))
+                
+                for m in sorted_members:
+                    # Fix V15.0: Acceso seguro
+                    etype = get_prop(m, "entity_type", "?")
+                    slot = get_prop(m, "slot_index", 0)
+                    member_name = get_prop(m, "name", "???")
                     icon_e = "👤" if etype == "character" else "🪖"
                     st.markdown(f"`[{slot}]` {icon_e} {member_name}")
 
@@ -934,10 +1017,12 @@ def render_comando_page():
         all_characters = get_all_player_characters(player_id)
         
         # FILTRO DE SEGURIDAD V11.4/11.5:
-        roster_characters = [c for c in all_characters if c.get("status_id") != CharacterStatus.CANDIDATE.value]
+        # Nota: get_prop se usa en objetos iterados, aquí all_characters suele ser lista de modelos o dicts.
+        # Asumimos que la lista en sí se puede iterar.
+        roster_characters = [c for c in all_characters if get_prop(c, "status_id") != CharacterStatus.CANDIDATE.value]
         
         # --- NUEVO: Flujo inicial de reclutamiento ---
-        non_commander_count = sum(1 for c in roster_characters if not c.get("es_comandante", False))
+        non_commander_count = sum(1 for c in roster_characters if not get_prop(c, "es_comandante", False))
         
         if non_commander_count == 0:
             st.info("La facción se está estableciendo. Necesitas personal para operar.")
@@ -958,12 +1043,10 @@ def render_comando_page():
                     success_count = 0
                     total_ops = len(recruitment_config)
 
-                    # Feedback visual y bloqueo con st.status
                     with st.status("Estableciendo cadena de mando...", expanded=True) as status:
                         for idx, (level, k_level, label) in enumerate(recruitment_config):
                             status.update(label=f"Reclutando {label} (Nivel {level}) - [{idx+1}/{total_ops}]...")
                             try:
-                                # recruit_character_with_ai usa el context interno para hallar la base
                                 recruit_character_with_ai(
                                     player_id=player_id, 
                                     min_level=level, 
@@ -978,7 +1061,7 @@ def render_comando_page():
                         
                         if success_count > 0:
                             status.update(label="¡Personal reunido! Iniciando sistemas...", state="complete", expanded=False)
-                            time.sleep(0.5) # Pausa estética breve
+                            time.sleep(0.5) 
                             st.rerun()
                         else:
                             status.update(label="Fallo crítico en el reclutamiento.", state="error")
@@ -991,8 +1074,8 @@ def render_comando_page():
         systems = get_all_systems_from_db()
 
         # Mapas de nombres para hidratación
-        char_map: Dict[int, str] = {c["id"]: c.get("nombre", f"Personaje {c['id']}") for c in all_characters}
-        troop_map: Dict[int, str] = {t["id"]: t.get("name", f"Tropa {t['id']}") for t in troops}
+        char_map: Dict[int, str] = {get_prop(c, "id"): get_prop(c, "nombre", f"Personaje {get_prop(c, 'id')}") for c in all_characters}
+        troop_map: Dict[int, str] = {get_prop(t, "id"): get_prop(t, "name", f"Tropa {get_prop(t, 'id')}") for t in troops}
 
         # Hidratar nombres de miembros
         units = _hydrate_unit_members(units, char_map, troop_map)
@@ -1007,7 +1090,7 @@ def render_comando_page():
         systems_with_presence = _get_systems_with_presence(location_index, roster_characters, assigned_chars)
 
     # Estadísticas rápidas
-    roster_loose_chars = len(roster_characters) - len([cid for cid in assigned_chars if any(c["id"] == cid for c in roster_characters)])
+    roster_loose_chars = len(roster_characters) - len([cid for cid in assigned_chars if any(get_prop(c, "id") == cid for c in roster_characters)])
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -1017,7 +1100,7 @@ def render_comando_page():
     with col3:
         st.metric("En Tránsito", len(location_index["units_in_transit"]))
 
-    # V14.1: Centro de Alertas Tácticas (Detección de contactos enemigos)
+    # V14.1: Centro de Alertas Tácticas
     if units:
         with st.expander("📡 Centro de Alertas Tácticas", expanded=False):
             render_tactical_alert_center(player_id, units, show_header=False)
