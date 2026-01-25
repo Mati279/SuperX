@@ -3,6 +3,7 @@
 Control de Movimiento - Vista para gestionar el movimiento de unidades.
 V10.1: Implementación inicial con opciones dinámicas según ubicación.
 V12.0: Adaptación para uso en componente/diálogo (eliminación de navegación de página).
+V12.1: Reorganización de UI - Botones de acción movidos arriba de los selectores e iconografía actualizada.
 
 Flujo:
 1. El jugador selecciona una unidad desde faction_roster (botón 🚀)
@@ -181,9 +182,10 @@ def _get_location_display(unit: UnitSchema) -> Dict[str, str]:
 
 def _render_unit_info(unit: UnitSchema, location_info: Dict[str, str]):
     """Renderiza información de la unidad seleccionada."""
+    # Modificado V12.1: Icono cambiado de 🎖️ a 👥
     st.markdown(f"""
     <div class="movement-header">
-        <h4 style="margin:0">🎖️ {unit.name}</h4>
+        <h4 style="margin:0">👥 {unit.name}</h4>
         <div style="margin-top:5px">
             <span class="location-badge {location_info['status_class']}">{location_info['status_text']}</span>
         </div>
@@ -271,6 +273,10 @@ def _render_surface_options(
 
     with tab1:
         st.markdown(f"**🌍 Mover a otro Sector de {planet_name}**")
+        
+        # Contenedor para acciones (arriba)
+        action_container = st.container()
+
         if surface_sectors:
             # V10.2: Fog of War - Enmascarar sectores no descubiertos
             sector_options = {}
@@ -289,34 +295,43 @@ def _render_surface_options(
 
             if selected_sector:
                 estimate = estimate_travel_time(system_id, system_id, orbital_ring, orbital_ring)
-                _render_cost_display(estimate)
-
-                if st.button("Mover a Sector", type="primary", key="btn_move_sector", use_container_width=True):
-                    selected_dest = DestinationData(
-                        system_id=system_id,
-                        planet_id=planet_id,
-                        sector_id=selected_sector,
-                        ring=orbital_ring
-                    )
-                    selected_type = MovementType.SECTOR_SURFACE
+                
+                # Renderizar acciones en el contenedor superior
+                with action_container:
+                    _render_cost_display(estimate)
+                    if st.button("Mover a Sector", type="primary", key="btn_move_sector", use_container_width=True):
+                        selected_dest = DestinationData(
+                            system_id=system_id,
+                            planet_id=planet_id,
+                            sector_id=selected_sector,
+                            ring=orbital_ring
+                        )
+                        selected_type = MovementType.SECTOR_SURFACE
         else:
             st.info("No hay otros sectores disponibles en este planeta.")
 
     with tab2:
         st.markdown(f"**🚀 Ascender a Órbita de {planet_name}**")
+        
+        # Contenedor para acciones (arriba)
+        action_container = st.container()
+        
         if orbit_sector:
             st.caption("Salida de atmósfera hacia espacio orbital.")
             estimate = estimate_travel_time(system_id, system_id, orbital_ring, orbital_ring)
-            _render_cost_display(estimate)
+            
+            # Renderizar acciones en el contenedor superior
+            with action_container:
+                _render_cost_display(estimate)
 
-            if st.button("Ascender a Órbita", type="primary", key="btn_ascend_orbit", use_container_width=True):
-                selected_dest = DestinationData(
-                    system_id=system_id,
-                    planet_id=planet_id,
-                    sector_id=orbit_sector['id'],
-                    ring=orbital_ring
-                )
-                selected_type = MovementType.SURFACE_ORBIT
+                if st.button("Ascender a Órbita", type="primary", key="btn_ascend_orbit", use_container_width=True):
+                    selected_dest = DestinationData(
+                        system_id=system_id,
+                        planet_id=planet_id,
+                        sector_id=orbit_sector['id'],
+                        ring=orbital_ring
+                    )
+                    selected_type = MovementType.SURFACE_ORBIT
         else:
             st.warning("Este planeta no tiene sector orbital definido.")
 
@@ -361,6 +376,10 @@ def _render_orbit_options(
 
     with tab1:
         st.markdown(f"**🌍 Descender a Superficie de {planet_name}**")
+        
+        # Contenedor acciones
+        action_container = st.container()
+        
         if surface_sectors:
             # V10.2: Fog of War - Enmascarar sectores no descubiertos
             sector_options = {}
@@ -379,21 +398,27 @@ def _render_orbit_options(
 
             if selected_sector:
                 estimate = estimate_travel_time(system_id, system_id, orbital_ring, orbital_ring)
-                _render_cost_display(estimate)
+                
+                with action_container:
+                    _render_cost_display(estimate)
 
-                if st.button("Descender", type="primary", key="btn_descend", use_container_width=True):
-                    selected_dest = DestinationData(
-                        system_id=system_id,
-                        planet_id=planet_id,
-                        sector_id=selected_sector,
-                        ring=orbital_ring
-                    )
-                    selected_type = MovementType.SURFACE_ORBIT
+                    if st.button("Descender", type="primary", key="btn_descend", use_container_width=True):
+                        selected_dest = DestinationData(
+                            system_id=system_id,
+                            planet_id=planet_id,
+                            sector_id=selected_sector,
+                            ring=orbital_ring
+                        )
+                        selected_type = MovementType.SURFACE_ORBIT
         else:
             st.info("No hay sectores de superficie en este planeta.")
 
     with tab2:
         st.markdown("**🔄 Mover a otro Anillo**")
+        
+        # Contenedor acciones
+        action_container = st.container()
+
         ring_options = list(range(RING_STELLAR, RING_MAX + 1))
         ring_options.remove(current_ring) if current_ring in ring_options else None
 
@@ -410,19 +435,25 @@ def _render_orbit_options(
 
         if selected_ring is not None:
             estimate = estimate_travel_time(system_id, system_id, current_ring, selected_ring)
-            _render_cost_display(estimate)
+            
+            with action_container:
+                _render_cost_display(estimate)
 
-            if st.button("Mover a Anillo", type="primary", key="btn_ring", use_container_width=True):
-                selected_dest = DestinationData(
-                    system_id=system_id,
-                    planet_id=None,  # Ya no está en el planeta
-                    sector_id=None,
-                    ring=selected_ring
-                )
-                selected_type = MovementType.INTER_RING
+                if st.button("Mover a Anillo", type="primary", key="btn_ring", use_container_width=True):
+                    selected_dest = DestinationData(
+                        system_id=system_id,
+                        planet_id=None,  # Ya no está en el planeta
+                        sector_id=None,
+                        ring=selected_ring
+                    )
+                    selected_type = MovementType.INTER_RING
 
     with tab3:
         st.markdown("**🛤️ Usar Starlane**")
+        
+        # Contenedor acciones
+        action_container = st.container()
+
         if starlanes:
             lane_options = {}
             for lane in starlanes:
@@ -439,21 +470,27 @@ def _render_orbit_options(
 
             if selected_lane_dest:
                 estimate = estimate_travel_time(system_id, selected_lane_dest, current_ring, 0)
-                _render_cost_display(estimate)
+                
+                with action_container:
+                    _render_cost_display(estimate)
 
-                if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane", use_container_width=True):
-                    selected_dest = DestinationData(
-                        system_id=selected_lane_dest,
-                        planet_id=None,
-                        sector_id=None,
-                        ring=0  # Llega al sector estelar
-                    )
-                    selected_type = MovementType.STARLANE
+                    if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane", use_container_width=True):
+                        selected_dest = DestinationData(
+                            system_id=selected_lane_dest,
+                            planet_id=None,
+                            sector_id=None,
+                            ring=0  # Llega al sector estelar
+                        )
+                        selected_type = MovementType.STARLANE
         else:
             st.info("No hay Starlanes conectadas a este sistema.")
 
     with tab4:
         st.markdown("**⚡ Salto WARP**")
+        
+        # Contenedor acciones
+        action_container = st.container()
+
         st.warning("WARP desde órbita tiene penalización de energía x2")
 
         all_systems = get_all_systems_from_db()
@@ -475,16 +512,18 @@ def _render_orbit_options(
                     dest_ring=0,
                     ship_count=unit.ship_count
                 )
-                _render_cost_display(estimate, unit.ship_count)
+                
+                with action_container:
+                    _render_cost_display(estimate, unit.ship_count)
 
-                if st.button("Iniciar Salto WARP", type="primary", key="btn_warp", use_container_width=True):
-                    selected_dest = DestinationData(
-                        system_id=selected_warp_dest,
-                        planet_id=None,
-                        sector_id=None,
-                        ring=0
-                    )
-                    selected_type = MovementType.WARP
+                    if st.button("Iniciar Salto WARP", type="primary", key="btn_warp", use_container_width=True):
+                        selected_dest = DestinationData(
+                            system_id=selected_warp_dest,
+                            planet_id=None,
+                            sector_id=None,
+                            ring=0
+                        )
+                        selected_type = MovementType.WARP
         else:
             st.info("No hay otros sistemas disponibles.")
 
@@ -523,6 +562,10 @@ def _render_ring_options(
 
     with tab1:
         st.markdown("**🪐 Entrar en Órbita de Planeta**")
+        
+        # Contenedor acciones
+        action_container = st.container()
+
         if planets_in_ring:
             planet_options = {p['id']: p.get('name', f"Planeta {p['id']}") for p in planets_in_ring}
             selected_planet = st.selectbox(
@@ -538,24 +581,30 @@ def _render_ring_options(
                 orbit_sector = next((s for s in sectors if s.get('sector_type') == 'Orbital'), None)
 
                 estimate = estimate_travel_time(system_id, system_id, current_ring, current_ring)
-                _render_cost_display(estimate)
+                
+                with action_container:
+                    _render_cost_display(estimate)
 
-                if orbit_sector:
-                    if st.button("Entrar en Órbita", type="primary", key="btn_enter_orbit", use_container_width=True):
-                        selected_dest = DestinationData(
-                            system_id=system_id,
-                            planet_id=selected_planet,
-                            sector_id=orbit_sector['id'],
-                            ring=current_ring
-                        )
-                        selected_type = MovementType.INTER_RING
-                else:
-                    st.warning("El planeta no tiene sector orbital definido.")
+                    if orbit_sector:
+                        if st.button("Entrar en Órbita", type="primary", key="btn_enter_orbit", use_container_width=True):
+                            selected_dest = DestinationData(
+                                system_id=system_id,
+                                planet_id=selected_planet,
+                                sector_id=orbit_sector['id'],
+                                ring=current_ring
+                            )
+                            selected_type = MovementType.INTER_RING
+                    else:
+                        st.warning("El planeta no tiene sector orbital definido.")
         else:
             st.info(f"No hay planetas en el Anillo {current_ring}.")
 
     with tab2:
         st.markdown("**🔄 Mover a otro Anillo/Sector Estelar**")
+        
+        # Contenedor acciones
+        action_container = st.container()
+
         ring_options = list(range(RING_STELLAR, RING_MAX + 1))
 
         ring_labels = {0: "Sector Estelar (Ring 0)"}
@@ -571,19 +620,25 @@ def _render_ring_options(
 
         if selected_ring is not None:
             estimate = estimate_travel_time(system_id, system_id, current_ring, selected_ring)
-            _render_cost_display(estimate)
+            
+            with action_container:
+                _render_cost_display(estimate)
 
-            if st.button("Mover a Anillo", type="primary", key="btn_ring_space", use_container_width=True):
-                selected_dest = DestinationData(
-                    system_id=system_id,
-                    planet_id=None,
-                    sector_id=None,
-                    ring=selected_ring
-                )
-                selected_type = MovementType.INTER_RING
+                if st.button("Mover a Anillo", type="primary", key="btn_ring_space", use_container_width=True):
+                    selected_dest = DestinationData(
+                        system_id=system_id,
+                        planet_id=None,
+                        sector_id=None,
+                        ring=selected_ring
+                    )
+                    selected_type = MovementType.INTER_RING
 
     with tab3:
         st.markdown("**🛤️ Usar Starlane**")
+        
+        # Contenedor acciones
+        action_container = st.container()
+
         if starlanes:
             lane_options = {}
             for lane in starlanes:
@@ -600,21 +655,27 @@ def _render_ring_options(
 
             if selected_lane_dest:
                 estimate = estimate_travel_time(system_id, selected_lane_dest, current_ring, 0)
-                _render_cost_display(estimate)
+                
+                with action_container:
+                    _render_cost_display(estimate)
 
-                if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane_space", use_container_width=True):
-                    selected_dest = DestinationData(
-                        system_id=selected_lane_dest,
-                        planet_id=None,
-                        sector_id=None,
-                        ring=0
-                    )
-                    selected_type = MovementType.STARLANE
+                    if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane_space", use_container_width=True):
+                        selected_dest = DestinationData(
+                            system_id=selected_lane_dest,
+                            planet_id=None,
+                            sector_id=None,
+                            ring=0
+                        )
+                        selected_type = MovementType.STARLANE
         else:
             st.info("No hay Starlanes conectadas a este sistema.")
 
     with tab4:
         st.markdown("**⚡ Salto WARP**")
+        
+        # Contenedor acciones
+        action_container = st.container()
+
         if current_ring > 0:
             st.warning("WARP desde un anillo planetario tiene penalización de energía x2")
 
@@ -637,16 +698,18 @@ def _render_ring_options(
                     dest_ring=0,
                     ship_count=unit.ship_count
                 )
-                _render_cost_display(estimate, unit.ship_count)
+                
+                with action_container:
+                    _render_cost_display(estimate, unit.ship_count)
 
-                if st.button("Iniciar Salto WARP", type="primary", key="btn_warp_space", use_container_width=True):
-                    selected_dest = DestinationData(
-                        system_id=selected_warp_dest,
-                        planet_id=None,
-                        sector_id=None,
-                        ring=0
-                    )
-                    selected_type = MovementType.WARP
+                    if st.button("Iniciar Salto WARP", type="primary", key="btn_warp_space", use_container_width=True):
+                        selected_dest = DestinationData(
+                            system_id=selected_warp_dest,
+                            planet_id=None,
+                            sector_id=None,
+                            ring=0
+                        )
+                        selected_type = MovementType.WARP
         else:
             st.info("No hay otros sistemas disponibles.")
 
@@ -680,6 +743,10 @@ def _render_stellar_options(
 
     with tab1:
         st.markdown("**🔄 Mover a Anillo Interior**")
+        
+        # Contenedor acciones
+        action_container = st.container()
+
         ring_options = list(range(RING_MIN, RING_MAX + 1))
 
         ring_labels = {}
@@ -695,19 +762,25 @@ def _render_stellar_options(
 
         if selected_ring is not None:
             estimate = estimate_travel_time(system_id, system_id, current_ring, selected_ring)
-            _render_cost_display(estimate)
+            
+            with action_container:
+                _render_cost_display(estimate)
 
-            if st.button("Mover a Anillo", type="primary", key="btn_ring_stellar", use_container_width=True):
-                selected_dest = DestinationData(
-                    system_id=system_id,
-                    planet_id=None,
-                    sector_id=None,
-                    ring=selected_ring
-                )
-                selected_type = MovementType.INTER_RING
+                if st.button("Mover a Anillo", type="primary", key="btn_ring_stellar", use_container_width=True):
+                    selected_dest = DestinationData(
+                        system_id=system_id,
+                        planet_id=None,
+                        sector_id=None,
+                        ring=selected_ring
+                    )
+                    selected_type = MovementType.INTER_RING
 
     with tab2:
         st.markdown("**🛤️ Usar Starlane**")
+        
+        # Contenedor acciones
+        action_container = st.container()
+
         if starlanes:
             lane_options = {}
             for lane in starlanes:
@@ -724,22 +797,27 @@ def _render_stellar_options(
 
             if selected_lane_dest:
                 estimate = estimate_travel_time(system_id, selected_lane_dest, current_ring, 0)
-                _render_cost_display(estimate)
+                
+                with action_container:
+                    _render_cost_display(estimate)
 
-                if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane_stellar", use_container_width=True):
-                    selected_dest = DestinationData(
-                        system_id=selected_lane_dest,
-                        planet_id=None,
-                        sector_id=None,
-                        ring=0
-                    )
-                    selected_type = MovementType.STARLANE
+                    if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane_stellar", use_container_width=True):
+                        selected_dest = DestinationData(
+                            system_id=selected_lane_dest,
+                            planet_id=None,
+                            sector_id=None,
+                            ring=0
+                        )
+                        selected_type = MovementType.STARLANE
         else:
             st.info("No hay Starlanes conectadas a este sistema.")
 
     with tab3:
         st.markdown("**⚡ Salto WARP**")
         st.success("WARP desde el Sector Estelar: Costo de energía normal (sin penalización)")
+        
+        # Contenedor acciones
+        action_container = st.container()
 
         all_systems = get_all_systems_from_db()
         other_systems = [s for s in all_systems if s['id'] != system_id]
@@ -760,16 +838,18 @@ def _render_stellar_options(
                     dest_ring=0,
                     ship_count=unit.ship_count
                 )
-                _render_cost_display(estimate, unit.ship_count)
+                
+                with action_container:
+                    _render_cost_display(estimate, unit.ship_count)
 
-                if st.button("Iniciar Salto WARP", type="primary", key="btn_warp_stellar", use_container_width=True):
-                    selected_dest = DestinationData(
-                        system_id=selected_warp_dest,
-                        planet_id=None,
-                        sector_id=None,
-                        ring=0
-                    )
-                    selected_type = MovementType.WARP
+                    if st.button("Iniciar Salto WARP", type="primary", key="btn_warp_stellar", use_container_width=True):
+                        selected_dest = DestinationData(
+                            system_id=selected_warp_dest,
+                            planet_id=None,
+                            sector_id=None,
+                            ring=0
+                        )
+                        selected_type = MovementType.WARP
         else:
             st.info("No hay otros sistemas disponibles.")
 
