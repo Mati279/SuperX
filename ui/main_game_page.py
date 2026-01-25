@@ -70,7 +70,7 @@ def render_main_game_page(cookie_manager):
     # --- 3. Renderizar la página seleccionada ---
     PAGES = {
         "Puente de Mando": _render_war_room_page,
-        "Cuadrilla": render_faction_roster,
+        "Comando": render_faction_roster,
         "Centro de Reclutamiento": show_recruitment_center,
         "Mapa de la Galaxia": show_galaxy_map_page,
         "Flota": show_ship_status_page,
@@ -415,8 +415,8 @@ def _render_navigation_sidebar(player, commander, cookie_manager):
 
         st.divider()
         
-        pages = ["Puente de Mando", "Mapa de la Galaxia", 
-                 "Cuadrilla", "Centro de Reclutamiento", "Flota"]
+        pages = ["Puente de Mando", "Mapa de la Galaxia",
+                 "Comando", "Centro de Reclutamiento", "Flota"]
         
         for p in pages:
             if st.button(p, use_container_width=True, type="primary" if st.session_state.current_page == p else "secondary"):

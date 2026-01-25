@@ -1,7 +1,7 @@
 # ui/faction_roster.py
 """
 Comando - Vista jerárquica de personajes, tropas y unidades organizados por ubicación.
-V11.0: Rework completo con estructura colapsable Sistema -> Planeta -> Sector.
+V11.1: Hidratación de nombres, filtrado de sistemas, UI compacta, gestión mejorada.
 """
 
 import streamlit as st
@@ -16,6 +16,7 @@ from data.unit_repository import (
     get_troops_by_player,
     create_unit,
     add_unit_member,
+    remove_unit_member,
     rename_unit,
     delete_unit,
 )
@@ -55,6 +56,9 @@ def _inject_compact_css():
         padding: 4px 10px;
         margin: 4px 0;
         font-weight: 500;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
     }
     .comando-section-header {
         font-size: 0.85em;
@@ -95,37 +99,47 @@ def create_unit_dialog(
     available_troops: List[dict],
     is_orbit: bool = False
 ):
-    """Dialog para crear una nueva unidad."""
+    """Dialog para crear una nueva unidad con estado limpio."""
     st.subheader("Formar Nueva Unidad")
 
     if is_orbit:
         st.info("En órbita puedes embarcar personal de superficie.")
 
-    unit_name = st.text_input("Nombre de la Unidad", value="Escuadrón Alfa")
+    # Usar keys únicas basadas en sector para evitar estado persistente
+    key_prefix = f"create_{sector_id}"
+
+    unit_name = st.text_input(
+        "Nombre de la Unidad",
+        value="Escuadrón Alfa",
+        key=f"{key_prefix}_name"
+    )
 
     st.markdown("**Seleccionar Miembros** (Máx 8, Mín 1 Personaje)")
 
-    # Personajes
+    # Personajes disponibles (ya filtrados, no asignados)
     char_options = {c["id"]: f"👤 {c.get('nombre', 'Sin nombre')} (Nvl {c.get('level', 1)})" for c in available_chars}
-    selected_char_ids = st.multiselect(
+    selected_char_ids: List[int] = st.multiselect(
         "Personajes (Líder obligatorio)",
         options=list(char_options.keys()),
         format_func=lambda x: char_options.get(x, str(x)),
-        max_selections=8
+        max_selections=8,
+        key=f"{key_prefix}_chars"
     )
 
     remaining_slots = 8 - len(selected_char_ids)
 
-    # Tropas
+    # Tropas disponibles (ya filtradas, no asignadas)
     troop_options = {t["id"]: f"🪖 {t.get('name', 'Tropa')} ({t.get('type', 'INF')})" for t in available_troops}
-    selected_troop_ids = st.multiselect(
+    selected_troop_ids: List[int] = st.multiselect(
         "Tropas",
         options=list(troop_options.keys()),
         format_func=lambda x: troop_options.get(x, str(x)),
-        max_selections=remaining_slots,
-        disabled=remaining_slots <= 0
+        max_selections=max(0, remaining_slots),
+        disabled=remaining_slots <= 0,
+        key=f"{key_prefix}_troops"
     )
 
+    # Métricas reactivas
     total = len(selected_char_ids) + len(selected_troop_ids)
     has_leader = len(selected_char_ids) >= 1
 
@@ -141,7 +155,7 @@ def create_unit_dialog(
     if total > 8:
         st.error("Máximo 8 miembros por unidad.")
 
-    can_create = has_leader and total <= 8 and total > 0 and unit_name.strip()
+    can_create = has_leader and 0 < total <= 8 and unit_name.strip()
 
     if st.button("Crear Unidad", type="primary", disabled=not can_create, use_container_width=True):
         new_unit = create_unit(player_id, unit_name.strip(), location_data)
@@ -160,42 +174,104 @@ def create_unit_dialog(
             st.error("Error al crear unidad.")
 
 
-@st.dialog("Gestionar Unidad", width="small")
-def manage_unit_dialog(unit: dict, player_id: int):
-    """Dialog para renombrar o disolver unidad."""
+@st.dialog("Gestionar Unidad", width="large")
+def manage_unit_dialog(
+    unit: dict,
+    player_id: int,
+    available_chars: List[dict],
+    available_troops: List[dict]
+):
+    """Dialog para renombrar, disolver o añadir miembros a una unidad."""
     unit_id = unit["id"]
     current_name = unit.get("name", "Unidad")
+    members = unit.get("members", [])
+    current_count = len(members)
 
     st.subheader(f"Gestionar: {current_name}")
 
-    # Renombrar
-    new_name = st.text_input("Nuevo nombre", value=current_name)
-    if st.button("Renombrar", use_container_width=True, disabled=not new_name.strip() or new_name == current_name):
-        if rename_unit(unit_id, new_name.strip(), player_id):
-            st.success("Nombre actualizado.")
-            st.rerun()
-        else:
-            st.error("Error al renombrar.")
+    # --- TAB 1: RENOMBRAR ---
+    tab_rename, tab_add, tab_dissolve = st.tabs(["Renombrar", "Añadir Miembros", "Disolver"])
 
-    st.divider()
+    with tab_rename:
+        new_name = st.text_input("Nuevo nombre", value=current_name, key=f"rename_{unit_id}")
+        if st.button(
+            "Renombrar",
+            use_container_width=True,
+            disabled=not new_name.strip() or new_name == current_name,
+            key=f"btn_rename_{unit_id}"
+        ):
+            if rename_unit(unit_id, new_name.strip(), player_id):
+                st.success("Nombre actualizado.")
+                st.rerun()
+            else:
+                st.error("Error al renombrar.")
 
-    # Disolver
-    st.markdown("**Disolver Unidad**")
-    st.caption("Los miembros quedarán sueltos en la ubicación actual.")
-    if st.button("Disolver Unidad", type="secondary", use_container_width=True):
-        if delete_unit(unit_id, player_id):
-            st.success("Unidad disuelta.")
-            st.rerun()
+    # --- TAB 2: AÑADIR MIEMBROS ---
+    with tab_add:
+        slots_available = 8 - current_count
+        st.caption(f"Slots disponibles: {slots_available}")
+
+        if slots_available <= 0:
+            st.warning("La unidad está llena (8/8).")
         else:
-            st.error("Error al disolver.")
+            # Personajes disponibles en la ubicación
+            char_opts = {c["id"]: f"👤 {c.get('nombre', '?')} (Nvl {c.get('level', 1)})" for c in available_chars}
+            add_chars: List[int] = st.multiselect(
+                "Añadir Personajes",
+                options=list(char_opts.keys()),
+                format_func=lambda x: char_opts.get(x, str(x)),
+                max_selections=slots_available,
+                key=f"add_chars_{unit_id}"
+            )
+
+            remaining = slots_available - len(add_chars)
+
+            troop_opts = {t["id"]: f"🪖 {t.get('name', '?')} ({t.get('type', 'INF')})" for t in available_troops}
+            add_troops: List[int] = st.multiselect(
+                "Añadir Tropas",
+                options=list(troop_opts.keys()),
+                format_func=lambda x: troop_opts.get(x, str(x)),
+                max_selections=max(0, remaining),
+                disabled=remaining <= 0,
+                key=f"add_troops_{unit_id}"
+            )
+
+            total_to_add = len(add_chars) + len(add_troops)
+            if total_to_add > 0:
+                if st.button(
+                    f"Añadir {total_to_add} miembro(s)",
+                    type="primary",
+                    use_container_width=True,
+                    key=f"btn_add_{unit_id}"
+                ):
+                    slot = current_count
+                    for cid in add_chars:
+                        add_unit_member(unit_id, "character", cid, slot)
+                        slot += 1
+                    for tid in add_troops:
+                        add_unit_member(unit_id, "troop", tid, slot)
+                        slot += 1
+                    st.success(f"{total_to_add} miembro(s) añadido(s).")
+                    st.rerun()
+
+    # --- TAB 3: DISOLVER ---
+    with tab_dissolve:
+        st.markdown("**Disolver Unidad**")
+        st.caption("Los miembros quedarán sueltos en la ubicación actual.")
+        if st.button("Disolver Unidad", type="secondary", use_container_width=True, key=f"btn_dissolve_{unit_id}"):
+            if delete_unit(unit_id, player_id):
+                st.success("Unidad disuelta.")
+                st.rerun()
+            else:
+                st.error("Error al disolver.")
 
 
 # --- HELPERS DE DATOS ---
 
 def _get_assigned_entity_ids(units: List[dict]) -> Tuple[Set[int], Set[int]]:
     """Retorna sets de IDs de characters y troops asignados a unidades."""
-    assigned_chars = set()
-    assigned_troops = set()
+    assigned_chars: Set[int] = set()
+    assigned_troops: Set[int] = set()
     for unit in units:
         for member in unit.get("members", []):
             etype = member.get("entity_type")
@@ -207,15 +283,57 @@ def _get_assigned_entity_ids(units: List[dict]) -> Tuple[Set[int], Set[int]]:
     return assigned_chars, assigned_troops
 
 
-def _get_player_system_ids(player_id: int) -> Set[int]:
-    """Obtiene IDs de sistemas donde el jugador tiene assets."""
-    assets = get_all_player_planets(player_id)
-    system_ids = set()
-    for asset in assets:
-        planet_data = asset.get("planets", {})
-        sys_id = planet_data.get("system_id") or asset.get("system_id")
-        if sys_id:
+def _hydrate_unit_members(
+    units: List[dict],
+    char_map: Dict[int, str],
+    troop_map: Dict[int, str]
+) -> List[dict]:
+    """Inyecta nombres reales en los miembros de cada unidad."""
+    for unit in units:
+        for member in unit.get("members", []):
+            eid = member.get("entity_id")
+            etype = member.get("entity_type")
+            if etype == "character":
+                member["name"] = char_map.get(eid, f"Personaje {eid}")
+            elif etype == "troop":
+                member["name"] = troop_map.get(eid, f"Tropa {eid}")
+    return units
+
+
+def _get_systems_with_presence(
+    location_index: dict,
+    characters: List[dict],
+    assigned_char_ids: Set[int]
+) -> Set[int]:
+    """Obtiene IDs de sistemas donde hay presencia del jugador."""
+    system_ids: Set[int] = set()
+
+    # Desde unidades por sector
+    for sector_id, unit_list in location_index["units_by_sector"].items():
+        for u in unit_list:
+            sid = u.get("location_system_id")
+            if sid:
+                system_ids.add(sid)
+
+    # Desde unidades por ring
+    for (sys_id, ring), unit_list in location_index["units_by_system_ring"].items():
+        if unit_list:
             system_ids.add(sys_id)
+
+    # Desde personajes sueltos
+    for char in characters:
+        if char["id"] not in assigned_char_ids:
+            sys_id = char.get("location_system_id")
+            if sys_id:
+                system_ids.add(sys_id)
+
+    # Desde chars_by_sector (inferir sistema desde planeta)
+    for sector_id, char_list in location_index["chars_by_sector"].items():
+        for c in char_list:
+            sys_id = c.get("location_system_id")
+            if sys_id:
+                system_ids.add(sys_id)
+
     return system_ids
 
 
@@ -243,9 +361,7 @@ def _build_location_index(
             continue
         sector_id = char.get("location_sector_id")
         if sector_id:
-            if sector_id not in chars_by_sector:
-                chars_by_sector[sector_id] = []
-            chars_by_sector[sector_id].append(char)
+            chars_by_sector.setdefault(sector_id, []).append(char)
 
     # Unidades por ubicación
     for unit in units:
@@ -256,18 +372,13 @@ def _build_location_index(
 
         sector_id = unit.get("location_sector_id")
         if sector_id:
-            if sector_id not in units_by_sector:
-                units_by_sector[sector_id] = []
-            units_by_sector[sector_id].append(unit)
+            units_by_sector.setdefault(sector_id, []).append(unit)
         else:
-            # Unidad en espacio (ring sin planeta)
             system_id = unit.get("location_system_id")
             ring = unit.get("ring", 0)
             if system_id:
                 key = (system_id, ring)
-                if key not in units_by_system_ring:
-                    units_by_system_ring[key] = []
-                units_by_system_ring[key].append(unit)
+                units_by_system_ring.setdefault(key, []).append(unit)
 
     return {
         "chars_by_sector": chars_by_sector,
@@ -311,8 +422,14 @@ def _render_character_row(char: dict, player_id: int, is_space: bool):
             view_character_dialog(char, player_id)
 
 
-def _render_unit_row(unit: dict, player_id: int, is_space: bool):
-    """Renderiza fila de unidad con expander para miembros."""
+def _render_unit_row(
+    unit: dict,
+    player_id: int,
+    is_space: bool,
+    available_chars: List[dict],
+    available_troops: List[dict]
+):
+    """Renderiza unidad con header expandible: nombre + botón gestión en misma fila."""
     unit_id = unit["id"]
     name = unit.get("name", "Unidad")
     members = unit.get("members", [])
@@ -321,27 +438,28 @@ def _render_unit_row(unit: dict, player_id: int, is_space: bool):
     icon = "🌌" if is_space else "🌍"
     status_emoji = {"GROUND": "🏕️", "SPACE": "🚀", "TRANSIT": "✈️"}.get(status, "❓")
 
-    with st.container():
-        st.markdown(f'<div class="comando-unit-header">{icon} 🎖️ <strong>{name}</strong> ({len(members)}/8) {status_emoji}</div>', unsafe_allow_html=True)
-
-        col1, col2 = st.columns([5, 1])
-        with col2:
+    # Header compacto con expander
+    with st.expander(f"{icon} 🎖️ **{name}** ({len(members)}/8) {status_emoji}", expanded=False):
+        # Botón gestión en la parte superior del contenido expandido
+        col_info, col_btn = st.columns([4, 1])
+        with col_btn:
             if st.button("⚙️", key=f"manage_unit_{unit_id}", help="Gestionar unidad"):
-                manage_unit_dialog(unit, player_id)
+                manage_unit_dialog(unit, player_id, available_chars, available_troops)
 
+        # Lista de miembros
         if members:
-            with st.expander(f"Miembros ({len(members)})", expanded=False):
-                for m in sorted(members, key=lambda x: x.get("slot_index", 0)):
-                    etype = m.get("entity_type", "?")
-                    eid = m.get("entity_id")
-                    slot = m.get("slot_index", 0)
+            st.caption("Composición:")
+            for m in sorted(members, key=lambda x: x.get("slot_index", 0)):
+                etype = m.get("entity_type", "?")
+                slot = m.get("slot_index", 0)
+                member_name = m.get("name", "???")
 
-                    if etype == "character":
-                        member_name = m.get("name", f"Personaje #{eid}")
-                        st.markdown(f"`[{slot}]` 👤 {member_name}")
-                    else:
-                        member_name = m.get("name", f"Tropa #{eid}")
-                        st.markdown(f"`[{slot}]` 🪖 {member_name}")
+                if etype == "character":
+                    st.markdown(f"`[{slot}]` 👤 {member_name}")
+                else:
+                    st.markdown(f"`[{slot}]` 🪖 {member_name}")
+        else:
+            st.caption("Sin miembros asignados.")
 
 
 def _render_create_unit_button(
@@ -353,13 +471,9 @@ def _render_create_unit_button(
     is_orbit: bool = False
 ):
     """Renderiza botón para crear unidad si hay entidades disponibles."""
-    total_available = len(available_chars) + len(available_troops)
-
-    if total_available == 0:
-        return
-
     if not available_chars:
-        st.caption("Se requiere al menos 1 personaje para formar unidad.")
+        if available_troops:
+            st.caption("Se requiere al menos 1 personaje para formar unidad.")
         return
 
     if st.button("👥 Crear Unidad", key=f"create_unit_{sector_id}", help="Formar nueva unidad"):
@@ -380,6 +494,9 @@ def _render_sector_content(
     location_data: Dict[str, Any],
     location_index: dict,
     is_space: bool,
+    assigned_char_ids: Set[int],
+    assigned_troop_ids: Set[int],
+    all_troops: List[dict],
     planet_id: Optional[int] = None,
     all_planet_sector_ids: Optional[Set[int]] = None
 ):
@@ -387,29 +504,34 @@ def _render_sector_content(
     units = location_index["units_by_sector"].get(sector_id, [])
     chars = location_index["chars_by_sector"].get(sector_id, [])
 
-    # Para órbita: incluir entidades de superficie
-    orbit_chars = []
-
+    # Para órbita: incluir entidades de superficie para crear unidad
+    orbit_chars: List[dict] = []
     if is_space and all_planet_sector_ids:
         for sid in all_planet_sector_ids:
             orbit_chars.extend(location_index["chars_by_sector"].get(sid, []))
 
+    # Personajes disponibles (no asignados a unidad)
+    available_chars_here = [c for c in (chars + orbit_chars if is_space else chars)
+                           if c["id"] not in assigned_char_ids]
+
+    # Tropas no tienen ubicación suelta, pero si las hubiera, filtrar no asignadas
+    available_troops_here = [t for t in all_troops if t["id"] not in assigned_troop_ids]
+
     # Renderizar unidades primero
     for unit in units:
-        _render_unit_row(unit, player_id, is_space)
+        _render_unit_row(unit, player_id, is_space, available_chars_here, available_troops_here)
 
     # Renderizar personajes sueltos
     for char in chars:
         _render_character_row(char, player_id, is_space)
 
-    # Botón crear unidad
-    available_chars = chars + orbit_chars if is_space else chars
+    # Botón crear unidad (solo con disponibles no asignados)
     _render_create_unit_button(
         sector_id=sector_id,
         player_id=player_id,
         location_data=location_data,
-        available_chars=available_chars,
-        available_troops=[],  # Tropas no tienen ubicación suelta
+        available_chars=available_chars_here,
+        available_troops=available_troops_here,
         is_orbit=is_space and planet_id is not None
     )
 
@@ -418,6 +540,9 @@ def _render_planet_node(
     planet: dict,
     player_id: int,
     location_index: dict,
+    assigned_char_ids: Set[int],
+    assigned_troop_ids: Set[int],
+    all_troops: List[dict],
     is_priority: bool
 ):
     """Renderiza un nodo de planeta con órbita y sectores."""
@@ -425,13 +550,11 @@ def _render_planet_node(
     planet_name = planet.get("name", f"Planeta {planet_id}")
     orbital_ring = planet.get("orbital_ring", 1)
 
-    # Obtener sectores del planeta
     sectors = get_planet_sectors_status(planet_id, player_id)
 
-    # Separar órbita y superficie
     orbit_sector = None
     surface_sectors = []
-    all_surface_sector_ids = set()
+    all_surface_sector_ids: Set[int] = set()
 
     for s in sectors:
         if s.get("sector_type") == "Orbital":
@@ -440,7 +563,7 @@ def _render_planet_node(
             surface_sectors.append(s)
             all_surface_sector_ids.add(s["id"])
 
-    # Verificar si hay contenido en este planeta
+    # Verificar contenido
     has_content = False
     if orbit_sector:
         osid = orbit_sector["id"]
@@ -453,7 +576,6 @@ def _render_planet_node(
             break
 
     with st.expander(f"🪐 {planet_name} (Anillo {orbital_ring})", expanded=is_priority and has_content):
-        # Órbita
         if orbit_sector:
             st.markdown('<div class="comando-section-header">🌌 Órbita</div>', unsafe_allow_html=True)
             orbit_loc = {
@@ -468,11 +590,13 @@ def _render_planet_node(
                 location_data=orbit_loc,
                 location_index=location_index,
                 is_space=True,
+                assigned_char_ids=assigned_char_ids,
+                assigned_troop_ids=assigned_troop_ids,
+                all_troops=all_troops,
                 planet_id=planet_id,
                 all_planet_sector_ids=all_surface_sector_ids
             )
 
-        # Superficie
         if surface_sectors:
             st.markdown('<div class="comando-section-header">🌍 Superficie</div>', unsafe_allow_html=True)
             for sector in surface_sectors:
@@ -495,7 +619,10 @@ def _render_planet_node(
                         player_id=player_id,
                         location_data=surface_loc,
                         location_index=location_index,
-                        is_space=False
+                        is_space=False,
+                        assigned_char_ids=assigned_char_ids,
+                        assigned_troop_ids=assigned_troop_ids,
+                        all_troops=all_troops
                     )
 
 
@@ -503,6 +630,9 @@ def _render_system_node(
     system: dict,
     player_id: int,
     location_index: dict,
+    assigned_char_ids: Set[int],
+    assigned_troop_ids: Set[int],
+    all_troops: List[dict],
     is_priority: bool
 ):
     """Renderiza un nodo de sistema con sectores estelares, anillos y planetas."""
@@ -510,17 +640,13 @@ def _render_system_node(
     system_name = system.get("name", f"Sistema {system_id}")
 
     icon = "⭐" if is_priority else "🌟"
-
-    # Obtener planetas del sistema
     planets = get_planets_by_system_id(system_id)
 
-    # Verificar contenido en el sistema
-    has_ring_content = False
-    for ring in range(0, 7):
-        key = (system_id, ring)
-        if location_index["units_by_system_ring"].get(key):
-            has_ring_content = True
-            break
+    # Verificar contenido
+    has_ring_content = any(
+        location_index["units_by_system_ring"].get((system_id, r))
+        for r in range(7)
+    )
 
     has_planet_content = False
     for planet in planets:
@@ -542,25 +668,37 @@ def _render_system_node(
         stellar_units = location_index["units_by_system_ring"].get(stellar_key, [])
         if stellar_units:
             st.markdown('<div class="comando-section-header">🌌 Sector Estelar</div>', unsafe_allow_html=True)
+            available_chars_space: List[dict] = []
+            available_troops_space = [t for t in all_troops if t["id"] not in assigned_troop_ids]
             for unit in stellar_units:
-                _render_unit_row(unit, player_id, is_space=True)
+                _render_unit_row(unit, player_id, is_space=True,
+                                available_chars=available_chars_space,
+                                available_troops=available_troops_space)
 
-        # Anillos 1-6 (espacio sin planeta específico)
+        # Anillos 1-6
         for ring in range(1, 7):
             ring_key = (system_id, ring)
             ring_units = location_index["units_by_system_ring"].get(ring_key, [])
             if ring_units:
                 st.markdown(f'<div class="comando-section-header">🌌 Anillo {ring}</div>', unsafe_allow_html=True)
                 for unit in ring_units:
-                    _render_unit_row(unit, player_id, is_space=True)
+                    _render_unit_row(unit, player_id, is_space=True,
+                                    available_chars=[],
+                                    available_troops=[t for t in all_troops if t["id"] not in assigned_troop_ids])
 
-        # Planetas ordenados por orbital_ring
+        # Planetas ordenados
         planets_sorted = sorted(planets, key=lambda p: p.get("orbital_ring", 1))
         for planet in planets_sorted:
-            _render_planet_node(planet, player_id, location_index, is_priority)
+            _render_planet_node(planet, player_id, location_index,
+                               assigned_char_ids, assigned_troop_ids, all_troops, is_priority)
 
 
-def _render_starlanes_section(location_index: dict, player_id: int):
+def _render_starlanes_section(
+    location_index: dict,
+    player_id: int,
+    available_chars: List[dict],
+    available_troops: List[dict]
+):
     """Renderiza sección de unidades en tránsito por starlanes."""
     units_in_transit = location_index.get("units_in_transit", [])
 
@@ -576,19 +714,20 @@ def _render_starlanes_section(location_index: dict, player_id: int):
         dest = unit.get("transit_destination_system_id", "?")
         ticks = unit.get("transit_ticks_remaining", 0)
 
-        st.markdown(f"""
-        <div class="comando-unit-header">
-            🌌 ✈️ <strong>{name}</strong> ({len(members)}/8)
-            <span style="color:#888;font-size:0.85em;margin-left:10px">
-                Sistema {origin} → Sistema {dest} | {ticks} ticks restantes
-            </span>
-        </div>
-        """, unsafe_allow_html=True)
+        with st.expander(f"🌌 ✈️ **{name}** ({len(members)}/8) | Sistema {origin} → {dest} | {ticks} ticks", expanded=False):
+            col1, col2 = st.columns([4, 1])
+            with col2:
+                if st.button("⚙️", key=f"manage_transit_{unit_id}", help="Gestionar unidad"):
+                    manage_unit_dialog(unit, player_id, [], [])
 
-        col1, col2 = st.columns([5, 1])
-        with col2:
-            if st.button("⚙️", key=f"manage_transit_{unit_id}", help="Gestionar unidad"):
-                manage_unit_dialog(unit, player_id)
+            if members:
+                st.caption("Composición:")
+                for m in sorted(members, key=lambda x: x.get("slot_index", 0)):
+                    etype = m.get("entity_type", "?")
+                    slot = m.get("slot_index", 0)
+                    member_name = m.get("name", "???")
+                    icon_e = "👤" if etype == "character" else "🪖"
+                    st.markdown(f"`[{slot}]` {icon_e} {member_name}")
 
 
 # --- FUNCIÓN PRINCIPAL ---
@@ -611,15 +750,25 @@ def render_comando_page():
     # Cargar datos
     with st.spinner("Cargando estructura de comando..."):
         characters = get_all_player_characters(player_id)
+        troops = get_troops_by_player(player_id)
         units = get_units_by_player(player_id)
         systems = get_all_systems_from_db()
-        priority_system_ids = _get_player_system_ids(player_id)
+
+        # Mapas de nombres para hidratación
+        char_map: Dict[int, str] = {c["id"]: c.get("nombre", f"Personaje {c['id']}") for c in characters}
+        troop_map: Dict[int, str] = {t["id"]: t.get("name", f"Tropa {t['id']}") for t in troops}
+
+        # Hidratar nombres de miembros
+        units = _hydrate_unit_members(units, char_map, troop_map)
 
         # Obtener IDs asignados
         assigned_chars, assigned_troops = _get_assigned_entity_ids(units)
 
         # Construir índice de ubicaciones
         location_index = _build_location_index(characters, units, assigned_chars)
+
+        # Obtener sistemas con presencia del jugador
+        systems_with_presence = _get_systems_with_presence(location_index, characters, assigned_chars)
 
     # Estadísticas rápidas
     loose_chars = len(characters) - len(assigned_chars)
@@ -633,25 +782,26 @@ def render_comando_page():
 
     st.divider()
 
-    # Ordenar sistemas: prioritarios primero
-    systems_priority = [s for s in systems if s["id"] in priority_system_ids]
-    systems_other = [s for s in systems if s["id"] not in priority_system_ids]
+    # Filtrar solo sistemas con presencia
+    systems_to_show = [s for s in systems if s["id"] in systems_with_presence]
 
-    # Renderizar sistemas prioritarios
-    if systems_priority:
-        for system in systems_priority:
-            _render_system_node(system, player_id, location_index, is_priority=True)
+    if not systems_to_show and not location_index["units_in_transit"]:
+        st.info("No hay personal desplegado en ningún sistema. Recluta personajes y forma unidades.")
+        return
 
-    # Renderizar otros sistemas (solo si tienen contenido)
-    if systems_other:
-        with st.expander("Otros Sistemas", expanded=False):
-            for system in systems_other:
-                _render_system_node(system, player_id, location_index, is_priority=False)
+    # Renderizar sistemas con presencia
+    for system in systems_to_show:
+        is_priority = True  # Todos los que se muestran tienen presencia
+        _render_system_node(
+            system, player_id, location_index,
+            assigned_chars, assigned_troops, troops, is_priority
+        )
 
     # Starlanes
-    st.divider()
-    with st.expander("🌌 Rutas Estelares (Starlanes)", expanded=len(location_index["units_in_transit"]) > 0):
-        _render_starlanes_section(location_index, player_id)
+    if location_index["units_in_transit"]:
+        st.divider()
+        with st.expander("🌌 Rutas Estelares (Starlanes)", expanded=True):
+            _render_starlanes_section(location_index, player_id, [], [])
 
 
 # Alias para compatibilidad
