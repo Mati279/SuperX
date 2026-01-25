@@ -10,6 +10,7 @@ Actualizado v5.2.0: Restricción de Origen a Biomas Habitables y mejora de Lore.
 Corrección v5.2.1: Uso de cliente Supabase para consultas de planetas (Fix ImportError).
 Actualizado V9.0: Soporte para coordenadas precisas (Hero Spawn) en RecruitmentContext.
 Refactorizado V10: Inyección de coordenadas SQL en diccionario de retorno y limpieza de JSON.
+Actualizado V10.1: Resolución automática de coordenadas de base en generación de pool y reclutamiento.
 """
 
 import random
@@ -25,7 +26,7 @@ from google.genai import types
 from data.database import get_service_container, get_supabase
 from data.log_repository import log_event
 from data.character_repository import create_character
-from data.planet_repository import get_planet_by_id
+from data.planet_repository import get_planet_by_id, get_player_base_coordinates
 from data.world_repository import get_world_state
 from utils.helpers import clean_json_string, try_repair_json
 
@@ -586,7 +587,19 @@ def recruit_character_with_ai(
     """
     Recluta un personaje directamente (sin pasar por pool de candidatos).
     Soporta initial_knowledge_level para tripulación inicial y coordenadas precisas para Hero Spawn.
+    V10.1: Resolución automática de coordenadas de base si no se especifican.
     """
+    # --- V10.1: Fallback a coordenadas de base ---
+    if not location_planet_id and player_id:
+        try:
+            base_coords = get_player_base_coordinates(player_id)
+            if base_coords.get("planet_id"):
+                location_system_id = base_coords.get("system_id")
+                location_planet_id = base_coords.get("planet_id")
+                location_sector_id = base_coords.get("sector_id")
+        except Exception:
+            pass # Fallback silencioso
+
     context = RecruitmentContext(
         player_id=player_id,
         location_planet_id=location_planet_id,
@@ -626,7 +639,20 @@ def generate_character_pool(
     """
     Genera un pool de candidatos para reclutamiento.
     Refactor V10: Soporta coordenadas completas de ubicación (system, planet, sector).
+    V10.1: Resolución automática de coordenadas de base si no se especifican.
     """
+    # --- V10.1: Fallback a coordenadas de base ---
+    # Esto asegura que los reclutas aparezcan en el Centro de Reclutamiento de la Base
+    if not location_planet_id and player_id:
+        try:
+            base_coords = get_player_base_coordinates(player_id)
+            if base_coords.get("planet_id"):
+                location_system_id = base_coords.get("system_id")
+                location_planet_id = base_coords.get("planet_id")
+                location_sector_id = base_coords.get("sector_id")
+        except Exception:
+            pass # Fallback silencioso
+
     context = RecruitmentContext(
         player_id=player_id,
         location_planet_id=location_planet_id,
