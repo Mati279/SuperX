@@ -3,7 +3,6 @@
 Genesis Engine - Protocolo v4.2 "Fair Start"
 Maneja la lógica de inicialización de nuevas facciones.
 Actualizado: Estandarización de Población Inicial (1.50B - 1.70B).
-Actualizado: Generación de Tripulación Inicial (Level 5 + 2x Level 3) con conocimiento KNOWN.
 Corrección V4.4: Escritura de seguridad en tabla 'planets' usando fórmula centralizada.
 Corrección V4.5: Persistencia de 'population' en tabla global 'planets'.
 Corrección V5.9: Fix crítico de nomenclatura 'poblacion' a 'population' en planet_assets.
@@ -17,6 +16,7 @@ Actualizado V7.4: Construcción automática de Comando Central (HQ) en sector ur
 Actualizado V7.5: Fix Soberanía Inicial (Sincronización Orbital en Creación).
 Actualizado V7.6: Estandarización de Planeta Inicial (Mass Class: Estándar).
 Actualizado V7.7: Refactor integral para uso de create_planet_asset (Seguridad y Fail-safes).
+Refactor V8.0: Eliminación de tripulación automática (Solo Start).
 """
 
 import random
@@ -35,8 +35,6 @@ from data.planet_repository import (
 )
 from core.world_constants import STAR_TYPES, ECONOMY_RATES, HABITABLE_BIRTH_BIOMES, SECTOR_TYPE_URBAN
 from core.constants import MIN_ATTRIBUTE_VALUE
-from core.models import KnowledgeLevel
-from services.character_generation_service import recruit_character_with_ai
 from core.rules import calculate_planet_security, SECURITY_POP_MULT, RING_PENALTY
 
 # --- CONSTANTES DEL PROTOCOLO ---
@@ -201,9 +199,7 @@ def genesis_protocol(player_id: int) -> bool:
             log_event(f"Error inicializando sectores/edificio inicial: {e}", player_id, is_error=True)
             traceback.print_exc()
 
-        # 5. Generación de Tripulación Inicial (Opcional/Manual en UI)
-        # _deploy_starting_crew(player_id, target_planet['id'])
-        
+        # Finalización del protocolo
         log_event(f"✅ Protocolo Génesis completado. Base: {base_name}. Pob: {initial_pop}B. (Bioma: {target_planet.get('biome', 'Unknown')})", player_id)
         return True
 
@@ -287,36 +283,6 @@ def _grant_visibility(player_id: int, system_id: int, level: int):
         _get_db().table("player_exploration").upsert(data, on_conflict="player_id, system_id").execute()
     except Exception as e:
         print(f"Error granting visibility: {e}")
-
-def _deploy_starting_crew(player_id: int, planet_id: int):
-    """
-    Genera la tripulación inicial (Oficial y Especialistas) con estado KNOWN.
-    Esto evita que aparezcan como 'Desconocidos' en la UI.
-    """
-    try:
-        log_event("🚀 Desplegando tripulación inicial de confianza...", player_id)
-        
-        # 1. Oficial Nivel 5 (Líder de escuadrón/Segundo al mando)
-        recruit_character_with_ai(
-            player_id=player_id,
-            location_planet_id=planet_id,
-            min_level=5,
-            max_level=5,
-            initial_knowledge_level=KnowledgeLevel.KNOWN
-        )
-        
-        # 2. Dos Especialistas Nivel 3
-        for _ in range(2):
-            recruit_character_with_ai(
-                player_id=player_id,
-                location_planet_id=planet_id,
-                min_level=3,
-                max_level=3,
-                initial_knowledge_level=KnowledgeLevel.KNOWN
-            )
-            
-    except Exception as e:
-        log_event(f"⚠️ Error desplegando tripulación inicial: {e}", player_id, is_error=True)
 
 def generate_genesis_commander_stats(name: str) -> Dict[str, Any]:
     v = MIN_ATTRIBUTE_VALUE
