@@ -6,6 +6,7 @@ V11.2: Restauración de flujo inicial "Reunir al personal".
 V11.3: Reclutamiento jerárquico inicial con feedback visual mejorado.
 V11.4: Filtro de seguridad para excluir candidatos (Status 7) del Roster.
 V11.5: Encabezados dinámicos con métricas y visibilidad estricta de nodos vacíos.
+V11.6: Visibilidad permanente de órbita en planetas activos.
 """
 
 import streamlit as st
@@ -510,9 +511,6 @@ def _render_sector_content(
     units = location_index["units_by_sector"].get(sector_id, [])
     chars = location_index["chars_by_sector"].get(sector_id, [])
 
-    # Validación rápida: si no hay nada y no se puede crear unidad (o no hay gente), no renderizar nada?
-    # El prompt pide "si un sector está vacío, no renderice nada".
-    
     # Para órbita: incluir entidades de superficie para crear unidad
     orbit_chars: List[dict] = []
     if is_space and all_planet_sector_ids:
@@ -533,6 +531,7 @@ def _render_sector_content(
     can_create = len(available_chars_here) > 0
 
     if not has_units and not has_chars and not can_create:
+        st.caption("Despejado.")
         return
 
     # Renderizar unidades primero
@@ -610,32 +609,26 @@ def _render_planet_node(
         
         with st.expander(header, expanded=should_expand):
             if orbit_sector:
-                # Verificar si el orbital tiene contenido específico
-                osid = orbit_sector["id"]
-                u_orb = len(location_index["units_by_sector"].get(osid, []))
-                c_orb = len(location_index["chars_by_sector"].get(osid, []))
-                
-                # Renderizar solo si hay algo
-                if u_orb > 0 or c_orb > 0:
-                    st.markdown('<div class="comando-section-header">🌌 Órbita</div>', unsafe_allow_html=True)
-                    orbit_loc = {
-                        "system_id": planet.get("system_id"),
-                        "planet_id": planet_id,
-                        "sector_id": orbit_sector["id"]
-                    }
-                    _render_sector_content(
-                        sector_id=orbit_sector["id"],
-                        sector_type="Orbital",
-                        player_id=player_id,
-                        location_data=orbit_loc,
-                        location_index=location_index,
-                        is_space=True,
-                        assigned_char_ids=assigned_char_ids,
-                        assigned_troop_ids=assigned_troop_ids,
-                        all_troops=all_troops,
-                        planet_id=planet_id,
-                        all_planet_sector_ids=all_surface_sector_ids
-                    )
+                # Mostrar siempre la órbita si el planeta es visible
+                st.markdown('<div class="comando-section-header">🌌 Órbita</div>', unsafe_allow_html=True)
+                orbit_loc = {
+                    "system_id": planet.get("system_id"),
+                    "planet_id": planet_id,
+                    "sector_id": orbit_sector["id"]
+                }
+                _render_sector_content(
+                    sector_id=orbit_sector["id"],
+                    sector_type="Orbital",
+                    player_id=player_id,
+                    location_data=orbit_loc,
+                    location_index=location_index,
+                    is_space=True,
+                    assigned_char_ids=assigned_char_ids,
+                    assigned_troop_ids=assigned_troop_ids,
+                    all_troops=all_troops,
+                    planet_id=planet_id,
+                    all_planet_sector_ids=all_surface_sector_ids
+                )
 
             if surface_sectors:
                 # Filtrar sectores de superficie con contenido
