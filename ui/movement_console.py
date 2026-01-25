@@ -271,7 +271,14 @@ def _render_surface_options(
     with col1:
         st.markdown("**🌍 Mover a otro Sector**")
         if surface_sectors:
-            sector_options = {s['id']: s.get('sector_type', f"Sector {s['id']}") for s in surface_sectors}
+            # V10.2: Fog of War - Enmascarar sectores no descubiertos
+            sector_options = {}
+            for s in surface_sectors:
+                if s.get('is_discovered', False):
+                    sector_options[s['id']] = s.get('sector_type', f"Sector {s['id']}")
+                else:
+                    sector_options[s['id']] = f"Sector Desconocido [ID: {s['id']}]"
+
             selected_sector = st.selectbox(
                 "Sector destino",
                 options=list(sector_options.keys()),
@@ -354,7 +361,14 @@ def _render_orbit_options(
     with tab1:
         st.markdown("**🌍 Descender a Superficie**")
         if surface_sectors:
-            sector_options = {s['id']: s.get('sector_type', f"Sector {s['id']}") for s in surface_sectors}
+            # V10.2: Fog of War - Enmascarar sectores no descubiertos
+            sector_options = {}
+            for s in surface_sectors:
+                if s.get('is_discovered', False):
+                    sector_options[s['id']] = s.get('sector_type', f"Sector {s['id']}")
+                else:
+                    sector_options[s['id']] = f"Sector Desconocido [ID: {s['id']}]"
+
             selected_sector = st.selectbox(
                 "Sector destino",
                 options=list(sector_options.keys()),

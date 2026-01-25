@@ -495,6 +495,8 @@ def get_planet_sectors_status(planet_id: int, player_id: Optional[int] = None) -
     """
     Consulta el estado actual de los sectores de un planeta, calculando ocupación dinámica.
     V7.2: Soporta filtrado por conocimiento de jugador (is_explored_by_player).
+    V10.2: Añadido campo 'is_discovered' para Fog of War en consola de movimiento.
+           Optimización: Una sola consulta batch para conocimiento de sectores.
     """
     try:
         db = _get_db()
@@ -503,10 +505,10 @@ def get_planet_sectors_status(planet_id: int, player_id: Optional[int] = None) -
             .select("id, sector_type, max_slots, resource_category, is_known, luxury_resource")\
             .eq("planet_id", planet_id)\
             .execute()
-        
+
         sectors = response.data if response and response.data else []
         if not sectors: return []
-        
+
         sector_ids = [s["id"] for s in sectors]
 
         # 2. Contar edificios dinámicamente (Filtrando consumo de slots)
@@ -514,7 +516,7 @@ def get_planet_sectors_status(planet_id: int, player_id: Optional[int] = None) -
             .select("sector_id, building_type")\
             .in_("sector_id", sector_ids)\
             .execute()
-        
+
         buildings = b_response.data if b_response and b_response.data else []
         counts = {}
         for b in buildings:
@@ -524,7 +526,8 @@ def get_planet_sectors_status(planet_id: int, player_id: Optional[int] = None) -
             if sid and BUILDING_TYPES.get(bt, {}).get("consumes_slots", True):
                 counts[sid] = counts.get(sid, 0) + 1
 
-        # 3. Validar conocimiento del jugador (V7.2)
+        # 3. V10.2 OPTIMIZADO: Validar conocimiento del jugador en una sola consulta batch
+        # Evita N+1 queries obteniendo todos los sector_ids conocidos de una vez
         known_sector_ids = set()
         if player_id:
             try:
@@ -538,16 +541,21 @@ def get_planet_sectors_status(planet_id: int, player_id: Optional[int] = None) -
             except Exception:
                 pass # Fail safe si la tabla no existe o error de conexión
 
-        # 4. Mapear resultados
+        # 4. Mapear resultados con Fog of War
         for s in sectors:
             s['slots'] = s.get('max_slots', 2)
             s['buildings_count'] = counts.get(s["id"], 0)
-            # Flag de UI para niebla: Órbita siempre es conocida, otros depende de tabla
-            if s.get("sector_type") == SECTOR_TYPE_ORBITAL:
-                s['is_explored_by_player'] = True
-            else:
-                s['is_explored_by_player'] = (s["id"] in known_sector_ids)
-            
+
+            # V10.2: Lógica de descubrimiento para Fog of War
+            # Sectores Orbitales siempre son conocidos (visibles al llegar al planeta)
+            is_orbital = s.get("sector_type") == SECTOR_TYPE_ORBITAL
+            is_in_knowledge_table = s["id"] in known_sector_ids
+
+            # Campo unificado para Fog of War
+            s['is_discovered'] = is_orbital or is_in_knowledge_table
+            # Mantener compatibilidad con código legacy
+            s['is_explored_by_player'] = s['is_discovered']
+
         return sectors
     except Exception:
         return []
