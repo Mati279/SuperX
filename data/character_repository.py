@@ -12,15 +12,15 @@ Actualizado v5.1.9: Fix Critical Mismatch Column (observer_player_id -> player_i
 Actualizado v5.2.0: Fix ImportError COMMANDER_LOCATION (Refactorización de Ubicaciones).
 Actualizado v5.2.1: Soporte para actualización de ubicacion_local en reclutamiento.
 Refactorizado v10.0: Purga de ubicación en JSON (Ubicación SQL como Source of Truth).
-Actualizado v10.1: Integración automática de coordenadas de base en create_commander.
+Refactorizado v10.2: Asignación automática de ubicación base para Comandante (Create/Update).
 """
 
 from typing import Dict, Any, Optional, List, Tuple
 import copy
+import traceback
 from data.database import get_supabase
 from data.log_repository import log_event
-# Importación para resolución de ubicación automática
-from data.planet_repository import get_player_base_coordinates 
+
 
 def _get_db():
     """Obtiene el cliente de Supabase de forma segura."""
@@ -185,8 +185,10 @@ def create_commander(
     bio_data: Dict[str, Any],
     attributes: Dict[str, int]
 ) -> Optional[Dict[str, Any]]:
-    """Crea un Comandante usando el esquema Híbrido V2 con ubicación automática."""
+    """Crea un Comandante usando el esquema Híbrido V2."""
     from data.game_config_repository import get_current_tick
+    # V10.2: Importación local para resolver ubicación base
+    from data.planet_repository import get_player_base_coordinates
 
     try:
         habilidades = calculate_skills(attributes)
@@ -199,22 +201,15 @@ def create_commander(
         raza = bio_data.get("raza", "Humano")
         clase = bio_data.get("clase", "Comandante")
 
-        # --- V10.1: Resolución de Ubicación Inicial ---
-        # Intentamos obtener la base del jugador para asignar al Comandante allí.
+        # --- V10.2: Resolución de Ubicación Inicial ---
         base_coords = get_player_base_coordinates(player_id)
         
-        # Valores por defecto si aún no hay base
-        loc_system_id = None
-        loc_planet_id = None
-        loc_sector_id = None
-        loc_name_str = "En Tránsito"
+        loc_system_id = base_coords.get("system_id")
+        loc_planet_id = base_coords.get("planet_id")
+        loc_sector_id = base_coords.get("sector_id")
+        loc_name = base_coords.get("nombre_asentamiento", "Base Principal")
         
-        if base_coords and base_coords.get("planet_id"):
-            loc_system_id = base_coords.get("system_id")
-            loc_planet_id = base_coords.get("planet_id")
-            loc_sector_id = base_coords.get("sector_id")
-            if base_coords.get("nombre_asentamiento"):
-                loc_name_str = base_coords.get("nombre_asentamiento")
+        sys_name = f"Sistema {loc_system_id}" if loc_system_id else "Desconocido"
 
         full_stats = {
             "bio": {
@@ -249,15 +244,9 @@ def create_commander(
                 "estados_activos": [COMMANDER_STATUS],
                 "rol_asignado": CharacterRole.COMMANDER.value,
                 "accion_actual": "Iniciando mandato",
-                # Actualizar el string descriptivo local
-                "ubicacion_local": loc_name_str, 
-                "sistema_actual": f"Sistema {loc_system_id}" if loc_system_id else "Desconocido",
-                # Se limpia en _extract_and_clean_data, pero ayuda si se rehidrata en memoria
-                "ubicacion": {
-                    "system_id": loc_system_id,
-                    "planet_id": loc_planet_id,
-                    "sector_id": loc_sector_id
-                }
+                # V10.2: Inyección de datos de UI
+                "ubicacion_local": loc_name,
+                "sistema_actual": sys_name
             }
         }
 
@@ -281,7 +270,7 @@ def create_commander(
             # Persistencia de ROL como ID INTEGER (Fuente: ROLE_ID_MAP)
             "rol": cols.get("rol", 1), 
             
-            # INYECCIÓN DIRECTA DE COORDENADAS (Fuente de Verdad)
+            # V10.2: Inyección explícita de Coordenadas SQL
             "location_system_id": loc_system_id,
             "location_planet_id": loc_planet_id,
             "location_sector_id": loc_sector_id
@@ -291,7 +280,7 @@ def create_commander(
         if response.data:
             cmd_id = response.data[0]["id"]
             set_character_knowledge_level(cmd_id, player_id, KnowledgeLevel.FRIEND)
-            log_event(f"Nuevo comandante V2 Híbrido '{name}' creado en {loc_name_str}.", player_id)
+            log_event(f"Nuevo comandante V2 Híbrido '{name}' creado. Despliegue: {loc_name}.", player_id)
             return response.data[0]
         return None
 
@@ -306,6 +295,9 @@ def update_commander_profile(
     attributes: Dict[str, int]
 ) -> Optional[Dict[str, Any]]:
     """Actualiza perfil respetando Híbrido V2 e IDs de roles."""
+    # V10.2: Importación local para sincronización tardía de ubicación
+    from data.planet_repository import get_player_base_coordinates
+
     try:
         current = get_commander_by_player_id(player_id)
         if not current: return None
@@ -334,6 +326,23 @@ def update_commander_profile(
             "apellido": cols.get("apellido"),
             "rol": cols.get("rol") # ID numérico procesado por ROLE_ID_MAP
         }
+
+        # --- V10.2: Sincronización de Ubicación (Auto-Healing) ---
+        # Si el comandante no tiene planeta asignado en SQL (por creación previa al planeta), intentar asignar ahora.
+        if not current.get("location_planet_id"):
+            base_coords = get_player_base_coordinates(player_id)
+            if base_coords.get("planet_id"):
+                # Actualizar payload SQL
+                update_payload["location_system_id"] = base_coords.get("system_id")
+                update_payload["location_planet_id"] = base_coords.get("planet_id")
+                update_payload["location_sector_id"] = base_coords.get("sector_id")
+                
+                # Actualizar JSON para consistencia UI
+                loc_name = base_coords.get("nombre_asentamiento", "Base Principal")
+                cleaned_stats["estado"]["ubicacion_local"] = loc_name
+                update_payload["stats_json"] = cleaned_stats # Reasignar JSON actualizado
+
+                log_event(f"Ubicación del Comandante sincronizada a: {loc_name}", player_id)
 
         response = _get_db().table("characters")\
             .update(update_payload)\
