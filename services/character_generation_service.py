@@ -10,7 +10,7 @@ Actualizado v5.2.0: Restricción de Origen a Biomas Habitables y mejora de Lore.
 Corrección v5.2.1: Uso de cliente Supabase para consultas de planetas (Fix ImportError).
 Actualizado V9.0: Soporte para coordenadas precisas (Hero Spawn) en RecruitmentContext.
 Refactorizado V10: Inyección de coordenadas SQL en diccionario de retorno y limpieza de JSON.
-Actualizado V10.1: Resolución automática de coordenadas de base en generación de pool y reclutamiento.
+Actualizado V10.2: Eliminado fallback automático a base en generación de pool (Candidatos nacen sin ubicación física).
 """
 
 import random
@@ -639,19 +639,11 @@ def generate_character_pool(
     """
     Genera un pool de candidatos para reclutamiento.
     Refactor V10: Soporta coordenadas completas de ubicación (system, planet, sector).
-    V10.1: Resolución automática de coordenadas de base si no se especifican.
+    V10.2: Eliminado fallback automático a base. Los candidatos nacen sin ubicación física (NULL).
     """
-    # --- V10.1: Fallback a coordenadas de base ---
-    # Esto asegura que los reclutas aparezcan en el Centro de Reclutamiento de la Base
-    if not location_planet_id and player_id:
-        try:
-            base_coords = get_player_base_coordinates(player_id)
-            if base_coords.get("planet_id"):
-                location_system_id = base_coords.get("system_id")
-                location_planet_id = base_coords.get("planet_id")
-                location_sector_id = base_coords.get("sector_id")
-        except Exception:
-            pass # Fallback silencioso
+    
+    # Se elimina la lógica de fallback automático a base para que los candidatos
+    # no aparezcan ubicados físicamente en el roster de comando.
 
     context = RecruitmentContext(
         player_id=player_id,

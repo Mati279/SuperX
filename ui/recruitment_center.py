@@ -14,6 +14,7 @@ Actualizado v5.1.9: Visualización estrictamente basada en KnowledgeLevel.
 Fix v5.2.0: Corrección de falso positivo en "already_investigated" por comparación de strings en Enum.
 Fix v5.2.1: Eliminación de constante de ubicación obsoleta (Refactorización v4.3.1).
 Refactorizado V10: Integración con coordenadas SQL (get_player_base_coordinates) y limpieza de lógica local.
+Actualizado V10.2: Eliminada inyección manual de coordenadas en trigger de debug (Candidatos nacen sin ubicación física).
 """
 
 import streamlit as st
@@ -480,15 +481,12 @@ def show_recruitment_center():
                 from services.character_generation_service import generate_character_pool
                 try:
                     with st.spinner("Generando pool de emergencia..."):
-                        # TAREA 4: Obtener ubicación de la base activa para los candidatos desde SQL
-                        base_loc = get_player_base_coordinates(player_id)
-                        
+                        # MODIFICACIÓN V10.2: Eliminada inyección de coordenadas de base.
+                        # Los candidatos se generan sin ubicación física.
                         generate_character_pool(
                             player_id,
-                            pool_size=3,
-                            location_planet_id=base_loc.get("planet_id"),
-                            location_system_id=base_loc.get("system_id"),
-                            location_sector_id=base_loc.get("sector_id")
+                            pool_size=3
+                            # Sin coordenadas
                         )
                     st.success("Pool generado manualmente.")
                     st.rerun()

@@ -4,6 +4,7 @@ Comando - Vista jerárquica de personajes, tropas y unidades organizados por ubi
 V11.1: Hidratación de nombres, filtrado de sistemas, UI compacta, gestión mejorada.
 V11.2: Restauración de flujo inicial "Reunir al personal".
 V11.3: Reclutamiento jerárquico inicial con feedback visual mejorado.
+V11.4: Filtro de seguridad para excluir candidatos (Status 7) del Roster.
 """
 
 import streamlit as st
@@ -31,7 +32,7 @@ from data.planet_repository import (
     get_all_player_planets,
     get_planet_sectors_status,
 )
-from core.models import CommanderData, KnowledgeLevel
+from core.models import CommanderData, KnowledgeLevel, CharacterStatus
 from ui.character_sheet import render_character_sheet
 from services.character_generation_service import recruit_character_with_ai
 
@@ -754,6 +755,10 @@ def render_comando_page():
     # Cargar datos
     with st.spinner("Cargando estructura de comando..."):
         characters = get_all_player_characters(player_id)
+        
+        # FILTRO DE SEGURIDAD V11.4: Excluir candidatos (estado_id 7)
+        # Los candidatos no deben aparecer en el roster hasta ser contratados.
+        characters = [c for c in characters if c.get("status_id") != CharacterStatus.CANDIDATE.value]
         
         # --- NUEVO: Flujo inicial de reclutamiento ---
         non_commander_count = sum(1 for c in characters if not c.get("es_comandante", False))
