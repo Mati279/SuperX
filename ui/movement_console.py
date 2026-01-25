@@ -973,8 +973,29 @@ def render_movement_console():
                 if result.energy_cost > 0:
                     st.info(f"Energía consumida: {result.energy_cost} células")
 
-            # Limpiar selección y cerrar diálogo
-            st.session_state.selected_unit_movement = None
+            # --- V12.2 / Tarea 1: Lógica de Persistencia ---
+            # Si es movimiento local y quedan acciones, NO cerrar el diálogo.
+            should_close = True
+            
+            # Los movimientos interestelares (WARP/STARLANE) siempre cierran la consola
+            # porque la unidad entra en tránsito largo y no puede hacer más acciones.
+            if movement_type not in [MovementType.WARP, MovementType.STARLANE]:
+                # Verificar estado actualizado de la unidad
+                updated_unit_data = get_unit_by_id(unit_id)
+                if updated_unit_data:
+                    # Chequeo manual simple para evitar overhead de instanciar UnitSchema completo si no es necesario,
+                    # pero usaremos UnitSchema para consistencia con la lógica de arriba.
+                    updated_unit = UnitSchema.from_dict(updated_unit_data)
+                    
+                    # Límite hardcodeado de 2 movimientos por turno (según lógica UI existente)
+                    if updated_unit.local_moves_count < 2:
+                        should_close = False
+                        # Feedback visual de que puede seguir moviéndose
+                        st.toast(f"✅ Posición actualizada. Movimientos restantes: {2 - updated_unit.local_moves_count}")
+
+            if should_close:
+                st.session_state.selected_unit_movement = None
+            
             st.rerun()
         else:
             st.error(f"Error: {result.error_message}")

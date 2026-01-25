@@ -13,6 +13,7 @@ V13.0: Restricción de reclutamiento orbital (solo personal local).
 
 import streamlit as st
 import time
+import json
 from typing import Dict, List, Any, Optional, Set, Tuple
 
 from data.character_repository import (
@@ -840,7 +841,38 @@ def _render_starlanes_section(
         dest = unit.get("transit_destination_system_id", "?")
         ticks = unit.get("transit_ticks_remaining", 0)
 
-        with st.expander(f"🌌 ✈️ **{name}** ({len(members)}/8) | Sistema {origin} → {dest} | {ticks} ticks", expanded=False):
+        # --- Tarea 2: Visualización Intra-estelar (SCO) ---
+        is_local_transit = (origin == dest)
+        
+        if is_local_transit:
+            # Recuperar anillo origen
+            # 'ring' en el dict de unidad suele ser int o Enum int
+            origin_ring = unit.get("ring", 0)
+            
+            # Recuperar anillo destino
+            dest_ring = unit.get("transit_destination_ring")
+            if dest_ring is None:
+                # Intentar parsear JSON data
+                try:
+                    t_data = unit.get("transit_destination_data")
+                    if t_data:
+                        if isinstance(t_data, str):
+                            parsed = json.loads(t_data)
+                            dest_ring = parsed.get("ring", "?")
+                        elif isinstance(t_data, dict):
+                            dest_ring = t_data.get("ring", "?")
+                        else:
+                            dest_ring = "?"
+                    else:
+                        dest_ring = "?"
+                except:
+                    dest_ring = "?"
+            
+            header_text = f"🌌 🔄 **{name}** ({len(members)}/8) | SCO R[{origin_ring}] → R[{dest_ring}] | {ticks} ticks"
+        else:
+            header_text = f"🌌 ✈️ **{name}** ({len(members)}/8) | Sistema {origin} → {dest} | {ticks} ticks"
+
+        with st.expander(header_text, expanded=False):
             col1, col2 = st.columns([4, 1])
             with col2:
                 if st.button("⚙️", key=f"manage_transit_{unit_id}", help="Gestionar unidad"):
