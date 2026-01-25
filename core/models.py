@@ -15,6 +15,7 @@ Refactorizado V11.0: Geolocalización dinámica en CommanderData.sheet.
 Actualizado V11.1: Persistencia de ubicación en TroopSchema.
 Actualizado V11.2: Unidades - Campo local_moves_count para límite de movimientos diarios.
 Actualizado V14.0: Unidades - Campo ship_count para tamaño de flota.
+Actualizado V14.1: Sistema de Detección - Estados STEALTH_MODE, HIDDEN y flag disoriented.
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -85,6 +86,8 @@ class UnitStatus(str, Enum):
     GROUND = "GROUND"     # Desplegada en superficie/sector
     SPACE = "SPACE"       # En órbita o espacio profundo
     TRANSIT = "TRANSIT"   # Viajando entre nodos (genera upkeep logístico)
+    STEALTH_MODE = "STEALTH_MODE"  # V14.0: Modo sigilo activo (detección más difícil)
+    HIDDEN = "HIDDEN"     # V14.0: Oculto/No detectado (puede escapar automáticamente)
 
 class TroopType(str, Enum):
     """Tipos de tropas estándar."""
@@ -695,6 +698,7 @@ class UnitSchema(BaseModel):
     V10.0: Representación de una Unidad (Grupo de Combate).
     Persistido en tabla 'units'.
     Capacidad máxima: 8 slots. Mínimo 1 Character (líder).
+    V14.0: Añadidos estados STEALTH_MODE, HIDDEN y flag disoriented.
     """
     model_config = ConfigDict(extra='allow')
 
@@ -702,9 +706,13 @@ class UnitSchema(BaseModel):
     player_id: int
     name: str
     status: UnitStatus = UnitStatus.GROUND
-    
+
     # V14.0: Propiedad convertida a campo de base de datos
     ship_count: int = Field(default=1, ge=1)
+
+    # V14.0: Flag de desacomodado (sorprendido en sigilo o detectado)
+    # Unidades disoriented: Restringidas a 1 mov local/tick y penalización en combate
+    disoriented: bool = Field(default=False)
 
     # V10.0: Ubicación jerárquica (para compatibilidad, mantenemos los campos legacy)
     location_system_id: Optional[int] = None
