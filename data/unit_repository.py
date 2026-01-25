@@ -8,6 +8,7 @@ V10.0: Funciones de tránsito, ubicación avanzada y detección.
 V11.1: Persistencia de ubicación en Tropas y lógica de disolución segura.
 V11.2: Hidratación de nombres en miembros de unidad (Fix Schema Validation).
 V11.3: Soporte para local_moves_count (movimientos locales limitados).
+V13.0: Soporte para persistencia de transit_destination_ring (Navegación Estratificada).
 """
 
 from typing import Optional, List, Dict, Any
@@ -465,12 +466,14 @@ def start_unit_transit(
         origin_data = current.data
 
         # Actualizar unidad a estado de tránsito
+        # V13.0 Update: Se guarda transit_destination_ring para persistencia de maniobras estratificadas
         update_data = {
             "status": UnitStatus.TRANSIT.value,
             "transit_end_tick": current_tick + ticks_required,
             "transit_ticks_remaining": ticks_required,
             "transit_origin_system_id": origin_data.get("location_system_id"),
             "transit_destination_system_id": destination_data.get("system_id"),
+            "transit_destination_ring": destination_data.get("ring", 0), # Added V13.0
             "starlane_id": starlane_id,
             "movement_locked": True
         }
@@ -510,18 +513,22 @@ def complete_unit_transit(unit_id: int, current_tick: int) -> bool:
 
         unit_data = unit.data
         dest_system = unit_data.get("transit_destination_system_id")
+        
+        # V13.0 Update: Recuperar anillo de destino desde la persistencia
+        dest_ring = unit_data.get("transit_destination_ring", 0)
 
-        # La unidad llega al sector estelar (ring 0) del sistema destino
+        # La unidad llega al sector estelar (ring 0) del sistema destino o a su anillo asignado
         update_data = {
             "status": UnitStatus.SPACE.value,
             "location_system_id": dest_system,
             "location_planet_id": None,
             "location_sector_id": None,
-            "ring": 0,  # Sector estelar
+            "ring": dest_ring,  # Updated from hardcoded 0 to dynamic dest_ring
             "transit_end_tick": None,
             "transit_ticks_remaining": 0,
             "transit_origin_system_id": None,
             "transit_destination_system_id": None,
+            "transit_destination_ring": None, # Cleanup
             "starlane_id": None,
             "movement_locked": False
         }

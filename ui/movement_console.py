@@ -7,6 +7,7 @@ V12.1: Reorganización de UI - Botones de acción movidos arriba de los selector
 V12.2: Fix de bloqueo - UI permite 2 movimientos locales antes de bloquear acciones.
 V13.0: Refactorización de Navegación - Restricciones físicas estrictas y soporte para maniobras de acople instantáneas.
 V13.3: Refactor visualización SCO (Inter-Ring) y restricción proactiva de distancia en UI.
+V13.4: Visualización mejorada de Maniobras SCO (R[X] -> R[Y]) y bloqueo estricto en UI (>3 anillos).
 
 Flujo:
 1. El jugador selecciona una unidad desde faction_roster (botón 🚀)
@@ -21,6 +22,7 @@ Reglas de Destino según Ubicación (V13.0):
 """
 
 import streamlit as st
+import json
 from typing import Dict, Any, List, Optional, Tuple
 
 from data.unit_repository import get_unit_by_id
@@ -459,6 +461,7 @@ def _render_ring_options(
     Opciones cuando la unidad está en un anillo (no en órbita).
     V13.0: Selector de anillo dinámico.
     V13.3: Validación proactiva de distancia (<= 3 anillos).
+    V13.4: Bloqueo de botón si se excede la distancia.
     """
     st.markdown("#### Opciones de Movimiento")
 
@@ -552,7 +555,7 @@ def _render_ring_options(
                     is_too_far = dist_rings > 3
                     
                     if is_too_far:
-                        st.error(f"❌ Distancia excesiva ({dist_rings} anillos). Máximo permitido: 3 por maniobra.")
+                        st.error(f"⚠️ La distancia excede el límite de salto de 1 tick (Máx: 3 anillos, Actual: {dist_rings}).")
                     
                     if st.button("Iniciar Maniobra", type="primary", key="btn_ring_space", use_container_width=True, disabled=is_too_far):
                         selected_dest = DestinationData(
@@ -654,6 +657,7 @@ def _render_stellar_options(
     """
     Opciones cuando la unidad está en el Sector Estelar (Ring 0).
     V13.3: Validación proactiva de distancia.
+    V13.4: Bloqueo de botón si se excede la distancia.
     """
     st.markdown("#### Opciones de Movimiento")
 
@@ -700,7 +704,7 @@ def _render_stellar_options(
                     is_too_far = dist_rings > 3
                     
                     if is_too_far:
-                        st.error(f"❌ Distancia excesiva ({dist_rings} anillos). Máximo permitido: 3 por maniobra.")
+                        st.error(f"⚠️ La distancia excede el límite de salto de 1 tick (Máx: 3 anillos, Actual: {dist_rings}).")
 
                     if st.button("Iniciar Maniobra", type="primary", key="btn_ring_stellar", use_container_width=True, disabled=is_too_far):
                         selected_dest = DestinationData(
@@ -795,33 +799,41 @@ def _render_stellar_options(
 def _render_transit_info(unit: UnitSchema):
     """Muestra información cuando la unidad está en tránsito."""
     # V13.3: Lógica mejorada para mostrar tránsitos intra-sistema (SCO)
+    # V13.4: Visualización avanzada R[x] -> R[y] usando la columna transit_destination_ring (o fallback al JSON)
     
     is_local_transit = unit.transit_origin_system_id == unit.transit_destination_system_id
     
     if is_local_transit:
-        # Intento de recuperar datos de anillo destino (si están disponibles en el esquema/dict de la unidad)
-        # Nota: UnitSchema podría no tener los datos crudos del destino desglosados más allá del JSON.
-        # Aquí inferimos para la UI.
-        try:
-            # Recuperar el anillo destino desde la data de la unidad si es accesible
-            dest_ring = "?"
-            if hasattr(unit, 'transit_destination_data') and isinstance(unit.transit_destination_data, dict):
-                dest_ring = unit.transit_destination_data.get('ring', '?')
-            
-            # Usar '?' o Ring 0 si no se puede determinar, pero idealmente mostraríamos R[Origen] -> R[Dest]
-            # Como fallback visual usamos SCO genérico si no tenemos los datos precisos
-            st.warning(f"SCO: Maniobra Orbital en curso")
+        # Intento de recuperar datos de anillo destino
+        # Prioridad 1: Columna 'transit_destination_ring' si el UnitSchema la tiene
+        dest_ring = getattr(unit, 'transit_destination_ring', None)
+        
+        # Prioridad 2: Fallback a transit_destination_data (JSON)
+        if dest_ring is None:
+            try:
+                if hasattr(unit, 'transit_destination_data') and unit.transit_destination_data:
+                    data = unit.transit_destination_data
+                    if isinstance(data, str):
+                        data = json.loads(data)
+                    dest_ring = data.get('ring', '?')
+                else:
+                    dest_ring = '?'
+            except:
+                dest_ring = '?'
+
+        current_ring_val = unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring
+
+        st.info("Maniobra de Cambio de Anillo (SCO)")
+        
+        col1, col2 = st.columns(2)
+        with col1:
             origin_sys = get_system_by_id(unit.transit_origin_system_id)
             sys_name = origin_sys.get('name', '???') if origin_sys else '???'
+            st.markdown(f"**Operando en Sistema:** {sys_name}")
             
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Sistema", sys_name)
-            with col2:
-                st.metric("Ticks Restantes", unit.transit_ticks_remaining)
-                
-        except Exception:
-            st.warning("Maniobra orbital en curso")
+        with col2:
+            st.metric("Trayectoria", f"R[{current_ring_val}] → R[{dest_ring}]")
+            st.caption(f"Ticks Restantes: {unit.transit_ticks_remaining}")
             
     else:
         # Tránsito Interestelar Estándar

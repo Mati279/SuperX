@@ -12,6 +12,7 @@ Refactorizado V13.0: Navegación estratificada, tiempos físicos entre anillos y
 Refactorizado V13.1: Fix bloqueo en validación local. Se inyecta MovementType en validación para omitir chequeos de distancia en movimientos orbitales/superficie.
 Refactorizado V13.2: Reordenamiento de prioridades en determine_movement_type para evitar falsos positivos de INTER_RING en movimientos planetarios.
 Refactorizado V13.3: Fix bug de llegada a Ring 0 en tránsitos locales y manejo explícito de datos de destino.
+Refactorizado V13.4: Persistencia total de anillo destino en Data Layer.
 """
 
 from typing import Optional, Dict, Any, Tuple, List
@@ -455,7 +456,8 @@ def initiate_movement(
             starlane_id = starlane.get('id') if starlane else None
 
         # V13.0: Inter-Ring ahora puede caer aquí si tiene ticks > 0 (siempre 1 tick ahora)
-        # Se guarda el destination.to_dict() que contiene el campo 'ring'
+        # Se guarda el destination.to_dict() que contiene el campo 'ring'.
+        # Aseguramos que el repositorio reciba 'destination.to_dict()' que es rico en datos.
         success = start_unit_transit(
             unit_id=unit_id,
             destination_data=destination.to_dict(),
@@ -530,6 +532,8 @@ def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
     
     V13.3: Corrige el bug de 'Ring 0' asegurando que la ubicación se actualiza
     explícitamente con los datos guardados en transit_destination_data.
+    V13.4: Ahora confía en 'complete_unit_transit' que lee 'transit_destination_ring'
+    desde la DB, pero mantenemos la lógica de 'update_unit_location_advanced' para redundancia y seguridad.
 
     Returns:
         Lista de diccionarios con información de cada llegada
@@ -545,8 +549,7 @@ def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
         player_id = unit_data.get('player_id')
         dest_system = unit_data.get('transit_destination_system_id')
         
-        # V13.3: Extraer datos completos del destino
-        # Esto es crucial para movimientos Inter-Ring donde el sistema es el mismo pero el anillo cambia.
+        # V13.3: Extraer datos completos del destino (JSON fallback si la columna no bastara)
         dest_json = unit_data.get('transit_destination_data')
         dest_data = {}
         if isinstance(dest_json, str):
@@ -557,20 +560,20 @@ def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
         elif isinstance(dest_json, dict):
             dest_data = dest_json
         
-        # Recuperar valores específicos o usar defaults si fallara la lectura
+        # Recuperar valores específicos
+        # Si tenemos la columna transit_destination_ring, complete_unit_transit la usará.
+        # Aquí usamos el JSON para el log y update redundante.
         target_ring = dest_data.get('ring', 0)
         target_planet = dest_data.get('planet_id')
         target_sector = dest_data.get('sector_id')
         
-        # Asegurar sistema de destino (si es movimiento local, dest_system podría ser None en algunos esquemas antiguos, 
-        # pero normalmente start_unit_transit lo guarda). Si es None, usar el actual.
+        # Asegurar sistema de destino
         final_system_id = dest_system if dest_system else unit_data.get('location_system_id')
 
         # Determinar status final
         new_status = UnitStatus.GROUND if target_sector is not None else UnitStatus.SPACE
 
-        # V13.3: Actualización explícita de ubicación antes de completar el tránsito.
-        # Esto sobrescribe cualquier valor por defecto que complete_unit_transit pudiera poner.
+        # Actualización explícita de ubicación
         update_success = update_unit_location_advanced(
             unit_id=unit_id,
             system_id=final_system_id,
@@ -580,7 +583,7 @@ def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
             status=new_status
         )
 
-        # Completar tránsito (limpiar flags)
+        # Completar tránsito (limpiar flags y usar transit_destination_ring en DB)
         success = complete_unit_transit(unit_id, current_tick)
 
         if success and update_success:
