@@ -13,6 +13,7 @@ Refactorizado V13.1: Fix bloqueo en validación local. Se inyecta MovementType e
 Refactorizado V13.2: Reordenamiento de prioridades en determine_movement_type para evitar falsos positivos de INTER_RING en movimientos planetarios.
 Refactorizado V13.3: Fix bug de llegada a Ring 0 en tránsitos locales y manejo explícito de datos de destino.
 Refactorizado V13.4: Persistencia total de anillo destino en Data Layer.
+Actualizado V13.5: Soporte para saltos Inter-Ring largos con costo de energía.
 """
 
 from typing import Optional, Dict, Any, Tuple, List
@@ -26,6 +27,7 @@ from core.movement_constants import (
     TICKS_SECTOR_TO_SECTOR,
     TICKS_SURFACE_TO_ORBIT,
     TICKS_BETWEEN_RINGS_SHORT,
+    ENERGY_COST_LONG_INTER_RING,
     STARLANE_DISTANCE_THRESHOLD,
     TICKS_STARLANE_SHORT,
     TICKS_STARLANE_LONG,
@@ -220,6 +222,9 @@ def calculate_movement_cost(
     
     Reglas de Negocio V13.0:
     - INTER_RING: Siempre 1 tick (TICKS_BETWEEN_RINGS_SHORT).
+    
+    Reglas de Negocio V13.5:
+    - INTER_RING > 3 anillos: Costo de energía ENERGY_COST_LONG_INTER_RING por nave.
     """
     ticks = 0
     energy = 0
@@ -240,6 +245,11 @@ def calculate_movement_cost(
         # V13.0: Movimiento entre anillos ahora siempre es 1 tick si es válido
         # La validación de distancia se hace en validate_movement_request
         ticks = TICKS_BETWEEN_RINGS_SHORT
+        
+        # V13.5: Costo de energía para saltos largos
+        dist_rings = abs(origin_ring - destination.ring)
+        if dist_rings > 3:
+            energy = ENERGY_COST_LONG_INTER_RING * unit.ship_count
 
     elif movement_type == MovementType.STARLANE:
         starlane = find_starlane_between(unit.location_system_id, destination.system_id)
@@ -277,6 +287,7 @@ def validate_movement_request(
     V13.0: Restricción de salto interestelar solo desde Espacio Exterior.
     V13.1: Validación de distancia de anillos selectiva basada en movement_type.
     V13.2: Lógica de distancia estricta para INTER_RING.
+    V13.5: Eliminada restricción de distancia máxima para INTER_RING (ahora tiene costo).
 
     Returns:
         Tuple[bool, str]: (is_valid, error_message)
@@ -335,12 +346,8 @@ def validate_movement_request(
              if planet and planet.get("orbital_ring") != origin_ring:
                  return False, f"Solo puedes entrar en órbita desde el Anillo {planet.get('orbital_ring')}."
         
-        # V13.1 / V13.2: Validar distancia máxima entre anillos SOLO si es movimiento INTER_RING
-        # Omitimos explícitamente esto para SURFACE_ORBIT y SECTOR_SURFACE.
-        if movement_type == MovementType.INTER_RING:
-            dist_rings = abs(origin_ring - destination.ring)
-            if dist_rings > 3:
-                return False, f"La maniobra inter-anillo excede el límite de salto (Máx: 3 anillos, actual: {dist_rings})."
+        # V13.5: Validación de distancia para INTER_RING eliminada.
+        # Ahora se permite cualquier salto dentro del sistema (con costo si > 3).
 
     # Restricción 2: Bloqueo de tránsito interestelar si ya se movió localmente
     if not is_local:
@@ -408,8 +415,8 @@ def initiate_movement(
     # Calcular costos
     ticks, energy_cost = calculate_movement_cost(unit, destination, movement_type)
 
-    # Validar recursos para Warp
-    if movement_type == MovementType.WARP and energy_cost > 0:
+    # Validar recursos (Warp o Maniobra Larga)
+    if energy_cost > 0:
         finances = get_player_finances(player_id)
         current_energy = finances.get('celulas_energia', 0) if finances else 0
         if current_energy < energy_cost:
@@ -421,7 +428,7 @@ def initiate_movement(
         update_player_resources(player_id, {
             'celulas_energia': current_energy - energy_cost
         })
-        log_event(f"⚡ Warp: -{energy_cost} células de energía", player_id)
+        log_event(f"⚡ Energía Consumida: -{energy_cost} células (Movimiento: {movement_type.name})", player_id)
 
     # Ejecutar movimiento
     if ticks == 0:
@@ -621,6 +628,7 @@ def estimate_travel_time(
 
     V10.1: Actualizado con nuevas reglas de negocio.
     V13.0: Actualizado con tiempos físicos para Inter-Ring basados en distancia.
+    V13.5: Actualizado con costo de energía para saltos largos.
 
     Args:
         origin_system_id: Sistema de origen
@@ -645,11 +653,17 @@ def estimate_travel_time(
         
         # V13.0: Inter-ring unificado (1 Tick)
         ticks = TICKS_BETWEEN_RINGS_SHORT
+        energy_cost = 0
+        
+        # V13.5: Costo para saltos largos
+        if ring_diff > 3:
+            energy_cost = ENERGY_COST_LONG_INTER_RING * ship_count
             
         return {
             'route_type': 'inter_ring',
             'ticks': ticks,
             'is_instant': False,
+            'energy_cost': energy_cost,
             'description': f'Maniobra orbital ({ring_diff} anillos de distancia)'
         }
 

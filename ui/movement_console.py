@@ -9,6 +9,7 @@ V13.0: Refactorización de Navegación - Restricciones físicas estrictas y sopo
 V13.3: Refactor visualización SCO (Inter-Ring) y restricción proactiva de distancia en UI.
 V13.4: Visualización mejorada de Maniobras SCO (R[X] -> R[Y]) y bloqueo estricto en UI (>3 anillos).
 V13.5: Persistencia del diálogo tras movimiento local si quedan puntos de movimiento.
+V13.6: Soporte UI para saltos largos con costo de energía (eliminación de bloqueo >3 anillos).
 """
 
 import streamlit as st
@@ -214,8 +215,9 @@ def _render_cost_display(estimate: Dict[str, Any], ship_count: int = 1):
         </div>
         """, unsafe_allow_html=True)
     else:
-        energy_class = "cost-warning" if has_penalty else ""
+        energy_class = "cost-warning" if has_penalty or energy > 0 else ""
         penalty_text = " (Penalización 2x)" if has_penalty else ""
+        
         st.markdown(f"""
         <div class="cost-display">
             Tiempo: <strong>{ticks} Tick(s)</strong> |
@@ -450,8 +452,7 @@ def _render_ring_options(
     """
     Opciones cuando la unidad está en un anillo (no en órbita).
     V13.0: Selector de anillo dinámico.
-    V13.3: Validación proactiva de distancia (<= 3 anillos).
-    V13.4: Bloqueo de botón si se excede la distancia.
+    V13.6: Eliminación de restricción de distancia (ahora con costo de energía).
     """
     st.markdown("#### Opciones de Movimiento")
 
@@ -534,20 +535,20 @@ def _render_ring_options(
             )
 
             if selected_ring is not None:
-                # V13.0: estimate_travel_time ahora calcula ticks reales por distancia
-                estimate = estimate_travel_time(system_id, system_id, current_ring, selected_ring)
+                # V13.0: estimate_travel_time ahora calcula ticks reales por distancia y costo de energía
+                estimate = estimate_travel_time(
+                    system_id, 
+                    system_id, 
+                    origin_ring=current_ring, 
+                    dest_ring=selected_ring,
+                    ship_count=unit.ship_count
+                )
                 
                 with action_container:
-                    _render_cost_display(estimate)
+                    _render_cost_display(estimate, unit.ship_count)
 
-                    # V13.3: Validación proactiva de distancia
-                    dist_rings = abs(current_ring - selected_ring)
-                    is_too_far = dist_rings > 3
-                    
-                    if is_too_far:
-                        st.error(f"⚠️ La distancia excede el límite de salto de 1 tick (Máx: 3 anillos, Actual: {dist_rings}).")
-                    
-                    if st.button("Iniciar Maniobra", type="primary", key="btn_ring_space", use_container_width=True, disabled=is_too_far):
+                    # V13.6: Eliminado bloqueo por distancia. Se permite el salto.
+                    if st.button("Iniciar Maniobra", type="primary", key="btn_ring_space", use_container_width=True):
                         selected_dest = DestinationData(
                             system_id=system_id,
                             planet_id=None,
@@ -647,7 +648,7 @@ def _render_stellar_options(
     """
     Opciones cuando la unidad está en el Sector Estelar (Ring 0).
     V13.3: Validación proactiva de distancia.
-    V13.4: Bloqueo de botón si se excede la distancia.
+    V13.6: Eliminación de bloqueo por distancia.
     """
     st.markdown("#### Opciones de Movimiento")
 
@@ -684,19 +685,19 @@ def _render_stellar_options(
             )
 
             if selected_ring is not None:
-                estimate = estimate_travel_time(system_id, system_id, current_ring, selected_ring)
+                estimate = estimate_travel_time(
+                    system_id, 
+                    system_id, 
+                    origin_ring=current_ring, 
+                    dest_ring=selected_ring,
+                    ship_count=unit.ship_count
+                )
                 
                 with action_container:
-                    _render_cost_display(estimate)
+                    _render_cost_display(estimate, unit.ship_count)
 
-                    # V13.3: Validación proactiva de distancia
-                    dist_rings = abs(current_ring - selected_ring)
-                    is_too_far = dist_rings > 3
-                    
-                    if is_too_far:
-                        st.error(f"⚠️ La distancia excede el límite de salto de 1 tick (Máx: 3 anillos, Actual: {dist_rings}).")
-
-                    if st.button("Iniciar Maniobra", type="primary", key="btn_ring_stellar", use_container_width=True, disabled=is_too_far):
+                    # V13.6: Eliminado bloqueo por distancia.
+                    if st.button("Iniciar Maniobra", type="primary", key="btn_ring_stellar", use_container_width=True):
                         selected_dest = DestinationData(
                             system_id=system_id,
                             planet_id=None,
