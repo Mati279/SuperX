@@ -66,6 +66,19 @@ def delete_troop(troop_id: int) -> bool:
         print(f"Error deleting troop {troop_id}: {e}")
         return False
 
+# --- TROOPS (EXTENDED) ---
+
+def get_troops_by_player(player_id: int) -> List[Dict[str, Any]]:
+    """Obtiene todas las tropas del jugador."""
+    db = get_supabase()
+    try:
+        response = db.table("troops").select("*").eq("player_id", player_id).execute()
+        return response.data if response.data else []
+    except Exception as e:
+        print(f"Error fetching troops for player {player_id}: {e}")
+        return []
+
+
 # --- UNITS ---
 
 def create_unit(
@@ -143,6 +156,38 @@ def get_unit_by_id(unit_id: int) -> Optional[Dict[str, Any]]:
     except Exception as e:
         print(f"Error fetching unit {unit_id}: {e}")
         return None
+
+def rename_unit(unit_id: int, new_name: str, player_id: int) -> bool:
+    """Renombra una unidad existente. Verifica propiedad."""
+    db = get_supabase()
+    try:
+        unit = db.table("units").select("player_id").eq("id", unit_id).single().execute()
+        if not unit.data or unit.data.get("player_id") != player_id:
+            return False
+        response = db.table("units").update({"name": new_name}).eq("id", unit_id).execute()
+        return bool(response.data)
+    except Exception as e:
+        print(f"Error renaming unit {unit_id}: {e}")
+        return False
+
+
+def delete_unit(unit_id: int, player_id: int) -> bool:
+    """
+    Disuelve una unidad instantáneamente.
+    Los miembros quedan sueltos en la misma ubicación.
+    """
+    db = get_supabase()
+    try:
+        unit = db.table("units").select("player_id").eq("id", unit_id).single().execute()
+        if not unit.data or unit.data.get("player_id") != player_id:
+            return False
+        db.table("unit_members").delete().eq("unit_id", unit_id).execute()
+        response = db.table("units").delete().eq("id", unit_id).execute()
+        return bool(response.data)
+    except Exception as e:
+        print(f"Error deleting unit {unit_id}: {e}")
+        return False
+
 
 def update_unit_status(unit_id: int, status: UnitStatus) -> bool:
     db = get_supabase()
