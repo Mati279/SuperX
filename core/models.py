@@ -14,6 +14,7 @@ Actualizado V10.0: Motor de Movimiento, LocationRing, UnitLocation, campos de tr
 Refactorizado V11.0: Geolocalización dinámica en CommanderData.sheet.
 Actualizado V11.1: Persistencia de ubicación en TroopSchema.
 Actualizado V11.2: Unidades - Campo local_moves_count para límite de movimientos diarios.
+Actualizado V14.0: Unidades - Campo ship_count para tamaño de flota.
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -701,6 +702,9 @@ class UnitSchema(BaseModel):
     player_id: int
     name: str
     status: UnitStatus = UnitStatus.GROUND
+    
+    # V14.0: Propiedad convertida a campo de base de datos
+    ship_count: int = Field(default=1, ge=1)
 
     # V10.0: Ubicación jerárquica (para compatibilidad, mantenemos los campos legacy)
     location_system_id: Optional[int] = None
@@ -749,12 +753,6 @@ class UnitSchema(BaseModel):
             transit_origin_system_id=self.transit_origin_system_id,
             transit_destination_system_id=self.transit_destination_system_id
         )
-
-    @property
-    def ship_count(self) -> int:
-        """Cuenta naves asignadas a la unidad (para cálculo de Warp)."""
-        # TODO: Implementar cuando se añadan naves a unidades
-        return 1
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'UnitSchema':

@@ -14,6 +14,7 @@ Refactorizado V13.2: Reordenamiento de prioridades en determine_movement_type pa
 Refactorizado V13.3: Fix bug de llegada a Ring 0 en tránsitos locales y manejo explícito de datos de destino.
 Refactorizado V13.4: Persistencia total de anillo destino en Data Layer.
 Actualizado V13.5: Soporte para saltos Inter-Ring largos con costo de energía.
+Actualizado V14.0: Soporte para ship_count, Starlane Boost y límites de Warp.
 """
 
 from typing import Optional, Dict, Any, Tuple, List
@@ -27,13 +28,16 @@ from core.movement_constants import (
     TICKS_SECTOR_TO_SECTOR,
     TICKS_SURFACE_TO_ORBIT,
     TICKS_BETWEEN_RINGS_SHORT,
-    ENERGY_COST_LONG_INTER_RING,
+    INTER_RING_LONG_DISTANCE_THRESHOLD,
+    INTER_RING_ENERGY_COST_PER_SHIP,
     STARLANE_DISTANCE_THRESHOLD,
     TICKS_STARLANE_SHORT,
     TICKS_STARLANE_LONG,
+    STARLANE_ENERGY_BOOST_COST,
     WARP_ENERGY_COST_PER_UNIT_DISTANCE,
     WARP_TICKS_BASE,
     WARP_TICKS_PER_10_DISTANCE,
+    WARP_MAX_DISTANCE,
     MOVEMENT_LOCK_ON_ORBIT_CHANGE
 )
 from data.unit_repository import (
@@ -210,62 +214,61 @@ def is_local_movement(unit: UnitSchema, destination: DestinationData) -> bool:
 def calculate_movement_cost(
     unit: UnitSchema,
     destination: DestinationData,
-    movement_type: MovementType
+    movement_type: MovementType,
+    use_boost: bool = False
 ) -> Tuple[int, int]:
     """
     Calcula ticks y costo de energía para un movimiento.
-
-    Reglas de Negocio V10.1:
-    - SECTOR_SURFACE, SURFACE_ORBIT: Tiempo = 0 (instantáneo)
-    - WARP desde Orbit o Ring > 0: Costo de energía x2 (penalización gravitacional)
-    - WARP desde Sector Estelar (Ring 0): Costo normal
-    
-    Reglas de Negocio V13.0:
-    - INTER_RING: Siempre 1 tick (TICKS_BETWEEN_RINGS_SHORT).
-    
-    Reglas de Negocio V13.5:
-    - INTER_RING > 3 anillos: Costo de energía ENERGY_COST_LONG_INTER_RING por nave.
+    V14.0: Soporte para use_boost en Starlane y costos basados en ship_count.
     """
     ticks = 0
     energy = 0
+    
+    # Obtener ship_count (fallback a 1 por seguridad)
+    ship_count = unit.ship_count if hasattr(unit, 'ship_count') else 1
 
     # V10.1: Obtener ring de origen para penalización WARP
     origin_ring = unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring
 
     if movement_type == MovementType.SECTOR_SURFACE:
-        # V10.1: Movimiento intra-planeta = instantáneo
         ticks = 0
 
     elif movement_type == MovementType.SURFACE_ORBIT:
-        # V10.1: Superficie <-> Órbita = instantáneo
-        # V13.0: Órbita <-> Espacio (mismo anillo) = instantáneo
         ticks = 0
 
     elif movement_type == MovementType.INTER_RING:
-        # V13.0: Movimiento entre anillos ahora siempre es 1 tick si es válido
-        # La validación de distancia se hace en validate_movement_request
+        # V13.0: Siempre 1 tick base
         ticks = TICKS_BETWEEN_RINGS_SHORT
         
-        # V13.5: Costo de energía para saltos largos
+        # V14.0: Costo de energía para saltos largos basado en ship_count
         dist_rings = abs(origin_ring - destination.ring)
-        if dist_rings > 3:
-            energy = ENERGY_COST_LONG_INTER_RING * unit.ship_count
+        if dist_rings > INTER_RING_LONG_DISTANCE_THRESHOLD:
+            energy = INTER_RING_ENERGY_COST_PER_SHIP * ship_count
 
     elif movement_type == MovementType.STARLANE:
         starlane = find_starlane_between(unit.location_system_id, destination.system_id)
         if starlane:
             distance = get_starlane_distance(starlane)
-            ticks = TICKS_STARLANE_SHORT if distance <= STARLANE_DISTANCE_THRESHOLD else TICKS_STARLANE_LONG
+            
+            if distance <= STARLANE_DISTANCE_THRESHOLD:
+                ticks = TICKS_STARLANE_SHORT
+            else:
+                # Distancia larga > 15
+                if use_boost:
+                    # Sobrecarga: Viaje rápido (1 tick) pero costo energético
+                    ticks = TICKS_STARLANE_SHORT
+                    energy = STARLANE_ENERGY_BOOST_COST * ship_count
+                else:
+                    # Viaje normal largo (2 ticks)
+                    ticks = TICKS_STARLANE_LONG
 
     elif movement_type == MovementType.WARP:
         distance = calculate_euclidean_distance(unit.location_system_id, destination.system_id)
-        ship_count = unit.ship_count  # Propiedad del modelo
 
         ticks = WARP_TICKS_BASE + int(distance / 10) * WARP_TICKS_PER_10_DISTANCE
         energy = int(WARP_ENERGY_COST_PER_UNIT_DISTANCE * distance * ship_count)
 
         # V10.1: Penalización gravitacional - WARP desde órbita o anillo planetario
-        # Si el origen NO es Sector Estelar (Ring 0), el costo de energía se duplica
         if origin_ring > 0:
             energy = energy * 2
 
@@ -282,15 +285,7 @@ def validate_movement_request(
 ) -> Tuple[bool, str]:
     """
     Valida que un movimiento sea posible.
-    V11.3: Implementa restricciones de local_moves_count.
-    V11.4: Permite movimientos locales si local_moves_count < 2 aunque movement_locked sea True.
-    V13.0: Restricción de salto interestelar solo desde Espacio Exterior.
-    V13.1: Validación de distancia de anillos selectiva basada en movement_type.
-    V13.2: Lógica de distancia estricta para INTER_RING.
-    V13.5: Eliminada restricción de distancia máxima para INTER_RING (ahora tiene costo).
-
-    Returns:
-        Tuple[bool, str]: (is_valid, error_message)
+    V14.0: Validación de distancia máxima de Warp (30.0).
     """
     # Validar propiedad de la unidad
     if unit.player_id != player_id:
@@ -311,13 +306,19 @@ def validate_movement_request(
         unit.location_sector_id == destination.sector_id and
         origin_ring == destination.ring):
         return False, "El destino es igual al origen"
+        
+    # --- Validaciones Específicas por Tipo (V14.0) ---
+    
+    if movement_type == MovementType.WARP:
+        distance = calculate_euclidean_distance(unit.location_system_id, destination.system_id)
+        if distance > WARP_MAX_DISTANCE:
+            return False, f"Destino fuera de rango Warp (Distancia: {distance:.1f} / Max: {WARP_MAX_DISTANCE})"
 
     # --- V11.3 / V11.4: LOGICA DE BLOQUEO Y MOVIMIENTO LOCAL ---
 
     is_local = is_local_movement(unit, destination)
 
     # Validar bloqueo de movimiento (movement_locked)
-    # V11.4: Si está bloqueada, SOLO permitimos si es movimiento local Y aún tiene cupo (count < 2)
     if unit.movement_locked:
         allow_override = False
         if is_local and unit.local_moves_count < 2:
@@ -332,30 +333,24 @@ def validate_movement_request(
             return False, f"Límite de movimientos locales alcanzado ({unit.local_moves_count}/2). Espera al próximo tick."
         
         # Validación Órbita <-> Anillo (Constraint estricto)
-        # Si se mueve de Órbita a Anillo (espacio), el anillo destino debe ser el anillo orbital del planeta
         if unit.location_planet_id is not None and destination.planet_id is None:
             # Salida de órbita -> Espacio
             planet = get_planet_by_id(unit.location_planet_id)
             if planet and planet.get("orbital_ring") != destination.ring:
                 return False, f"Solo puedes salir al Anillo {planet.get('orbital_ring')} desde esta órbita."
                 
-        # Si se mueve de Anillo (espacio) a Órbita, el anillo de origen debe ser el anillo orbital del planeta
         if unit.location_planet_id is None and destination.planet_id is not None:
              # Espacio -> Entrada en órbita
              planet = get_planet_by_id(destination.planet_id)
              if planet and planet.get("orbital_ring") != origin_ring:
                  return False, f"Solo puedes entrar en órbita desde el Anillo {planet.get('orbital_ring')}."
-        
-        # V13.5: Validación de distancia para INTER_RING eliminada.
-        # Ahora se permite cualquier salto dentro del sistema (con costo si > 3).
 
     # Restricción 2: Bloqueo de tránsito interestelar si ya se movió localmente
     if not is_local:
         if unit.local_moves_count > 0:
             return False, "La unidad ha realizado movimientos locales. No puede iniciar tránsito interestelar en este tick."
         
-        # V13.0: Restricción física de salto
-        # Si la unidad está acoplada a un sector (Planetario u Orbital), no puede saltar.
+        # V13.0: Restricción física de salto (debe estar en espacio, no sector)
         if unit.location_sector_id is not None:
             return False, "Debes salir al espacio exterior para iniciar un tránsito interestelar o un salto"
 
@@ -368,22 +363,12 @@ def initiate_movement(
     unit_id: int,
     destination: DestinationData,
     player_id: int,
-    current_tick: int
+    current_tick: int,
+    use_boost: bool = False
 ) -> MovementResult:
     """
     Inicia el movimiento de una unidad hacia un destino.
-    Valida recursos, actualiza estado a TRANSIT si aplica.
-    V11.3: Incrementa local_moves_count si es movimiento local.
-    V13.2: Usa el tipo de movimiento determinado para validación precisa.
-
-    Args:
-        unit_id: ID de la unidad a mover
-        destination: Datos del destino
-        player_id: ID del jugador que ordena el movimiento
-        current_tick: Tick actual del juego
-
-    Returns:
-        MovementResult con el resultado de la operación
+    V14.0: Soporta use_boost para Starlanes.
     """
     # Obtener unidad
     unit_data = get_unit_by_id(unit_id)
@@ -392,7 +377,7 @@ def initiate_movement(
 
     unit = UnitSchema.from_dict(unit_data)
 
-    # Determinar tipo de movimiento ANTES de validar
+    # Determinar tipo de movimiento
     origin_ring_val = unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring
     
     movement_type = determine_movement_type(
@@ -406,16 +391,15 @@ def initiate_movement(
         dest_ring=destination.ring
     )
 
-    # Validar movimiento (incluye restricciones V11.3, V11.4, V13.1 y V13.2)
-    # Se pasa movement_type para validación condicional
+    # Validar movimiento
     is_valid, error_msg = validate_movement_request(unit, destination, player_id, movement_type)
     if not is_valid:
         return MovementResult(success=False, error_message=error_msg)
 
-    # Calcular costos
-    ticks, energy_cost = calculate_movement_cost(unit, destination, movement_type)
+    # Calcular costos (incluyendo boost si aplica)
+    ticks, energy_cost = calculate_movement_cost(unit, destination, movement_type, use_boost)
 
-    # Validar recursos (Warp o Maniobra Larga)
+    # Validar recursos (Warp, Boost o Maniobra Larga)
     if energy_cost > 0:
         finances = get_player_finances(player_id)
         current_energy = finances.get('celulas_energia', 0) if finances else 0
@@ -428,12 +412,12 @@ def initiate_movement(
         update_player_resources(player_id, {
             'celulas_energia': current_energy - energy_cost
         })
-        log_event(f"⚡ Energía Consumida: -{energy_cost} células (Movimiento: {movement_type.name})", player_id)
+        desc_extra = " (Boost Activado)" if use_boost else ""
+        log_event(f"⚡ Energía Consumida: -{energy_cost} células (Movimiento: {movement_type.name}{desc_extra})", player_id)
 
     # Ejecutar movimiento
     if ticks == 0:
-        # Movimiento instantáneo (superficie <-> órbita o local instantáneo)
-        # V11.4: Pasamos el contador actual para decidir si bloquear
+        # Movimiento instantáneo
         success, applied_lock = _execute_instant_movement(
             unit_id, 
             destination, 
@@ -442,29 +426,24 @@ def initiate_movement(
         )
         
         if success:
-            # V11.3: Incrementar contador de movimientos locales
             increment_unit_local_moves(unit_id)
-            
             log_event(f"🚀 Unidad '{unit.name}' ha cambiado de posición (instantáneo)", player_id)
             return MovementResult(
                 success=True,
                 movement_type=movement_type,
                 ticks_required=0,
                 is_instant=True,
-                movement_locked=applied_lock # Refleja si realmente se bloqueó
+                movement_locked=applied_lock
             )
         return MovementResult(success=False, error_message="Error ejecutando movimiento instantáneo")
     else:
-        # Movimiento con duración (Interestelar o Inter-Ring)
+        # Movimiento con duración
         starlane = None
         starlane_id = None
         if movement_type == MovementType.STARLANE:
             starlane = find_starlane_between(unit.location_system_id, destination.system_id)
             starlane_id = starlane.get('id') if starlane else None
 
-        # V13.0: Inter-Ring ahora puede caer aquí si tiene ticks > 0 (siempre 1 tick ahora)
-        # Se guarda el destination.to_dict() que contiene el campo 'ring'.
-        # Aseguramos que el repositorio reciba 'destination.to_dict()' que es rico en datos.
         success = start_unit_transit(
             unit_id=unit_id,
             destination_data=destination.to_dict(),
@@ -493,13 +472,6 @@ def _execute_instant_movement(
 ) -> Tuple[bool, bool]:
     """
     Ejecuta un movimiento instantáneo (0 ticks).
-    Usado para superficie <-> órbita y movimientos locales.
-    
-    V11.4: Lógica de bloqueo inteligente.
-    Solo aplica movement_locked=True si se alcanza el límite de movimientos locales (2).
-    
-    Returns:
-        Tuple[bool, bool]: (success, was_locked)
     """
     # Determinar nuevo status
     new_status = UnitStatus.GROUND if destination.sector_id is not None else UnitStatus.SPACE
@@ -516,11 +488,6 @@ def _execute_instant_movement(
     
     was_locked = False
     if success and MOVEMENT_LOCK_ON_ORBIT_CHANGE:
-        # V11.4: Regla de 2 movimientos.
-        # Si current_local_moves es 0, este es el 1er movimiento -> NO lockear (permite el 2do).
-        # Si current_local_moves es 1, este es el 2do movimiento -> LOCK.
-        # Si current_local_moves >= 2, ya debería haber sido validado antes, pero por seguridad -> LOCK.
-        
         if current_local_moves >= 1:
             update_unit_movement_lock(unit_id, locked=True)
             was_locked = True
@@ -535,19 +502,8 @@ def _execute_instant_movement(
 def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
     """
     Procesa las llegadas de unidades en tránsito.
-    Llamado durante la fase de Decremento del tick.
-    
-    V13.3: Corrige el bug de 'Ring 0' asegurando que la ubicación se actualiza
-    explícitamente con los datos guardados en transit_destination_data.
-    V13.4: Ahora confía en 'complete_unit_transit' que lee 'transit_destination_ring'
-    desde la DB, pero mantenemos la lógica de 'update_unit_location_advanced' para redundancia y seguridad.
-
-    Returns:
-        Lista de diccionarios con información de cada llegada
     """
     arrivals = []
-
-    # Obtener unidades que llegan en este tick
     arriving_units = get_units_in_transit_arriving_at_tick(current_tick)
 
     for unit_data in arriving_units:
@@ -556,7 +512,7 @@ def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
         player_id = unit_data.get('player_id')
         dest_system = unit_data.get('transit_destination_system_id')
         
-        # V13.3: Extraer datos completos del destino (JSON fallback si la columna no bastara)
+        # Recuperar valores específicos (V13.3 / V13.4)
         dest_json = unit_data.get('transit_destination_data')
         dest_data = {}
         if isinstance(dest_json, str):
@@ -567,20 +523,13 @@ def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
         elif isinstance(dest_json, dict):
             dest_data = dest_json
         
-        # Recuperar valores específicos
-        # Si tenemos la columna transit_destination_ring, complete_unit_transit la usará.
-        # Aquí usamos el JSON para el log y update redundante.
-        target_ring = dest_data.get('ring', 0)
+        target_ring = unit_data.get('transit_destination_ring') or dest_data.get('ring', 0)
         target_planet = dest_data.get('planet_id')
         target_sector = dest_data.get('sector_id')
         
-        # Asegurar sistema de destino
         final_system_id = dest_system if dest_system else unit_data.get('location_system_id')
-
-        # Determinar status final
         new_status = UnitStatus.GROUND if target_sector is not None else UnitStatus.SPACE
 
-        # Actualización explícita de ubicación
         update_success = update_unit_location_advanced(
             unit_id=unit_id,
             system_id=final_system_id,
@@ -590,11 +539,9 @@ def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
             status=new_status
         )
 
-        # Completar tránsito (limpiar flags y usar transit_destination_ring en DB)
         success = complete_unit_transit(unit_id, current_tick)
 
         if success and update_success:
-            # Obtener nombre del sistema destino
             dest_name = "Destino Local"
             if final_system_id:
                 dest_system_data = get_system_by_id(final_system_id)
@@ -620,25 +567,12 @@ def estimate_travel_time(
     dest_system_id: int,
     origin_ring: int = 0,
     dest_ring: int = 0,
-    ship_count: int = 1
+    ship_count: int = 1,
+    use_boost: bool = False
 ) -> Dict[str, Any]:
     """
     Estima el tiempo de viaje entre dos ubicaciones.
-    Útil para la UI y planificación.
-
-    V10.1: Actualizado con nuevas reglas de negocio.
-    V13.0: Actualizado con tiempos físicos para Inter-Ring basados en distancia.
-    V13.5: Actualizado con costo de energía para saltos largos.
-
-    Args:
-        origin_system_id: Sistema de origen
-        dest_system_id: Sistema destino
-        origin_ring: Anillo de origen (para penalización WARP)
-        dest_ring: Anillo destino
-        ship_count: Número de naves (para cálculo de energía)
-
-    Returns:
-        Dict con información de la ruta y tiempo estimado
+    V14.0: Soporta use_boost y retorna flags para UI (can_boost).
     """
     # Mismo sistema
     if origin_system_id == dest_system_id:
@@ -651,13 +585,13 @@ def estimate_travel_time(
                 'description': 'Movimiento local (instantáneo)'
             }
         
-        # V13.0: Inter-ring unificado (1 Tick)
+        # Inter-ring
         ticks = TICKS_BETWEEN_RINGS_SHORT
         energy_cost = 0
         
-        # V13.5: Costo para saltos largos
-        if ring_diff > 3:
-            energy_cost = ENERGY_COST_LONG_INTER_RING * ship_count
+        # V14.0: Costo para saltos largos
+        if ring_diff > INTER_RING_LONG_DISTANCE_THRESHOLD:
+            energy_cost = INTER_RING_ENERGY_COST_PER_SHIP * ship_count
             
         return {
             'route_type': 'inter_ring',
@@ -671,22 +605,53 @@ def estimate_travel_time(
     starlane = find_starlane_between(origin_system_id, dest_system_id)
     if starlane:
         distance = get_starlane_distance(starlane)
-        ticks = TICKS_STARLANE_SHORT if distance <= STARLANE_DISTANCE_THRESHOLD else TICKS_STARLANE_LONG
+        
+        can_boost = False
+        ticks = 0
+        energy_cost = 0
+        
+        if distance <= STARLANE_DISTANCE_THRESHOLD:
+            ticks = TICKS_STARLANE_SHORT
+            desc = f'Vía Starlane (distancia: {distance:.1f})'
+        else:
+            # Distancia larga
+            can_boost = True
+            if use_boost:
+                ticks = TICKS_STARLANE_SHORT
+                energy_cost = STARLANE_ENERGY_BOOST_COST * ship_count
+                desc = f'Vía Starlane BOOSTED (distancia: {distance:.1f})'
+            else:
+                ticks = TICKS_STARLANE_LONG
+                desc = f'Vía Starlane (distancia: {distance:.1f})'
+        
         return {
             'route_type': 'starlane',
             'starlane_id': starlane.get('id'),
             'distance': distance,
             'ticks': ticks,
             'is_instant': False,
-            'description': f'Vía Starlane (distancia: {distance:.1f})'
+            'energy_cost': energy_cost,
+            'can_boost': can_boost,
+            'boost_cost_per_ship': STARLANE_ENERGY_BOOST_COST,
+            'description': desc
         }
 
     # Warp
     distance = calculate_euclidean_distance(origin_system_id, dest_system_id)
+    
+    # V14.0: Validar distancia Warp
+    if distance > WARP_MAX_DISTANCE:
+        return {
+            'route_type': 'warp_too_far',
+            'distance': distance,
+            'is_valid': False,
+            'description': f'Destino fuera de rango Warp ({distance:.1f} > {WARP_MAX_DISTANCE})'
+        }
+
     ticks = WARP_TICKS_BASE + int(distance / 10) * WARP_TICKS_PER_10_DISTANCE
     energy_cost_base = int(WARP_ENERGY_COST_PER_UNIT_DISTANCE * distance * ship_count)
 
-    # V10.1: Penalización gravitacional si origen no es Sector Estelar
+    # V10.1: Penalización gravitacional
     warp_penalty = origin_ring > 0
     energy_cost_final = energy_cost_base * 2 if warp_penalty else energy_cost_base
 
@@ -699,6 +664,7 @@ def estimate_travel_time(
         'distance': distance,
         'ticks': ticks,
         'is_instant': False,
+        'is_valid': True,
         'energy_cost': energy_cost_final,
         'energy_cost_base': energy_cost_base,
         'has_gravity_penalty': warp_penalty,

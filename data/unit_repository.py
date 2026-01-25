@@ -9,6 +9,7 @@ V11.1: Persistencia de ubicación en Tropas y lógica de disolución segura.
 V11.2: Hidratación de nombres en miembros de unidad (Fix Schema Validation).
 V11.3: Soporte para local_moves_count (movimientos locales limitados).
 V13.0: Soporte para persistencia de transit_destination_ring (Navegación Estratificada).
+V14.0: Soporte para ship_count (Tamaño de Flota) en creación y actualización.
 """
 
 from typing import Optional, List, Dict, Any
@@ -182,7 +183,8 @@ def get_troops_by_player(player_id: int) -> List[Dict[str, Any]]:
 def create_unit(
     player_id: int, 
     name: str, 
-    location_data: Dict[str, Any]
+    location_data: Dict[str, Any],
+    ship_count: int = 1 # V14.0: Support for fleet size
 ) -> Optional[Dict[str, Any]]:
     """
     Crea una Unidad vacía.
@@ -198,7 +200,8 @@ def create_unit(
             "location_planet_id": location_data.get("planet_id"),
             "location_sector_id": location_data.get("sector_id"),
             "ring": location_data.get("ring", 0),
-            "local_moves_count": 0
+            "local_moves_count": 0,
+            "ship_count": ship_count
         }
         response = db.table("units").insert(data).execute()
         if response.data:
@@ -361,6 +364,23 @@ def update_unit_location(unit_id: int, location_data: Dict[str, Any]) -> bool:
         return bool(response.data)
     except Exception as e:
         print(f"Error updating unit location {unit_id}: {e}")
+        return False
+
+def update_unit_ship_count(unit_id: int, ship_count: int) -> bool:
+    """
+    V14.0: Actualiza el número de naves (ship_count) de una unidad.
+    Usado cuando se compran nuevas naves o se pierden en combate.
+    """
+    db = get_supabase()
+    try:
+        # Validar valor mínimo
+        if ship_count < 1:
+            ship_count = 1
+            
+        response = db.table("units").update({"ship_count": ship_count}).eq("id", unit_id).execute()
+        return bool(response.data)
+    except Exception as e:
+        print(f"Error updating unit ship count {unit_id}: {e}")
         return False
 
 # --- UNIT MEMBERS ---

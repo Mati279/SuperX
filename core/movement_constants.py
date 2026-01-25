@@ -2,6 +2,7 @@
 """
 Constantes del Motor de Movimiento V10.0.
 Define tiempos de viaje, costos y reglas de navegación.
+Actualizado V14.0: Nuevos umbrales para Warp, Starlane Boost y Costos por Nave.
 """
 
 # --- TICKS DE VIAJE (SUPERFICIE) ---
@@ -12,16 +13,22 @@ TICKS_SURFACE_TO_ORBIT = 0           # Instantáneo pero bloquea movimiento
 MOVEMENT_LOCK_ON_ORBIT_CHANGE = True # Activa movement_locked tras subir/bajar
 
 # --- TICKS DE VIAJE (ENTRE ANILLOS) ---
-TICKS_BETWEEN_RINGS_SHORT = 1        # Costo unificado para cualquier salto entre anillos (Max dist 3)
-ENERGY_COST_LONG_INTER_RING = 2      # Costo de energía por nave para saltos > 3 anillos
+TICKS_BETWEEN_RINGS_SHORT = 1        # Costo unificado para cualquier salto entre anillos
+INTER_RING_LONG_DISTANCE_THRESHOLD = 3 # Umbral de distancia (diferencia de anillos) para cobrar energía
+INTER_RING_ENERGY_COST_PER_SHIP = 2    # Costo de energía por nave si supera el umbral
+
+# Legacy constant reference (se mantiene para compatibilidad si algo externo la usa, pero se prefiere la nueva)
+ENERGY_COST_LONG_INTER_RING = INTER_RING_ENERGY_COST_PER_SHIP 
 
 # --- STARLANES ---
-STARLANE_DISTANCE_THRESHOLD = 10.0   # Distancia para viaje corto
-TICKS_STARLANE_SHORT = 1             # Starlane con distancia <= threshold
+STARLANE_DISTANCE_THRESHOLD = 15.0   # Distancia para viaje corto (V14.0: Aumentado de 10.0 a 15.0)
+TICKS_STARLANE_SHORT = 1             # Starlane con distancia <= threshold (o con Boost)
 TICKS_STARLANE_LONG = 2              # Starlane con distancia > threshold
+STARLANE_ENERGY_BOOST_COST = 5       # Costo de energía por nave para reducir tiempo de viaje largo
 
 # --- WARP (Sin Starlane - Viaje FTL Directo) ---
-WARP_ENERGY_COST_PER_UNIT_DISTANCE = 1  # Células de energía por unidad de distancia
+WARP_MAX_DISTANCE = 30.0                 # Distancia máxima permitida para salto Warp
+WARP_ENERGY_COST_PER_UNIT_DISTANCE = 1   # Células de energía por unidad de distancia
 WARP_TICKS_BASE = 3                      # Ticks base para cualquier salto warp
 WARP_TICKS_PER_10_DISTANCE = 1           # +1 tick por cada 10 unidades de distancia
 
