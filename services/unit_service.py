@@ -473,7 +473,9 @@ def toggle_stealth_mode(unit_id: int, player_id: int) -> Dict[str, Any]:
         message = f"🥷 Modo Sigilo ACTIVADO para '{unit.name}'"
         
     # Actualizar DB
-    success = update_unit_status(unit_id, new_status.value)
+    # FIX V14.2.1: Pasar el objeto Enum completo, no el value.
+    # El repositorio (update_unit_status) se encarga de extraer .value.
+    success = update_unit_status(unit_id, new_status)
     
     if success:
         log_event(message, player_id)
