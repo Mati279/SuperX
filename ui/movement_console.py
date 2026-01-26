@@ -14,6 +14,7 @@ V14.2: Panel de Modos de Unidad (Sigilo) y restricciones visuales.
 V14.5: Visualización estricta de límites de movimiento para Stealth (1/1).
 V14.6: Corrección de cálculo de costos (basa en miembros reales) y marcador visual Movs X/Y.
 V14.7: Sincronización dinámica de ticks de viaje (Real-time calculation vs World Tick).
+V15.0: Integración de Exploración Táctica de Sectores.
 """
 
 import streamlit as st
@@ -45,6 +46,8 @@ from core.movement_constants import (
 from core.detection_constants import DISORIENTED_MAX_LOCAL_MOVES
 from data.world_repository import get_world_state
 from services.unit_service import toggle_stealth_mode
+# Nueva importación para exploración
+from core.exploration_engine import resolve_sector_exploration
 
 
 def _inject_movement_css():
@@ -966,6 +969,27 @@ def render_movement_console():
         
         if is_stealth:
             st.caption("🔒 En modo sigilo, los movimientos locales están restringidos a 1 por tick.")
+
+    # --- V15.0: SECCIÓN DE ACCIONES TÁCTICAS (Exploración) ---
+    if unit.status != UnitStatus.TRANSIT and unit.location_sector_id and unit.location_planet_id:
+        sectors = get_planet_sectors_status(unit.location_planet_id, player_id)
+        current_sector = next((s for s in sectors if s['id'] == unit.location_sector_id), None)
+
+        if current_sector and not current_sector.get('is_discovered', False):
+            st.markdown("### 🔭 Acciones Tácticas")
+            st.info("Este sector no ha sido cartografiado. Realiza una exploración para revelar recursos y amenazas.")
+            
+            if st.button("📡 Explorar Sector Actual", type="primary", use_container_width=True):
+                with st.spinner("Escaneando terreno..."):
+                    try:
+                        result = resolve_sector_exploration(unit_id, unit.location_sector_id, player_id)
+                        if result.success:
+                            st.toast(f"✅ Exploración exitosa: {result.message}")
+                            st.rerun()
+                        else:
+                            st.toast(f"❌ Fallo de exploración: {result.message}")
+                    except Exception as e:
+                        st.error(f"Error crítico en exploración: {e}")
 
     # --- V14.6: Lógica de Límites de Movimiento (Visualización Estricta) ---
     if unit.status == UnitStatus.STEALTH_MODE:
