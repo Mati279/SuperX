@@ -14,6 +14,7 @@ V14.1: Integración del Centro de Alertas Tácticas y Panel de Simulación de De
 Refactor V15.0: Compatibilidad Híbrida Pydantic V2/Dict para Unidades y Miembros.
 V15.1: Bloqueo de seguridad en gestión de unidades durante Tránsito Interestelar.
 V15.2: Fix Visualización - Soporte para personajes sueltos en espacio profundo (Anillos).
+V15.3: Fix UX - Botón 'Crear Unidad' habilitado en espacio profundo y anillos.
 """
 
 import streamlit as st
@@ -972,6 +973,23 @@ def _render_system_node(
                 # Render Chars
                 for char in stellar_chars:
                     _render_character_row(char, player_id, is_space=True)
+                
+                # --- NUEVO V15.3: Botón Crear Unidad en Espacio Profundo (Ring 0) ---
+                if stellar_chars:
+                    # Generar ID único negativo para evitar colisión con sector_ids reales
+                    pseudo_sector_id = -(system_id * 10000) 
+                    loc_data = {"system_id": system_id, "ring": 0, "sector_id": None}
+                    # Tropas disponibles (Pool global no asignado, según lógica existente)
+                    avail_troops = [t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids]
+                    
+                    _render_create_unit_button(
+                        sector_id=pseudo_sector_id,
+                        player_id=player_id,
+                        location_data=loc_data,
+                        available_chars=stellar_chars,
+                        available_troops=avail_troops,
+                        is_orbit=True
+                    )
 
             # Anillos 1-6
             for ring in range(1, 7):
@@ -989,6 +1007,21 @@ def _render_system_node(
                     # Render Chars
                     for char in ring_chars:
                         _render_character_row(char, player_id, is_space=True)
+                    
+                    # --- NUEVO V15.3: Botón Crear Unidad en Anillo (Ring 1-6) ---
+                    if ring_chars:
+                        pseudo_sector_id = -(system_id * 10000 + ring)
+                        loc_data = {"system_id": system_id, "ring": ring, "sector_id": None}
+                        avail_troops = [t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids]
+                        
+                        _render_create_unit_button(
+                            sector_id=pseudo_sector_id,
+                            player_id=player_id,
+                            location_data=loc_data,
+                            available_chars=ring_chars,
+                            available_troops=avail_troops,
+                            is_orbit=True
+                        )
 
             # Planetas ordenados
             planets_sorted = sorted(planets, key=lambda p: p.get("orbital_ring", 1))
