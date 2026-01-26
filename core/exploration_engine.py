@@ -1,12 +1,12 @@
 # core/exploration_engine.py (Completo)
 """
-Motor de Exploración de Sectores V1.5.
+Motor de Exploración de Sectores V1.4.
 Transforma la exploración de una acción de UI a una orden operativa basada en habilidades.
 Gestiona la resolución MRG, la validación de ubicación y la narrativa determinista.
-Actualizado V1.5: 
-- Eliminado recálculo forzado de habilidades al vuelo; ahora confía estrictamente en el valor persistido en DB (unit.skill_exploracion).
-- Optimización de lecturas a base de datos (eliminada lectura redundante).
+Actualizado V1.4: 
+- Recálculo dinámico de habilidades (skill_exploracion) antes de la acción.
 - Formateo estandarizado de recursos en narrativa y logs.
+- Limpieza de prefijos en logs.
 """
 
 from typing import Optional, Dict, Any
@@ -16,8 +16,8 @@ from core.mrg_engine import resolve_action, MRGResult, ResultType
 from core.models import UnitSchema, UnitStatus
 from core.mrg_constants import DIFFICULTY_STANDARD
 from core.movement_constants import MAX_LOCAL_MOVES_PER_TURN
-# Importación eliminada para evitar recálculo forzado
-# from core.unit_engine import calculate_and_update_unit_skills
+# Importación para actualización de habilidades
+from core.unit_engine import calculate_and_update_unit_skills
 from data.unit_repository import (
     get_unit_by_id, 
     update_unit_status, 
@@ -46,41 +46,49 @@ def resolve_sector_exploration(
     """
     Ejecuta una operación de exploración sobre un sector.
     
-    Reglas V1.5:
+    Reglas V1.4:
     1. Validación de unidad básica.
-    2. Validación de fatiga con datos frescos.
-    3. Extracción directa de skill_exploracion desde la unidad (DB).
+    2. Recálculo de habilidades (Unit Engine).
+    3. Validación de fatiga con datos frescos.
     4. MRG: skill_exploracion vs Dificultad 50 (STANDARD).
     5. Narrativa estandarizada: 'Sector {nombre}. Recursos: {lista}.'
     """
     
-    # 1. Obtener y Validar Unidad (Fuente de verdad: Base de Datos)
+    # 1. Obtener y Validar Unidad (Comprobación inicial de existencia y propiedad)
     unit_data = get_unit_by_id(unit_id)
     if not unit_data:
         raise ValueError(f"Unidad {unit_id} no encontrada.")
     
-    # Hidratación del esquema (incluye skill_exploracion)
-    unit = UnitSchema.from_dict(unit_data)
+    # Instancia temporal para validar propiedad y estado básico antes de procesar skills
+    temp_unit = UnitSchema.from_dict(unit_data)
     
-    if unit.player_id != player_id:
+    if temp_unit.player_id != player_id:
         raise PermissionError("No tienes autoridad sobre esta unidad.")
         
-    if unit.status == UnitStatus.TRANSIT:
+    if temp_unit.status == UnitStatus.TRANSIT:
         raise ValueError("La unidad está en tránsito y no puede realizar exploraciones.")
 
-    # 2. Extracción EXPLÍCITA de skill_exploracion (Sin recálculo al vuelo)
-    # Se usa estrictamente el valor almacenado en la columna 'skill_exploracion'
+    # 2. Recálculo de Habilidades y Actualización de Objeto Unidad
+    # Importante: Esto asegura que el skill_exploracion sea el correcto antes de tirar MRG
+    skill_calc_result = calculate_and_update_unit_skills(unit_id)
+
+    # Recargar datos frescos de la base de datos tras el cálculo
+    unit_data = get_unit_by_id(unit_id)
+    unit = UnitSchema.from_dict(unit_data)
+
+    # 2b. Extracción EXPLÍCITA de skill_exploracion desde la unidad (Prioridad)
+    # Este es el valor que se usará para la tirada MRG, NO el del líder solo
     unit_skill_exploracion = unit.skill_exploracion if unit.skill_exploracion is not None else 0
 
-    # Log de diagnóstico si el skill es 0 (posible unidad antigua o sin actualizar)
-    if unit_skill_exploracion == 0:
+    # Log de diagnóstico si el skill parece no calculado
+    if unit_skill_exploracion == 0 and skill_calc_result.get("character_count", 0) > 0:
         log_event(
-            f"⚠️ DEBUG: La unidad {unit.name} está explorando con skill_exploracion=0. Verifique que sus stats estén actualizados.",
+            f"⚠️ DEBUG: skill_exploracion=0 con {skill_calc_result.get('character_count')} personajes en unidad {unit.name}",
             player_id,
-            event_type="SKILL_WARNING"
+            event_type="SKILL_DEBUG"
         )
 
-    # Validación de Fatiga de Movimiento
+    # Validación de Fatiga de Movimiento (con datos actualizados)
     move_limit = 1 if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
     
     if unit.local_moves_count >= move_limit:
@@ -114,7 +122,8 @@ def resolve_sector_exploration(
         raise ValueError(f"La unidad debe estar en la superficie del planeta para explorar este sector.")
 
     # 4. Preparar Tirada MRG
-    # IMPORTANTE: Usamos el skill_exploracion DIRECTO de la UNIDAD.
+    # IMPORTANTE: Usamos el skill_exploracion de la UNIDAD (calculado desde sus miembros)
+    # NO el stat individual del líder o personaje
     merit_points = unit_skill_exploracion
     difficulty = DIFFICULTY_STANDARD  # 50
 
@@ -125,13 +134,13 @@ def resolve_sector_exploration(
         difficulty=difficulty,
         action_description=action_desc,
         player_id=player_id,
-        skill_source="unit.skill_exploracion (DB)",  # Trazabilidad clara
+        skill_source="unit.skill_exploracion",  # Trazabilidad del origen del bono
         details={
             "unit_id": unit.id,
             "unit_name": unit.name,
             "sector_id": sector_id,
             "sector_type": sector_data.get('sector_type'),
-            "skill_exploracion_usado": unit_skill_exploracion
+            "skill_exploracion_usado": unit_skill_exploracion  # Para debug en UI
         }
     )
 
@@ -158,6 +167,7 @@ def resolve_sector_exploration(
             resource_info = "Ninguno"
 
         # Formateo de nombre de sector para evitar "Sector Sector..."
+        # Si el nombre ya empieza por "Sector" (case insensitive), no agregamos el prefijo.
         display_name = sec_name
         if not display_name.strip().lower().startswith("sector"):
             display_name = f"Sector {sec_name}"
@@ -167,9 +177,9 @@ def resolve_sector_exploration(
         # Efecto mecánico: Revelar sector
         grant_sector_knowledge(player_id, sector_id)
 
-        # Log estandarizado
+        # Log estandarizado con bono de unidad para debug visual
         log_event(
-            f"{narrative} (Skill: {unit_skill_exploracion})",
+            f"{narrative} (Skill Exploración: {unit_skill_exploracion})",
             player_id,
             event_type="EXPLORATION_SUCCESS"
         )
