@@ -17,6 +17,7 @@ Actualizado V13.5: Soporte para saltos Inter-Ring largos con costo de energía.
 Actualizado V14.0: Soporte para ship_count, Starlane Boost y límites de Warp.
 Actualizado V14.2: Restricción de movimientos locales para unidades en STEALTH_MODE.
 Actualizado V14.3: Eliminada restricción de movimiento para STEALTH_MODE (ahora usan MAX_LOCAL_MOVES_PER_TURN y pierden sigilo al moverse).
+Refactorizado V14.4: Fix cálculo de ship_count dinámico (basado en miembros) y corrección de distancia Starlane por defecto (1.0).
 """
 
 from typing import Optional, Dict, Any, Tuple, List
@@ -131,12 +132,26 @@ def find_starlane_between(system_a_id: int, system_b_id: int) -> Optional[Dict[s
 def get_starlane_distance(starlane: Dict[str, Any]) -> float:
     """
     Obtiene la distancia de una starlane.
-    Si no tiene campo 'distancia', la calcula desde las coordenadas de los sistemas.
+    V14.4: Si la distancia es None o 1.0 (default DB), fuerza el cálculo real euclidiano.
     """
-    if 'distancia' in starlane and starlane['distancia'] is not None:
-        return float(starlane['distancia'])
+    dist_val = starlane.get('distancia')
+    
+    # Comprobamos si es válido (distinto de None y distinto del default 1.0)
+    # Usamos una tolerancia pequeña para float comparison
+    is_default = False
+    if dist_val is None:
+        is_default = True
+    else:
+        try:
+            if abs(float(dist_val) - 1.0) < 0.001:
+                is_default = True
+        except (ValueError, TypeError):
+            is_default = True
 
-    # Calcular desde coordenadas
+    if not is_default:
+        return float(dist_val)
+
+    # Calcular desde coordenadas si el valor en DB no es confiable
     return calculate_euclidean_distance(
         starlane.get('system_a_id'),
         starlane.get('system_b_id')
@@ -224,12 +239,14 @@ def calculate_movement_cost(
     """
     Calcula ticks y costo de energía para un movimiento.
     V14.0: Soporte para use_boost en Starlane y costos basados en ship_count.
+    V14.4: ship_count ahora se calcula dinámicamente basado en len(unit.members).
     """
     ticks = 0
     energy = 0
     
-    # Obtener ship_count (fallback a 1 por seguridad)
-    ship_count = unit.ship_count if hasattr(unit, 'ship_count') else 1
+    # V14.4: Cálculo dinámico de ship_count (Total de entidades en la unidad)
+    # Se asume mínimo 1 si la lista está vacía (aunque validaciones previas lo impiden)
+    ship_count = len(unit.members) if unit.members else 1
 
     # V10.1: Obtener ring de origen para penalización WARP
     origin_ring = unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring
@@ -244,7 +261,7 @@ def calculate_movement_cost(
         # V13.0: Siempre 1 tick base
         ticks = TICKS_BETWEEN_RINGS_SHORT
         
-        # V14.0: Costo de energía para saltos largos basado en ship_count
+        # V14.0: Costo de energía para saltos largos basado en ship_count real
         dist_rings = abs(origin_ring - destination.ring)
         if dist_rings > INTER_RING_LONG_DISTANCE_THRESHOLD:
             energy = INTER_RING_ENERGY_COST_PER_SHIP * ship_count
