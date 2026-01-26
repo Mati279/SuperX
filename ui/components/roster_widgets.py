@@ -127,8 +127,8 @@ def render_troop_row(troop: Any, is_space: bool):
 
 def _render_unit_skills(unit: Any):
     """
-    V17.0: Renderiza las habilidades colectivas de una unidad en formato compacto.
-    Muestra las 5 habilidades con iconos y valores.
+    V17.1: Renderiza las habilidades colectivas de una unidad en formato compacto.
+    Muestra las 5 habilidades con iconos, valores y tooltips detallados con desglose.
     """
     # Extraer habilidades de la unidad
     skill_deteccion = get_prop(unit, "skill_deteccion", 0)
@@ -141,21 +141,103 @@ def _render_unit_skills(unit: Any):
     if skill_deteccion == 0 and skill_radares == 0 and skill_exploracion == 0 and skill_sigilo == 0 and skill_evasion == 0:
         return
 
+    # V17.1: Construir tooltips detallados con desglose de fórmula
+    members = get_prop(unit, "members", [])
+    tooltips = _build_skill_tooltips(members)
+
     st.caption("Habilidades Colectivas:")
 
     # Renderizar en 5 columnas compactas
     c1, c2, c3, c4, c5 = st.columns(5)
 
     with c1:
-        st.metric("👁️ Detección", skill_deteccion, help="INT + VOL")
+        st.metric("👁️ Detección", skill_deteccion, help=tooltips.get("deteccion", "INT + VOL"))
     with c2:
-        st.metric("📡 Radares", skill_radares, help="INT + VOL")
+        st.metric("📡 Radares", skill_radares, help=tooltips.get("radares", "INT + VOL"))
     with c3:
-        st.metric("🔭 Exploración", skill_exploracion, help="INT + AGI")
+        st.metric("🔭 Exploración", skill_exploracion, help=tooltips.get("exploracion", "INT + AGI"))
     with c4:
-        st.metric("🥷 Sigilo", skill_sigilo, help="AGI + VOL")
+        st.metric("🥷 Sigilo", skill_sigilo, help=tooltips.get("sigilo", "AGI + VOL"))
     with c5:
-        st.metric("🛡️ Evasión", skill_evasion, help="TEC + INT")
+        st.metric("🛡️ Evasión", skill_evasion, help=tooltips.get("evasion_sensores", "TEC + INT"))
+
+
+def _build_skill_tooltips(members: List[Dict[str, Any]]) -> Dict[str, str]:
+    """
+    V17.1: Construye tooltips detallados para cada habilidad de unidad.
+    Muestra la fórmula y el desglose de contribución de cada miembro.
+    """
+    LEADER_WEIGHT = 4
+    skill_keys = ["deteccion", "radares", "exploracion", "sigilo", "evasion_sensores"]
+    skill_formulas = {
+        "deteccion": "INT + VOL",
+        "radares": "INT + VOL",
+        "exploracion": "INT + AGI",
+        "sigilo": "AGI + VOL",
+        "evasion_sensores": "TEC + INT"
+    }
+
+    # Filtrar solo personajes (tropas no contribuyen a habilidades colectivas)
+    characters = [m for m in members if m.get("entity_type") == "character"]
+
+    if not characters:
+        return {k: f"Sin personajes. Fórmula: {skill_formulas[k]}" for k in skill_keys}
+
+    # Identificar líder
+    leader = None
+    others = []
+    for char in characters:
+        if char.get("is_leader", False):
+            leader = char
+        else:
+            others.append(char)
+
+    # Si no hay líder explícito, el primero asume el rol
+    if leader is None:
+        leader = characters[0]
+        others = characters[1:]
+
+    tooltips = {}
+
+    for skill_key in skill_keys:
+        lines = [f"Fórmula: (Líder×4 + Miembros) / (4 + N)"]
+        lines.append(f"Base: {skill_formulas[skill_key]}")
+        lines.append("─" * 25)
+
+        # Obtener valor del líder
+        leader_details = leader.get("details", {})
+        leader_habilidades = leader_details.get("habilidades", {})
+        leader_value = leader_habilidades.get(skill_key, 20)
+        leader_name = leader.get("name", "Líder")
+        leader_rango = leader_details.get("rango", "")
+
+        leader_display = f"{leader_name}"
+        if leader_rango:
+            leader_display += f" ({leader_rango})"
+
+        lines.append(f"[Líder] {leader_display}: {leader_value} × 4 = {leader_value * LEADER_WEIGHT}")
+
+        # Sumar contribuciones de otros miembros
+        others_sum = 0
+        for other in others:
+            other_details = other.get("details", {})
+            other_habilidades = other_details.get("habilidades", {})
+            other_value = other_habilidades.get(skill_key, 20)
+            other_name = other.get("name", "Miembro")
+            others_sum += other_value
+            lines.append(f"[Miembro] {other_name}: {other_value}")
+
+        # Calcular resultado
+        weighted_sum = (leader_value * LEADER_WEIGHT) + others_sum
+        total_weight = LEADER_WEIGHT + len(others)
+        result = round(weighted_sum / total_weight) if total_weight > 0 else 0
+
+        lines.append("─" * 25)
+        lines.append(f"Resultado: {weighted_sum} / {total_weight} = {result}")
+
+        tooltips[skill_key] = "\n".join(lines)
+
+    return tooltips
 
 
 def render_unit_row(

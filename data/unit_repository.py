@@ -18,6 +18,7 @@ V15.2: Fix "Problema del Anillo 0" en creación y limpieza de ubicación en diso
 from typing import Optional, List, Dict, Any
 from data.database import get_supabase
 from core.models import UnitSchema, TroopSchema, UnitStatus, LocationRing
+from core.rules import calculate_skills
 
 # --- HELPER FUNCTIONS (INTERNAL) ---
 
@@ -47,7 +48,8 @@ def _hydrate_member_names(members: List[Dict[str, Any]]) -> None:
     if char_ids:
         try:
             # V16.0: Incluir stats_json para extraer habilidades
-            resp = db.table("characters").select("id, nombre, stats_json").in_("id", char_ids).execute()
+            # V17.1: También incluir rango para tooltips informativos
+            resp = db.table("characters").select("id, nombre, rango, stats_json").in_("id", char_ids).execute()
             if resp.data:
                 for item in resp.data:
                     char_map[item["id"]] = item["nombre"]
@@ -57,12 +59,21 @@ def _hydrate_member_names(members: List[Dict[str, Any]]) -> None:
                         capacidades = stats.get("capacidades", {})
                         skills = capacidades.get("habilidades", {})
                         attrs = capacidades.get("atributos", {})
+
+                        # V17.1: Si las habilidades están vacías o incompletas, calcularlas
+                        required_skills = ["deteccion", "radares", "exploracion", "sigilo", "evasion_sensores"]
+                        if not skills or not all(k in skills for k in required_skills):
+                            if attrs:
+                                # Calcular habilidades desde atributos (aplica *2 de rules.py)
+                                skills = calculate_skills(attrs)
+
                         char_details[item["id"]] = {
                             "habilidades": skills,
-                            "atributos": attrs  # V17.0: Para cálculo de habilidades colectivas
+                            "atributos": attrs,  # V17.0: Para cálculo de habilidades colectivas
+                            "rango": item.get("rango", "")  # V17.1: Para tooltips informativos
                         }
                     else:
-                        char_details[item["id"]] = {"habilidades": {}, "atributos": {}}
+                        char_details[item["id"]] = {"habilidades": {}, "atributos": {}, "rango": ""}
         except Exception as e:
             print(f"Error hydrating characters batch: {e}")
 
