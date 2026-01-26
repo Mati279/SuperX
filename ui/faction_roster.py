@@ -16,6 +16,7 @@ V15.1: Bloqueo de seguridad en gestión de unidades durante Tránsito Interestel
 V15.2: Fix Visualización - Soporte para personajes sueltos en espacio profundo (Anillos).
 V15.3: Fix UX - Botón 'Crear Unidad' habilitado en espacio profundo y anillos.
 V16.1: Inclusión de tropas iniciales (Infantería) en el flujo "Reunir al personal".
+V17.0: Visualización de tropas sueltas en Roster (sector, órbita y anillos planetarios).
 """
 
 import streamlit as st
@@ -613,13 +614,27 @@ def _get_systems_with_presence(
             if sys_id:
                 system_ids.add(sys_id)
 
+    # V17.0: Desde tropas sueltas por sector
+    for sector_id, troop_list in location_index.get("troops_by_sector", {}).items():
+        for t in troop_list:
+            sys_id = get_prop(t, "location_system_id")
+            if sys_id:
+                system_ids.add(sys_id)
+
+    # V17.0: Desde tropas sueltas por ring
+    for (sys_id, _ring), troop_list in location_index.get("troops_by_system_ring", {}).items():
+        if troop_list:
+            system_ids.add(sys_id)
+
     return system_ids
 
 
 def _build_location_index(
     characters: List[Any],
     units: List[Any],
-    assigned_char_ids: Set[int]
+    assigned_char_ids: Set[int],
+    troops: Optional[List[Any]] = None,
+    assigned_troop_ids: Optional[Set[int]] = None
 ) -> Dict[str, Any]:
     """
     Construye índice de entidades por ubicación.
@@ -629,14 +644,23 @@ def _build_location_index(
     - 'units_by_system_ring': {(system_id, ring): [units]}
     - 'units_in_transit': [units]
     - 'chars_by_system_ring': {(system_id, ring): [chars]} (V15.2 Fix)
+    - 'troops_by_sector': {sector_id: [troops]} (V17.0 Tropas sueltas)
+    - 'troops_by_system_ring': {(system_id, ring): [troops]} (V17.0 Tropas sueltas)
     """
+    troops = troops or []
+    assigned_troop_ids = assigned_troop_ids or set()
+
     chars_by_sector: Dict[int, List[Any]] = {}
     units_by_sector: Dict[int, List[Any]] = {}
     units_by_system_ring: Dict[Tuple[int, int], List[Any]] = {}
     units_in_transit: List[Any] = []
-    
+
     # NEW V15.2: Soporte para chars sueltos en espacio
     chars_by_system_ring: Dict[Tuple[int, int], List[Any]] = {}
+
+    # NEW V17.0: Soporte para tropas sueltas
+    troops_by_sector: Dict[int, List[Any]] = {}
+    troops_by_system_ring: Dict[Tuple[int, int], List[Any]] = {}
 
     # Personajes sueltos
     for char in characters:
@@ -656,6 +680,24 @@ def _build_location_index(
                 if isinstance(ring, LocationRing):
                     ring = ring.value
                 chars_by_system_ring.setdefault((system_id, ring), []).append(char)
+
+    # V17.0: Tropas sueltas (no asignadas a unidades)
+    for troop in troops:
+        tid = get_prop(troop, "id")
+        if tid in assigned_troop_ids:
+            continue
+
+        sector_id = get_prop(troop, "location_sector_id")
+        if sector_id:
+            troops_by_sector.setdefault(sector_id, []).append(troop)
+        else:
+            # Check si está en espacio (System + Ring sin sector)
+            system_id = get_prop(troop, "location_system_id")
+            if system_id:
+                ring = get_prop(troop, "ring", 0)
+                if isinstance(ring, LocationRing):
+                    ring = ring.value
+                troops_by_system_ring.setdefault((system_id, ring), []).append(troop)
 
     # Unidades por ubicación
     for unit in units:
@@ -699,7 +741,9 @@ def _build_location_index(
         "units_by_sector": units_by_sector,
         "units_by_system_ring": units_by_system_ring,
         "units_in_transit": units_in_transit,
-        "chars_by_system_ring": chars_by_system_ring, # Added V15.2
+        "chars_by_system_ring": chars_by_system_ring,  # V15.2
+        "troops_by_sector": troops_by_sector,  # V17.0
+        "troops_by_system_ring": troops_by_system_ring,  # V17.0
     }
 
 
@@ -735,6 +779,25 @@ def _render_character_row(char: Any, player_id: int, is_space: bool):
     with cols[3]:
         if st.button("📄", key=f"sheet_char_{char_id}", help="Ver ficha"):
             view_character_dialog(char, player_id)
+
+
+def _render_troop_row(troop: Any, is_space: bool):
+    """V17.0: Renderiza fila de tropa suelta."""
+    troop_id = get_prop(troop, "id")
+    name = get_prop(troop, "name", "Tropa Sin Nombre")
+    level = get_prop(troop, "level", 1)
+    troop_type = get_prop(troop, "type", "INFANTRY")
+
+    icon = "🌌" if is_space else "🌍"
+    loc_class = "loc-space" if is_space else "loc-ground"
+
+    cols = st.columns([0.5, 5.5, 1])
+    with cols[0]:
+        st.markdown(f'<span class="{loc_class}">{icon}</span>', unsafe_allow_html=True)
+    with cols[1]:
+        st.markdown(f"🪖 **{name}** ({troop_type}, Nvl {level})")
+    with cols[2]:
+        st.caption(f"ID: {troop_id}")
 
 
 def _calculate_unit_display_capacity(members: List[Any]) -> int:
@@ -916,23 +979,27 @@ def _render_sector_content(
     planet_id: Optional[int] = None,
     all_planet_sector_ids: Optional[Set[int]] = None
 ):
-    """Renderiza contenido de un sector (unidades + personajes sueltos + botón crear)."""
+    """Renderiza contenido de un sector (unidades + personajes sueltos + tropas sueltas + botón crear)."""
     units = location_index["units_by_sector"].get(sector_id, [])
     chars = location_index["chars_by_sector"].get(sector_id, [])
-    
+
+    # V17.0: Tropas sueltas en este sector
+    sector_troops = location_index.get("troops_by_sector", {}).get(sector_id, [])
+
     # Personajes disponibles (no asignados a unidad)
     available_chars_here = [c for c in chars if get_prop(c, "id") not in assigned_char_ids]
 
-    # Tropas no tienen ubicación suelta, pero si las hubiera, filtrar no asignadas
+    # Tropas disponibles (pool global no asignado)
     available_troops_here = [t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids]
-    
+
     # Determinar si hay contenido real para mostrar
     has_units = len(units) > 0
     has_chars = len(chars) > 0
+    has_troops = len(sector_troops) > 0
     # El botón de crear solo es relevante si hay recursos disponibles
     can_create = len(available_chars_here) > 0
 
-    if not has_units and not has_chars and not can_create:
+    if not has_units and not has_chars and not has_troops and not can_create:
         st.caption("Despejado.")
         return
 
@@ -943,6 +1010,10 @@ def _render_sector_content(
     # Renderizar personajes sueltos
     for char in chars:
         _render_character_row(char, player_id, is_space)
+
+    # V17.0: Renderizar tropas sueltas
+    for troop in sector_troops:
+        _render_troop_row(troop, is_space)
 
     # Botón crear unidad (solo con disponibles no asignados)
     if can_create:
@@ -984,22 +1055,26 @@ def _render_planet_node(
     for s in sectors:
         sid = s["id"]
         stype = s.get("sector_type", "")
-        
+
         # Unidades en este sector
         units_here = location_index["units_by_sector"].get(sid, [])
         u_count += len(units_here)
-        
+
         # Personajes sueltos en este sector
         chars_here = location_index["chars_by_sector"].get(sid, [])
         c_count = len(chars_here)
 
+        # V17.0: Tropas sueltas en este sector
+        troops_here = location_index.get("troops_by_sector", {}).get(sid, [])
+        t_count = len(troops_here)
+
         if stype == "Orbital":
             orbit_sector = s
-            space_count += c_count
+            space_count += c_count + t_count
         else:
             surface_sectors.append(s)
             all_surface_sector_ids.add(sid)
-            surf_count += c_count
+            surf_count += c_count + t_count
 
     # Lógica de Visibilidad Estricta
     has_content = (u_count + surf_count + space_count) > 0
@@ -1087,14 +1162,16 @@ def _render_system_node(
 
     # 1. Unidades y Personajes en espacio (Estrella + Anillos)
     chars_by_ring = location_index.get("chars_by_system_ring", {})
-    
+    troops_by_ring = location_index.get("troops_by_system_ring", {})
+
     for r in range(7):
         key = (system_id, r)
         units = location_index["units_by_system_ring"].get(key, [])
         chars = chars_by_ring.get(key, [])
-        
+        troops = troops_by_ring.get(key, [])
+
         sys_u_count += len(units)
-        sys_space_count += len(chars) # Sumar personajes sueltos en espacio
+        sys_space_count += len(chars) + len(troops)  # V17.0: Sumar tropas sueltas
 
     # 2. Contenido de Planetas
     for planet in planets:
@@ -1102,16 +1179,17 @@ def _render_system_node(
         for s in p_sectors:
             sid = s["id"]
             stype = s.get("sector_type", "")
-            
+
             u_here = len(location_index["units_by_sector"].get(sid, []))
             c_here = len(location_index["chars_by_sector"].get(sid, []))
-            
+            t_here = len(location_index.get("troops_by_sector", {}).get(sid, []))
+
             sys_u_count += u_here
-            
+
             if stype == "Orbital":
-                sys_space_count += c_here
+                sys_space_count += c_here + t_here
             else:
-                sys_surf_count += c_here
+                sys_surf_count += c_here + t_here
 
     # Lógica de Visibilidad Estricta
     has_content = (sys_u_count + sys_space_count + sys_surf_count) > 0
@@ -1124,12 +1202,13 @@ def _render_system_node(
             stellar_key = (system_id, 0)
             stellar_units = location_index["units_by_system_ring"].get(stellar_key, [])
             stellar_chars = location_index.get("chars_by_system_ring", {}).get(stellar_key, [])
-            
-            if stellar_units or stellar_chars:
+            stellar_troops = location_index.get("troops_by_system_ring", {}).get(stellar_key, [])
+
+            if stellar_units or stellar_chars or stellar_troops:
                 st.markdown('<div class="comando-section-header">🌌 Sector Estelar</div>', unsafe_allow_html=True)
                 available_chars_space: List[dict] = []
                 available_troops_space = [t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids]
-                
+
                 # Render Units
                 for unit in stellar_units:
                     _render_unit_row(unit, player_id, is_space=True,
@@ -1138,15 +1217,18 @@ def _render_system_node(
                 # Render Chars
                 for char in stellar_chars:
                     _render_character_row(char, player_id, is_space=True)
-                
+                # V17.0: Render Troops
+                for troop in stellar_troops:
+                    _render_troop_row(troop, is_space=True)
+
                 # --- NUEVO V15.3: Botón Crear Unidad en Espacio Profundo (Ring 0) ---
                 if stellar_chars:
                     # Generar ID único negativo para evitar colisión con sector_ids reales
-                    pseudo_sector_id = -(system_id * 10000) 
+                    pseudo_sector_id = -(system_id * 10000)
                     loc_data = {"system_id": system_id, "ring": 0, "sector_id": None}
                     # Tropas disponibles (Pool global no asignado, según lógica existente)
                     avail_troops = [t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids]
-                    
+
                     _render_create_unit_button(
                         sector_id=pseudo_sector_id,
                         player_id=player_id,
@@ -1161,8 +1243,9 @@ def _render_system_node(
                 ring_key = (system_id, ring)
                 ring_units = location_index["units_by_system_ring"].get(ring_key, [])
                 ring_chars = location_index.get("chars_by_system_ring", {}).get(ring_key, [])
-                
-                if ring_units or ring_chars:
+                ring_troops = location_index.get("troops_by_system_ring", {}).get(ring_key, [])
+
+                if ring_units or ring_chars or ring_troops:
                     st.markdown(f'<div class="comando-section-header">🌌 Anillo {ring}</div>', unsafe_allow_html=True)
                     # Render Units
                     for unit in ring_units:
@@ -1172,13 +1255,16 @@ def _render_system_node(
                     # Render Chars
                     for char in ring_chars:
                         _render_character_row(char, player_id, is_space=True)
-                    
+                    # V17.0: Render Troops
+                    for troop in ring_troops:
+                        _render_troop_row(troop, is_space=True)
+
                     # --- NUEVO V15.3: Botón Crear Unidad en Anillo (Ring 1-6) ---
                     if ring_chars:
                         pseudo_sector_id = -(system_id * 10000 + ring)
                         loc_data = {"system_id": system_id, "ring": ring, "sector_id": None}
                         avail_troops = [t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids]
-                        
+
                         _render_create_unit_button(
                             sector_id=pseudo_sector_id,
                             player_id=player_id,
@@ -1363,7 +1449,11 @@ def render_comando_page():
         assigned_chars, assigned_troops = _get_assigned_entity_ids(units)
 
         # Construir índice de ubicaciones USANDO ROSTER FILTRADO
-        location_index = _build_location_index(roster_characters, units, assigned_chars)
+        # V17.0: Incluir tropas para visualización de tropas sueltas
+        location_index = _build_location_index(
+            roster_characters, units, assigned_chars,
+            troops=troops, assigned_troop_ids=assigned_troops
+        )
 
         # Obtener sistemas con presencia del jugador USANDO ROSTER FILTRADO
         systems_with_presence = _get_systems_with_presence(location_index, roster_characters, assigned_chars)
