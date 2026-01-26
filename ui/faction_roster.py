@@ -163,11 +163,25 @@ def create_unit_dialog(
     available_troops: List[Any],
     is_orbit: bool = False
 ):
-    """Dialog para crear una nueva unidad con estado limpio."""
+    """
+    V16.0: Dialog para crear una nueva unidad con selección obligatoria de líder.
+    La capacidad máxima depende de la habilidad de Liderazgo del líder seleccionado.
+    """
     st.subheader("Formar Nueva Unidad")
+
+    # Constantes de capacidad V16.0
+    BASE_CAPACITY = 4
+    MAX_CAPACITY = 12
 
     # Usar keys únicas basadas en sector para evitar estado persistente
     key_prefix = f"create_{sector_id}"
+
+    # Verificar que haya personajes disponibles para liderar
+    if not available_chars:
+        st.warning("No hay personajes disponibles en esta ubicación para liderar una unidad.")
+        if available_troops:
+            st.info("Las tropas requieren al menos un personaje como líder.")
+        return
 
     unit_name = st.text_input(
         "Nombre de la Unidad",
@@ -175,79 +189,155 @@ def create_unit_dialog(
         key=f"{key_prefix}_name"
     )
 
-    st.markdown("**Seleccionar Miembros** (Máx 8, Mín 1 Personaje)")
+    # --- V16.0: PASO 1 - Selección obligatoria de Líder ---
+    st.markdown("**1. Seleccionar Líder** (Obligatorio)")
 
-    # Helper para obtener ID y Nombre
-    def _opt(obj, type_icon):
+    # Helper para obtener ID, Nombre y Label
+    def _char_opt(obj):
         oid = get_prop(obj, "id")
-        # Compatibilidad con campos 'nombre' (char) vs 'name' (troop)
         oname = get_prop(obj, "nombre") or get_prop(obj, "name") or "Sin nombre"
         lvl = get_prop(obj, "level", 1)
-        # Tropas tienen 'type', chars no
-        extra = f"({get_prop(obj, 'type', 'INF')})" if type_icon == "🪖" else f"(Nvl {lvl})"
-        return oid, f"{type_icon} {oname} {extra}"
+        return oid, f"👤 {oname} (Nvl {lvl})"
 
-    # Personajes disponibles
-    char_options = {}
+    def _troop_opt(obj):
+        oid = get_prop(obj, "id")
+        oname = get_prop(obj, "name") or "Sin nombre"
+        ttype = get_prop(obj, "type", "INF")
+        lvl = get_prop(obj, "level", 1)
+        return oid, f"🪖 {oname} ({ttype}, Nvl {lvl})"
+
+    # Helper para calcular Liderazgo y Capacidad de un personaje
+    def _get_leader_capacity(char_obj) -> tuple:
+        """Retorna (liderazgo_skill, max_capacity) para un personaje."""
+        stats = get_prop(char_obj, "stats_json", {})
+        if not stats or not isinstance(stats, dict):
+            return 0, BASE_CAPACITY
+
+        capacidades = stats.get("capacidades", {})
+        attrs = capacidades.get("atributos", {})
+        presencia = attrs.get("presencia", 5)
+        voluntad = attrs.get("voluntad", 5)
+
+        # Liderazgo = (presencia + voluntad) * 2
+        leadership_skill = (presencia + voluntad) * 2
+        # Capacidad = 4 + (Liderazgo // 10)
+        capacity = min(MAX_CAPACITY, BASE_CAPACITY + (leadership_skill // 10))
+
+        return leadership_skill, capacity
+
+    # Crear mapa de personajes disponibles con datos
+    char_map = {}  # id -> objeto completo
+    char_options = {}  # id -> label para display
     for c in available_chars:
-        cid, clabel = _opt(c, "👤")
+        cid, clabel = _char_opt(c)
+        char_map[cid] = c
         char_options[cid] = clabel
 
-    selected_char_ids: List[int] = st.multiselect(
-        "Personajes (Líder obligatorio)",
-        options=list(char_options.keys()),
-        format_func=lambda x: char_options.get(x, str(x)),
-        max_selections=8,
-        key=f"{key_prefix}_chars"
+    # Selectbox para líder (obligatorio)
+    leader_options = [None] + list(char_options.keys())
+    leader_format = lambda x: "-- Seleccionar Líder --" if x is None else char_options.get(x, str(x))
+
+    selected_leader_id = st.selectbox(
+        "Líder de la Unidad ⭐",
+        options=leader_options,
+        format_func=leader_format,
+        key=f"{key_prefix}_leader"
     )
 
-    remaining_slots = 8 - len(selected_char_ids)
+    # Calcular capacidad basada en líder seleccionado
+    has_leader = selected_leader_id is not None
+    leadership_skill = 0
+    max_capacity = BASE_CAPACITY
+
+    if has_leader:
+        leader_obj = char_map.get(selected_leader_id)
+        if leader_obj:
+            leadership_skill, max_capacity = _get_leader_capacity(leader_obj)
+            st.success(f"⭐ Líder seleccionado | Liderazgo: {leadership_skill} | Capacidad: {max_capacity} miembros")
+    else:
+        st.warning("Debes seleccionar un líder para continuar.")
+
+    st.divider()
+
+    # --- V16.0: PASO 2 - Selección de miembros adicionales ---
+    st.markdown(f"**2. Seleccionar Miembros Adicionales** (Capacidad: {max_capacity})")
+
+    # Filtrar personajes disponibles excluyendo al líder
+    other_char_options = {k: v for k, v in char_options.items() if k != selected_leader_id}
+
+    # Calcular slots restantes (líder ocupa 1)
+    remaining_slots = max_capacity - 1 if has_leader else 0
+
+    # Personajes adicionales (excluyendo líder)
+    selected_other_char_ids: List[int] = st.multiselect(
+        "Personajes Adicionales",
+        options=list(other_char_options.keys()),
+        format_func=lambda x: other_char_options.get(x, str(x)),
+        max_selections=max(0, remaining_slots),
+        disabled=not has_leader,
+        key=f"{key_prefix}_other_chars",
+        help="Personajes adicionales para la unidad (opcional)"
+    )
+
+    # Recalcular slots restantes después de otros personajes
+    remaining_after_chars = remaining_slots - len(selected_other_char_ids)
 
     # Tropas disponibles
     troop_options = {}
     for t in available_troops:
-        tid, tlabel = _opt(t, "🪖")
+        tid, tlabel = _troop_opt(t)
         troop_options[tid] = tlabel
 
     selected_troop_ids: List[int] = st.multiselect(
         "Tropas",
         options=list(troop_options.keys()),
         format_func=lambda x: troop_options.get(x, str(x)),
-        max_selections=max(0, remaining_slots),
-        disabled=remaining_slots <= 0,
-        key=f"{key_prefix}_troops"
+        max_selections=max(0, remaining_after_chars),
+        disabled=not has_leader or remaining_after_chars <= 0,
+        key=f"{key_prefix}_troops",
+        help="Tropas para la unidad (opcional)"
     )
 
-    # Métricas reactivas
-    total = len(selected_char_ids) + len(selected_troop_ids)
-    has_leader = len(selected_char_ids) >= 1
+    # --- Métricas reactivas ---
+    total_members = 1 + len(selected_other_char_ids) + len(selected_troop_ids) if has_leader else 0
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Miembros", f"{total}/8")
+        st.metric("Miembros", f"{total_members}/{max_capacity}")
     with col2:
+        st.metric("Liderazgo", f"{leadership_skill}")
+    with col3:
         if has_leader:
-            st.success("Líder asignado")
+            st.success("✓ Líder asignado")
         else:
-            st.warning("Falta líder")
+            st.error("✗ Sin líder")
 
-    if total > 8:
-        st.error("Máximo 8 miembros por unidad.")
+    if total_members > max_capacity:
+        st.error(f"Excede la capacidad máxima ({max_capacity}) del líder.")
 
-    can_create = has_leader and 0 < total <= 8 and unit_name.strip()
+    can_create = has_leader and 0 < total_members <= max_capacity and unit_name.strip()
 
     if st.button("Crear Unidad", type="primary", disabled=not can_create, use_container_width=True):
         new_unit = create_unit(player_id, unit_name.strip(), location_data)
         if new_unit:
             unit_id = new_unit["id"] if isinstance(new_unit, dict) else new_unit.id
             slot = 0
-            for char_id in selected_char_ids:
+
+            # V16.0: El líder va primero (slot 0) para auto-asignación de is_leader
+            add_unit_member(unit_id, "character", selected_leader_id, slot)
+            slot += 1
+
+            # Añadir otros personajes
+            for char_id in selected_other_char_ids:
                 add_unit_member(unit_id, "character", char_id, slot)
                 slot += 1
+
+            # Añadir tropas
             for troop_id in selected_troop_ids:
                 add_unit_member(unit_id, "troop", troop_id, slot)
                 slot += 1
-            st.success(f"Unidad '{unit_name}' creada.")
+
+            st.success(f"Unidad '{unit_name}' creada con {total_members} miembro(s).")
             st.rerun()
         else:
             st.error("Error al crear unidad.")
@@ -311,19 +401,32 @@ def manage_unit_dialog(
                     st.markdown(f"`[{slot}]` {leader_icon}{icon_e} {member_name}")
                 
                 with col_action:
-                    # No se puede quitar si es el último character (líder) a menos que disuelvas
+                    # V16.0: No se puede quitar al líder, ni al último character
                     # Contar caracteres de forma segura
                     char_count = sum(1 for x in members if get_prop(x, "entity_type") == "character")
                     is_last_char = (etype == "character" and char_count == 1)
-                    
-                    if st.button("❌", key=f"rm_mbr_{unit_id}_{slot}", help="Quitar miembro", disabled=is_locked or is_last_char):
+
+                    # V16.0: Proteger específicamente al líder
+                    is_protected = is_leader or is_last_char
+
+                    # Tooltip diferenciado según la razón del bloqueo
+                    if is_leader:
+                        remove_tooltip = "El líder no puede ser removido. Usa 'Disolver' para eliminar la unidad."
+                    elif is_last_char:
+                        remove_tooltip = "No puedes quitar al último personaje."
+                    else:
+                        remove_tooltip = "Quitar miembro de la unidad"
+
+                    if st.button("❌", key=f"rm_mbr_{unit_id}_{slot}", help=remove_tooltip, disabled=is_locked or is_protected):
                         if remove_unit_member(unit_id, slot):
                             st.success("Miembro removido.")
                             st.rerun()
-            
-            char_count = sum(1 for x in members if get_prop(x, "entity_type") == "character")
-            if char_count == 1:
-                st.caption("Nota: No puedes quitar al último personaje (Líder). Usa 'Disolver' si deseas eliminar la unidad.")
+
+            # V16.0: Mostrar nota sobre líder protegido
+            leader_member = next((m for m in members if get_prop(m, "is_leader", False)), None)
+            if leader_member:
+                leader_name = get_prop(leader_member, "name", "Líder")
+                st.caption(f"⭐ **{leader_name}** es el líder de esta unidad y no puede ser removido.")
         else:
             st.info("Sin miembros.")
 
@@ -331,12 +434,13 @@ def manage_unit_dialog(
 
         # 2. Añadir Miembros
         st.markdown("##### Añadir Personal")
-        
-        slots_available = 8 - current_count
-        st.caption(f"Slots disponibles: {slots_available}")
+
+        # V16.0: Usar capacidad dinámica basada en líder
+        slots_available = max_capacity - current_count
+        st.caption(f"Slots disponibles: {slots_available} (Capacidad: {max_capacity})")
 
         if slots_available <= 0:
-            st.warning("La unidad está llena (8/8).")
+            st.warning(f"La unidad está llena ({current_count}/{max_capacity}).")
         else:
             # Personajes disponibles en la ubicación
             char_opts = {}
