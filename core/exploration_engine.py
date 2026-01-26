@@ -1,10 +1,12 @@
 # core/exploration_engine.py (Completo)
 """
-Motor de Exploración de Sectores V1.3.
+Motor de Exploración de Sectores V1.4.
 Transforma la exploración de una acción de UI a una orden operativa basada en habilidades.
 Gestiona la resolución MRG, la validación de ubicación y la narrativa determinista.
-Actualizado V1.3: Eliminación de dependencia de IA para narrativas. Textos estandarizados.
-Refactorizado: Inyección dinámica de datos de recursos en narrativa.
+Actualizado V1.4: 
+- Recálculo dinámico de habilidades (skill_exploracion) antes de la acción.
+- Formateo estandarizado de recursos en narrativa y logs.
+- Limpieza de prefijos en logs.
 """
 
 from typing import Optional, Dict, Any
@@ -14,6 +16,8 @@ from core.mrg_engine import resolve_action, MRGResult, ResultType
 from core.models import UnitSchema, UnitStatus
 from core.mrg_constants import DIFFICULTY_STANDARD
 from core.movement_constants import MAX_LOCAL_MOVES_PER_TURN
+# Importación para actualización de habilidades
+from core.unit_engine import calculate_and_update_unit_skills
 from data.unit_repository import (
     get_unit_by_id, 
     update_unit_status, 
@@ -42,27 +46,37 @@ def resolve_sector_exploration(
     """
     Ejecuta una operación de exploración sobre un sector.
     
-    Reglas V1.3:
-    1. Validación de ubicación y fatiga.
-    2. MRG: skill_exploracion vs Dificultad 50 (STANDARD).
-    3. Narrativa Determinista (Sin IA).
-    4. Consecuencias mecánicas directas.
+    Reglas V1.4:
+    1. Validación de unidad básica.
+    2. Recálculo de habilidades (Unit Engine).
+    3. Validación de fatiga con datos frescos.
+    4. MRG: skill_exploracion vs Dificultad 50 (STANDARD).
+    5. Narrativa estandarizada: 'Sector {nombre}. Recursos: {lista}.'
     """
     
-    # 1. Obtener y Validar Unidad
+    # 1. Obtener y Validar Unidad (Comprobación inicial de existencia y propiedad)
     unit_data = get_unit_by_id(unit_id)
     if not unit_data:
         raise ValueError(f"Unidad {unit_id} no encontrada.")
     
-    unit = UnitSchema.from_dict(unit_data)
+    # Instancia temporal para validar propiedad y estado básico antes de procesar skills
+    temp_unit = UnitSchema.from_dict(unit_data)
     
-    if unit.player_id != player_id:
+    if temp_unit.player_id != player_id:
         raise PermissionError("No tienes autoridad sobre esta unidad.")
         
-    if unit.status == UnitStatus.TRANSIT:
+    if temp_unit.status == UnitStatus.TRANSIT:
         raise ValueError("La unidad está en tránsito y no puede realizar exploraciones.")
 
-    # Validación de Fatiga de Movimiento
+    # 2. Recálculo de Habilidades y Actualización de Objeto Unidad
+    # Importante: Esto asegura que el skill_exploracion sea el correcto antes de tirar MRG
+    calculate_and_update_unit_skills(unit_id)
+    
+    # Recargar datos frescos de la base de datos tras el cálculo
+    unit_data = get_unit_by_id(unit_id)
+    unit = UnitSchema.from_dict(unit_data)
+
+    # Validación de Fatiga de Movimiento (con datos actualizados)
     move_limit = 1 if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
     
     if unit.local_moves_count >= move_limit:
@@ -71,7 +85,7 @@ def resolve_sector_exploration(
     if unit.movement_locked:
         raise ValueError("La unidad tiene sus sistemas de navegación bloqueados.")
 
-    # 2. Obtener y Validar Sector
+    # 3. Obtener y Validar Sector
     # Se ajusta la consulta para asegurar campos de recursos y nombre
     db = get_supabase()
     resp = db.table('sectors').select('*, resource_category, luxury_resource, planets(name)').eq('id', sector_id).single().execute()
@@ -95,7 +109,8 @@ def resolve_sector_exploration(
     if unit.location_planet_id != sector_planet_id:
         raise ValueError(f"La unidad debe estar en la superficie del planeta para explorar este sector.")
 
-    # 3. Preparar Tirada MRG
+    # 4. Preparar Tirada MRG
+    # Usamos el skill actualizado
     merit_points = unit.skill_exploracion
     difficulty = DIFFICULTY_STANDARD # 50
     
@@ -113,7 +128,7 @@ def resolve_sector_exploration(
         }
     )
 
-    # 4. Procesar Consecuencias y Narrativa Manual
+    # 5. Procesar Consecuencias y Narrativa
     success = mrg_result.success
     narrative = ""
     
@@ -121,16 +136,33 @@ def resolve_sector_exploration(
     increment_unit_local_moves(unit_id)
 
     if success:
-        # Lógica de narrativa dinámica mejorada
+        # --- Construcción de Notificación de Recursos ---
         sec_name = sector_data.get('name', f"S-{sector_id}")
-        res_cat = sector_data.get('resource_category') or "No detectado"
-        res_lux = sector_data.get('luxury_resource') or "No detectado"
         
-        narrative = f"Sector {sec_name} cartografiado. Recursos: {res_cat}. Especial: {res_lux}."
+        resources_list = []
+        if sector_data.get('resource_category'):
+            resources_list.append(sector_data['resource_category'])
+        if sector_data.get('luxury_resource'):
+            resources_list.append(sector_data['luxury_resource'])
+            
+        if resources_list:
+            resource_info = ", ".join(resources_list)
+        else:
+            resource_info = "Ninguno"
+
+        # Formateo de nombre de sector para evitar "Sector Sector..."
+        # Si el nombre ya empieza por "Sector" (case insensitive), no agregamos el prefijo.
+        display_name = sec_name
+        if not display_name.strip().lower().startswith("sector"):
+            display_name = f"Sector {sec_name}"
+        
+        narrative = f"{display_name}. Recursos: {resource_info}."
         
         # Efecto mecánico: Revelar sector
         grant_sector_knowledge(player_id, sector_id)
-        log_event(f"🗺️ Exploración exitosa: {unit.name} ha cartografiado el sector {sec_name}.", player_id)
+        
+        # Log estandarizado idéntico a la narrativa
+        log_event(narrative, player_id)
 
     else:
         # Penalización Condicional
