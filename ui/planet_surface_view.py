@@ -18,6 +18,7 @@ Actualizado V8.1.0: Estandarización de Recursos (RESOURCE_UI_CONFIG) y Limpieza
 Actualizado V8.2.0: Botón directo de Puesto de Avanzada (Debug Mode) en sectores no reclamados.
 Actualizado V8.3.0: Estandarización de Seguridad (Sp) - Base 30 para todos los planetas.
 Fix V8.3.1: Corrección de color en recursos de lujo (magenta no soportado -> violet).
+Actualizado V9.0: Eliminación de acciones manuales de exploración (Exploration Engine Integration).
 """
 
 import streamlit as st
@@ -218,6 +219,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     V7.7: Cálculo de Slots dinámico basado en World Constants.
     V8.1: Refactor UI (Recursos Estandarizados, Sin ID, Propiedad Destacada).
     V8.2: Botón 'Puesto de Avanzada' directo en sectores no reclamados (Debug).
+    V9.0: Eliminación de acciones manuales de exploración (Exploration Engine Integration).
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE (V7.2) ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -232,13 +234,9 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
         st.write("**Recursos:** ???")
         
         st.markdown("---")
-        # Botón de Exploración Temporal
-        if st.button("🔭 Iniciar Exploración", key=f"btn_explore_{sector['id']}", use_container_width=True):
-            if grant_sector_knowledge(player_id, sector['id']):
-                st.toast("¡Exploración completada! Datos del sector actualizados.")
-                st.rerun()
-            else:
-                st.error("Error al registrar la exploración.")
+        # V9.0: Eliminado botón manual. Ahora requiere orden de unidad.
+        st.info("⚠️ Requiere exploración mediante Unidad con capacidad de sensores.", icon="📡")
+        
         return # Salir temprano, no mostrar detalles
     
     # --- RENDERIZADO NORMAL (Explorado, Orbital o Debug) ---
@@ -340,29 +338,13 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     
     if asset_id and used < total:
         if is_sector_empty:
-             # CASO 1: SECTOR NO RECLAMADO (Botón Outpost Debug)
-             # Verificar que el terreno sea válido para Outpost
-             outpost_def = BUILDING_TYPES.get("outpost", {})
-             allowed_terrain = outpost_def.get("allowed_terrain", [])
-             
-             # Si no hay restricción explícita o el tipo está en la lista:
-             if not allowed_terrain or s_type in allowed_terrain:
-                 if st.button("🏛 Construir Puesto de Avanzada (Debug)", key=f"btn_out_{sector['id']}", use_container_width=True, help="Coste: 0 (Debug Mode). Construcción inmediata."):
-                     # Modo Debug: Llamada directa sin validación de recursos en UI
-                     new_struct = build_structure(
-                        planet_asset_id=asset_id,
-                        player_id=player_id,
-                        building_type="outpost",
-                        sector_id=sector['id']
-                     )
-                     
-                     if new_struct:
-                         st.toast("✅ Puesto de Avanzada establecido (Debug Force).")
-                         st.rerun()
-                     else:
-                         st.error("❌ No se pudo construir (Restricción de terreno o bloqueo).")
+             # CASO 1: SECTOR NO RECLAMADO
+             # V9.0: Eliminado botón Debug "Construir Puesto de Avanzada".
+             # La construcción inicial debe ser vía mecánica de colonización o ingenieros (TODO).
+             if debug_mode:
+                 st.warning("🛠️ Debug: Construcción de Outpost deshabilitada en vista rápida.")
              else:
-                 st.caption("🔒 Terreno no apto para asentamientos.")
+                 st.caption("🔒 Sector libre. Requiere unidad de ingeniería para establecer puesto.")
 
         elif is_my_sector:
              # CASO 2: MI SECTOR (Menú Completo)

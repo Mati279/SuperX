@@ -153,6 +153,7 @@ def check_detection(
     Realiza un chequeo de detección entre dos unidades.
 
     V17.1: Usa skill_deteccion de la unidad directamente en lugar de calcular.
+    V17.2: Implementa bono de Red de Radares (skill_radares de aliados).
 
     Args:
         detector_unit: Unidad que intenta detectar
@@ -175,6 +176,52 @@ def check_detection(
         target_difficulty += DETECTION_MODIFIER_ACTIVE
     elif detection_context == "interdiction":
         target_difficulty += DETECTION_MODIFIER_INTERDICTION
+
+    # --- V17.2: LÓGICA DE BONIFICACIÓN DE RADARES ---
+    # Buscar otras unidades del mismo jugador en la misma ubicación
+    # que puedan aportar soporte de telemetría (Red de Datos)
+    
+    # 1. Definir ubicación actual
+    location_filters = {}
+    if detector_unit.status == UnitStatus.TRANSIT:
+        location_filters['starlane_id'] = detector_unit.starlane_id
+    else:
+        location_filters['system_id'] = detector_unit.location_system_id
+        # Si está en planeta, filtrar por planeta (anillos y superficie comparten red orbital)
+        if detector_unit.location_planet_id:
+            location_filters['planet_id'] = detector_unit.location_planet_id
+    
+    # 2. Obtener aliados (excluyendo la unidad actual implícitamente por lógica de max)
+    try:
+        # Recuperamos todas las unidades del jugador en la zona
+        allies_in_zone = get_units_at_location(
+            player_id=detector_unit.player_id,
+            **location_filters
+        )
+        
+        # 3. Calcular el mejor skill_radares disponible en la red aliada (excluyendo la unidad actual)
+        # Nota: "Otras unidades". Filtramos por ID.
+        other_allies = [
+            u for u in allies_in_zone 
+            if u.get('id') != detector_unit.id and u.get('skill_radares', 0) > 0
+        ]
+        
+        if other_allies:
+            max_radar_skill = max(u.get('skill_radares', 0) for u in other_allies)
+            
+            # Bono: 20% del mejor radar aliado
+            radar_bonus = int(max_radar_skill * 0.20)
+            
+            if radar_bonus > 0:
+                target_difficulty -= radar_bonus
+                # Pequeño log de debug/auditoria interno si fuera necesario, 
+                # pero aquí solo modificamos la dificultad.
+                
+    except Exception as e:
+        print(f"Error calculando bono de radares: {e}")
+        # Continuar sin bono en caso de error de DB
+    
+    # -----------------------------------------------
 
     # Resolver con MRG
     result = resolve_action(
