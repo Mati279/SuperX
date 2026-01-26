@@ -15,6 +15,7 @@ Refactor V15.0: Compatibilidad Híbrida Pydantic V2/Dict para Unidades y Miembro
 V15.1: Bloqueo de seguridad en gestión de unidades durante Tránsito Interestelar.
 V15.2: Fix Visualización - Soporte para personajes sueltos en espacio profundo (Anillos).
 V15.3: Fix UX - Botón 'Crear Unidad' habilitado en espacio profundo y anillos.
+V16.1: Inclusión de tropas iniciales (Infantería) en el flujo "Reunir al personal".
 """
 
 import streamlit as st
@@ -30,6 +31,7 @@ from data.unit_repository import (
     get_units_by_player,
     get_troops_by_player,
     create_unit,
+    create_troop,  # NEW: Importado para generar tropas iniciales
     add_unit_member,
     remove_unit_member,
     rename_unit,
@@ -42,6 +44,7 @@ from data.world_repository import (
 from data.planet_repository import (
     get_all_player_planets,
     get_planet_sectors_status,
+    get_player_base_coordinates,  # NEW: Importado para ubicar tropas iniciales
 )
 from core.models import CommanderData, KnowledgeLevel, CharacterStatus, UnitStatus, LocationRing
 from ui.character_sheet import render_character_sheet
@@ -1287,7 +1290,17 @@ def render_comando_page():
                     success_count = 0
                     total_ops = len(recruitment_config)
 
+                    # --- V16.1: Obtener coordenadas base para las tropas ---
+                    base_coords = get_player_base_coordinates(player_id)
+                    loc_data = {
+                        "system_id": base_coords.get("system_id"),
+                        "planet_id": base_coords.get("planet_id"),
+                        "sector_id": base_coords.get("sector_id"),
+                        "ring": 0
+                    }
+
                     with st.status("Estableciendo cadena de mando...", expanded=True) as status:
+                        # 1. Reclutar Personajes
                         for idx, (level, k_level, label) in enumerate(recruitment_config):
                             status.update(label=f"Reclutando {label} (Nivel {level}) - [{idx+1}/{total_ops}]...")
                             try:
@@ -1303,6 +1316,28 @@ def render_comando_page():
                                 st.write(f"❌ Error reclutando {label}: {e}")
                                 print(f"Error en reclutamiento inicial ({label}): {e}")
                         
+                        # 2. Generar Tropas Básicas (Infantería)
+                        if success_count > 0:
+                            status.update(label="Desplegando guarnición de infantería...", state="running")
+                            troops_created = 0
+                            for i in range(1, 5):
+                                t_name = f"Escuadrón de Infantería {i}"
+                                try:
+                                    new_troop = create_troop(
+                                        player_id=player_id,
+                                        name=t_name,
+                                        troop_type="INFANTRY",
+                                        level=1,
+                                        location_data=loc_data
+                                    )
+                                    if new_troop:
+                                        st.write(f"✅ {t_name} desplegado en base.")
+                                        troops_created += 1
+                                    else:
+                                        st.write(f"⚠️ Fallo al desplegar {t_name}.")
+                                except Exception as e:
+                                    st.write(f"❌ Error crítico en despliegue de tropa: {e}")
+
                         if success_count > 0:
                             status.update(label="¡Personal reunido! Iniciando sistemas...", state="complete", expanded=False)
                             time.sleep(0.5) 
