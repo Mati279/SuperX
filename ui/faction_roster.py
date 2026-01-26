@@ -288,22 +288,27 @@ def manage_unit_dialog(
     
     with tab_members:
         # 1. Lista de Miembros Actuales
-        st.markdown("##### Miembros Actuales")
+        # V16.0: Mostrar capacidad dinámica
+        max_capacity = _calculate_unit_display_capacity(members)
+        st.markdown(f"##### Miembros Actuales ({current_count}/{max_capacity})")
         if members:
             # Sort seguro
             sorted_members = sorted(members, key=sort_key_by_prop("slot_index", 0))
-            
+
             for m in sorted_members:
                 col_name, col_action = st.columns([4, 1])
-                
+
                 # Acceso seguro a propiedades de miembro
                 etype = get_prop(m, "entity_type", "?")
                 slot = get_prop(m, "slot_index", 0)
                 member_name = get_prop(m, "name", "???")
+                # V16.0: Indicador de líder
+                is_leader = get_prop(m, "is_leader", False)
+                leader_icon = "⭐ " if is_leader else ""
                 icon_e = "👤" if etype == "character" else "🪖"
-                
+
                 with col_name:
-                    st.markdown(f"`[{slot}]` {icon_e} {member_name}")
+                    st.markdown(f"`[{slot}]` {leader_icon}{icon_e} {member_name}")
                 
                 with col_action:
                     # No se puede quitar si es el último character (líder) a menos que disuelvas
@@ -625,6 +630,43 @@ def _render_character_row(char: Any, player_id: int, is_space: bool):
             view_character_dialog(char, player_id)
 
 
+def _calculate_unit_display_capacity(members: List[Any]) -> int:
+    """
+    V16.0: Calcula la capacidad máxima de una unidad para display en UI.
+    Basado en la habilidad de Liderazgo del líder.
+    Fórmula: 4 + (skill_liderazgo // 10)
+    """
+    BASE_CAPACITY = 4
+    MAX_CAPACITY = 12
+
+    # Buscar el líder (is_leader=True y character)
+    leader = None
+    for m in members:
+        if get_prop(m, "is_leader", False) and get_prop(m, "entity_type") == "character":
+            leader = m
+            break
+
+    # Fallback: primer character si no hay líder explícito
+    if not leader:
+        for m in members:
+            if get_prop(m, "entity_type") == "character":
+                leader = m
+                break
+
+    if not leader:
+        return BASE_CAPACITY
+
+    # Obtener habilidad de Liderazgo del snapshot
+    details = get_prop(leader, "details", {})
+    if not details:
+        return BASE_CAPACITY
+
+    skills = details.get("habilidades", {})
+    leadership_skill = skills.get("Liderazgo", 0)
+
+    return min(MAX_CAPACITY, BASE_CAPACITY + (leadership_skill // 10))
+
+
 def _render_unit_row(
     unit: Any,
     player_id: int,
@@ -639,12 +681,17 @@ def _render_unit_row(
     status = get_prop(unit, "status", "GROUND")
     local_moves = get_prop(unit, "local_moves_count", 0)
 
+    # V16.0: Calcular capacidad dinámica y estado de riesgo
+    is_at_risk = get_prop(unit, "is_at_risk", False)
+    max_capacity = _calculate_unit_display_capacity(members)
+    current_count = len(members)
+
     icon = "🌌" if is_space else "🌍"
     status_emoji = {"GROUND": "🏕️", "SPACE": "🚀", "TRANSIT": "✈️"}.get(status, "❓")
-    
+
     # Header dinámico con contador de movimientos
     moves_badge = f"[Movs: {local_moves}/2]" if local_moves < 2 else "[🛑 Sin Movs]"
-    
+
     # V13.5: Formateo de texto para tránsito SCO local
     if status == "TRANSIT":
         # Intentar recuperar destino para mostrar SCO R[X] -> R[Y]
@@ -665,15 +712,23 @@ def _render_unit_row(
                         dest_ring = t_data.get("ring", "?")
         except:
             pass
-            
+
         status_text = f"✈️ SCO R[{origin_ring}] → R[{dest_ring}]"
     else:
         status_text = status_emoji
 
-    header_text = f"{icon} 🎖️ **{name}** ({len(members)}/8) {status_text} {moves_badge}"
+    # V16.0: Capacidad dinámica y color de riesgo
+    capacity_display = f"({current_count}/{max_capacity})"
+    risk_indicator = "⚠️ " if is_at_risk else ""
+
+    header_text = f"{icon} 🎖️ **{name}** {capacity_display} {status_text} {moves_badge} {risk_indicator}"
 
     # Header compacto con expander
     with st.expander(header_text, expanded=False):
+        # V16.0: Mostrar advertencia si está en riesgo
+        if is_at_risk:
+            st.warning("Esta unidad está en riesgo: territorio hostil o excede capacidad del líder.")
+
         # Botones de acción en la parte superior del contenido expandido
         col_info, col_move, col_btn = st.columns([3, 1, 1])
 
@@ -699,14 +754,17 @@ def _render_unit_row(
             st.caption("Composición:")
             # Sort seguro
             sorted_members = sorted(members, key=sort_key_by_prop("slot_index", 0))
-            
+
             for m in sorted_members:
                 etype = get_prop(m, "entity_type", "?")
                 slot = get_prop(m, "slot_index", 0)
                 member_name = get_prop(m, "name", "???")
+                # V16.0: Indicador de líder
+                is_leader = get_prop(m, "is_leader", False)
+                leader_icon = "⭐ " if is_leader else ""
 
                 if etype == "character":
-                    st.markdown(f"`[{slot}]` 👤 {member_name}")
+                    st.markdown(f"`[{slot}]` {leader_icon}👤 {member_name}")
                 else:
                     st.markdown(f"`[{slot}]` 🪖 {member_name}")
         else:
@@ -1050,7 +1108,11 @@ def _render_starlanes_section(
         dest = get_prop(unit, "transit_destination_system_id", "?")
         ticks = get_prop(unit, "transit_ticks_remaining", 0)
 
-        with st.expander(f"🌌 ✈️ **{name}** ({len(members)}/8) | Sistema {origin} → {dest} | {ticks} ticks", expanded=False):
+        # V16.0: Capacidad dinámica
+        max_capacity = _calculate_unit_display_capacity(members)
+        capacity_display = f"({len(members)}/{max_capacity})"
+
+        with st.expander(f"🌌 ✈️ **{name}** {capacity_display} | Sistema {origin} → {dest} | {ticks} ticks", expanded=False):
             col1, col2 = st.columns([4, 1])
             with col2:
                 if st.button("⚙️", key=f"manage_transit_{unit_id}", help="Gestionar unidad"):
@@ -1060,14 +1122,17 @@ def _render_starlanes_section(
                 st.caption("Composición:")
                 # Fix V15.0: Sort seguro para Pydantic Models y Dicts
                 sorted_members = sorted(members, key=sort_key_by_prop("slot_index", 0))
-                
+
                 for m in sorted_members:
                     # Fix V15.0: Acceso seguro
                     etype = get_prop(m, "entity_type", "?")
                     slot = get_prop(m, "slot_index", 0)
                     member_name = get_prop(m, "name", "???")
+                    # V16.0: Indicador de líder
+                    is_leader = get_prop(m, "is_leader", False)
+                    leader_icon = "⭐ " if is_leader else ""
                     icon_e = "👤" if etype == "character" else "🪖"
-                    st.markdown(f"`[{slot}]` {icon_e} {member_name}")
+                    st.markdown(f"`[{slot}]` {leader_icon}{icon_e} {member_name}")
 
 
 # --- FUNCIÓN PRINCIPAL ---

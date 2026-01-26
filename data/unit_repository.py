@@ -24,28 +24,39 @@ from core.models import UnitSchema, TroopSchema, UnitStatus, LocationRing
 def _hydrate_member_names(members: List[Dict[str, Any]]) -> None:
     """
     Hidrata una lista de miembros de unidad con el nombre de la entidad.
+    V16.0: También incluye habilidades en 'details' para cálculo de capacidad.
     Realiza consultas en lote para optimizar rendimiento.
-    Modifica la lista in-place agregando el campo 'name'.
+    Modifica la lista in-place agregando los campos 'name' y 'details'.
+    Nota: 'is_leader' ya viene de la consulta a unit_members y se preserva.
     """
     if not members:
         return
 
     db = get_supabase()
-    
+
     # 1. Recolectar IDs únicos por tipo
     char_ids = list({m["entity_id"] for m in members if m["entity_type"] == "character"})
     troop_ids = list({m["entity_id"] for m in members if m["entity_type"] == "troop"})
-    
+
     char_map = {}
+    char_details = {}  # V16.0: Snapshot de habilidades para líderes
     troop_map = {}
 
-    # 2. Consultar Nombres de Personajes
+    # 2. Consultar Nombres y Stats de Personajes
     if char_ids:
         try:
-            # Characters usa la columna 'nombre'
-            resp = db.table("characters").select("id, nombre").in_("id", char_ids).execute()
+            # V16.0: Incluir stats_json para extraer habilidades
+            resp = db.table("characters").select("id, nombre, stats_json").in_("id", char_ids).execute()
             if resp.data:
-                char_map = {item["id"]: item["nombre"] for item in resp.data}
+                for item in resp.data:
+                    char_map[item["id"]] = item["nombre"]
+                    # V16.0: Extraer habilidades para cálculo de liderazgo
+                    stats = item.get("stats_json", {})
+                    if isinstance(stats, dict):
+                        skills = stats.get("capacidades", {}).get("habilidades", {})
+                        char_details[item["id"]] = {"habilidades": skills}
+                    else:
+                        char_details[item["id"]] = {"habilidades": {}}
         except Exception as e:
             print(f"Error hydrating characters batch: {e}")
 
@@ -53,25 +64,34 @@ def _hydrate_member_names(members: List[Dict[str, Any]]) -> None:
     if troop_ids:
         try:
             # Troops usa la columna 'name'
-            resp = db.table("troops").select("id, name").in_("id", troop_ids).execute()
+            resp = db.table("troops").select("id, name, level").in_("id", troop_ids).execute()
             if resp.data:
-                troop_map = {item["id"]: item["name"] for item in resp.data}
+                troop_map = {item["id"]: {"name": item["name"], "level": item.get("level", 1)} for item in resp.data}
         except Exception as e:
             print(f"Error hydrating troops batch: {e}")
 
-    # 4. Asignar nombres a los miembros
+    # 4. Asignar nombres y detalles a los miembros
     for m in members:
         e_id = m["entity_id"]
         e_type = m["entity_type"]
-        
+
         assigned_name = "Entidad Desconocida"
-        
+
         if e_type == "character":
             assigned_name = char_map.get(e_id, f"Personaje {e_id} (No encontrado)")
+            m["details"] = char_details.get(e_id, {"habilidades": {}})  # V16.0
         elif e_type == "troop":
-            assigned_name = troop_map.get(e_id, f"Tropa {e_id} (No encontrada)")
-            
+            troop_data = troop_map.get(e_id, {})
+            assigned_name = troop_data.get("name", f"Tropa {e_id} (No encontrada)")
+            m["details"] = {"level": troop_data.get("level", 1)}  # V16.0: Nivel para priorizar eliminación
+        else:
+            m["details"] = {}
+
         m["name"] = assigned_name
+
+        # V16.0: Asegurar que is_leader tenga un valor por defecto si no viene de DB
+        if "is_leader" not in m:
+            m["is_leader"] = False
 
 
 # --- TROOPS ---
@@ -435,7 +455,10 @@ def update_unit_ship_count(unit_id: int, ship_count: int) -> bool:
 # --- UNIT MEMBERS ---
 
 def add_unit_member(unit_id: int, entity_type: str, entity_id: int, slot_index: int) -> bool:
-    """Asigna una entidad (character/troop) a una unidad."""
+    """
+    Asigna una entidad (character/troop) a una unidad.
+    V16.0: Si la unidad está vacía y es un character, se marca como líder automáticamente.
+    """
     db = get_supabase()
     try:
         # V14.2: Verificar estado de tránsito antes de modificar
@@ -444,11 +467,21 @@ def add_unit_member(unit_id: int, entity_type: str, entity_id: int, slot_index: 
             print(f"Cannot add member to unit {unit_id} while in TRANSIT")
             return False
 
+        # V16.0: Verificar si la unidad está vacía para auto-liderazgo
+        members_check = db.table("unit_members")\
+            .select("slot_index", count="exact")\
+            .eq("unit_id", unit_id)\
+            .execute()
+
+        is_first_member = (members_check.count or 0) == 0
+        should_be_leader = is_first_member and entity_type == 'character'
+
         data = {
             "unit_id": unit_id,
             "entity_type": entity_type,
             "entity_id": entity_id,
-            "slot_index": slot_index
+            "slot_index": slot_index,
+            "is_leader": should_be_leader  # V16.0
         }
         response = db.table("unit_members").insert(data).execute()
         return bool(response.data)
@@ -474,6 +507,116 @@ def remove_unit_member(unit_id: int, slot_index: int) -> bool:
     except Exception as e:
         print(f"Error removing member from unit {unit_id} slot {slot_index}: {e}")
         return False
+
+
+# --- V16.0: FUNCIONES DE LIDERAZGO ---
+
+def set_unit_leader(unit_id: int, character_entity_id: int, player_id: int) -> bool:
+    """
+    V16.0: Establece un personaje como líder de la unidad.
+    Validaciones:
+    - La entidad debe ser tipo 'character'
+    - La entidad debe pertenecer a la unidad
+    - Solo puede haber un líder por unidad (desactiva el anterior)
+    - No permite cambio en TRANSIT
+    """
+    db = get_supabase()
+    try:
+        # 1. Verificar que la unidad pertenece al jugador y no está en tránsito
+        unit_res = db.table("units").select("player_id, status").eq("id", unit_id).single().execute()
+        if not unit_res.data or unit_res.data.get("player_id") != player_id:
+            print(f"Unit {unit_id} not found or not owned by player {player_id}")
+            return False
+        if unit_res.data.get("status") == UnitStatus.TRANSIT.value:
+            print(f"Cannot change leader of unit {unit_id} while in TRANSIT")
+            return False
+
+        # 2. Verificar que el personaje existe en la unidad como 'character'
+        member_check = db.table("unit_members")\
+            .select("slot_index")\
+            .match({"unit_id": unit_id, "entity_type": "character", "entity_id": character_entity_id})\
+            .maybe_single()\
+            .execute()
+
+        if not member_check.data:
+            print(f"Character {character_entity_id} not found in unit {unit_id}")
+            return False
+
+        # 3. Desactivar líder actual (si existe)
+        db.table("unit_members")\
+            .update({"is_leader": False})\
+            .eq("unit_id", unit_id)\
+            .eq("is_leader", True)\
+            .execute()
+
+        # 4. Activar nuevo líder
+        response = db.table("unit_members")\
+            .update({"is_leader": True})\
+            .match({"unit_id": unit_id, "entity_type": "character", "entity_id": character_entity_id})\
+            .execute()
+
+        return bool(response.data)
+
+    except Exception as e:
+        print(f"Error setting leader for unit {unit_id}: {e}")
+        return False
+
+
+def get_unit_leader_skill(unit_id: int) -> int:
+    """
+    V16.0: Obtiene la habilidad de Liderazgo del líder de la unidad.
+    Calcula el skill usando la fórmula: (presencia + voluntad) * 2
+    Retorna 0 si no hay líder o no se puede calcular.
+    """
+    db = get_supabase()
+    try:
+        # 1. Obtener el líder de la unidad
+        leader_res = db.table("unit_members")\
+            .select("entity_id")\
+            .match({"unit_id": unit_id, "entity_type": "character", "is_leader": True})\
+            .maybe_single()\
+            .execute()
+
+        if not leader_res.data:
+            # Fallback: buscar primer character si no hay líder marcado
+            fallback_res = db.table("unit_members")\
+                .select("entity_id")\
+                .match({"unit_id": unit_id, "entity_type": "character"})\
+                .limit(1)\
+                .execute()
+            if not fallback_res.data:
+                return 0
+            character_id = fallback_res.data[0].get("entity_id")
+        else:
+            character_id = leader_res.data.get("entity_id")
+
+        # 2. Obtener stats del personaje
+        char_res = db.table("characters")\
+            .select("stats_json")\
+            .eq("id", character_id)\
+            .single()\
+            .execute()
+
+        if not char_res.data:
+            return 0
+
+        stats = char_res.data.get("stats_json", {})
+        if not isinstance(stats, dict):
+            return 0
+
+        # 3. Calcular skill de Liderazgo desde atributos
+        # Liderazgo = (presencia + voluntad) * 2 (según SKILL_MAPPING)
+        capacidades = stats.get("capacidades", {})
+        attrs = capacidades.get("atributos", {})
+        presencia = attrs.get("presencia", 5)
+        voluntad = attrs.get("voluntad", 5)
+
+        return (presencia + voluntad) * 2
+
+    except Exception as e:
+        print(f"Error getting leader skill for unit {unit_id}: {e}")
+        return 0
+
 
 def get_active_transit_units_count(player_id: int) -> int:
     """Cuenta cuántas unidades están en estado TRANSIT para el jugador."""

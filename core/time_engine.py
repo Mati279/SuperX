@@ -170,6 +170,9 @@ def _execute_game_logic_tick(execution_time: datetime):
         # 7. Fase de Limpieza y Auditoría
         _phase_cleanup_and_audit()
 
+        # 7.5 V16.0: Fase de Supervivencia de Tropas
+        _phase_troop_survival()
+
         # 8. Fase de Progresión de Conocimiento de Personal (V4.3)
         _phase_knowledge_progression(current_tick)
 
@@ -577,6 +580,38 @@ def _phase_cleanup_and_audit():
         for player in get_all_players(): expire_old_candidates(player['id'], current_tick)
     except Exception as e:
         logger.error(f"Error en limpieza: {e}")
+
+
+def _phase_troop_survival():
+    """
+    V16.0: Fase 7.5 - Procesa supervivencia de tropas en territorios hostiles.
+    Las tropas en unidades que exceden su capacidad (basada en líder)
+    y están en territorio hostil serán eliminadas.
+    """
+    log_event("running phase 7.5: Supervivencia de Tropas...")
+    try:
+        from core.unit_engine import process_troop_survival
+
+        total_removed = 0
+        total_units_affected = 0
+        current_tick = get_world_state().get('current_tick', 1)
+
+        for player in get_all_players():
+            player_id = player['id']
+            result = process_troop_survival(player_id, current_tick)
+
+            total_removed += result.get("total_removed", 0)
+            total_units_affected += len(result.get("units_affected", []))
+
+        if total_removed > 0:
+            log_event(
+                f"📉 Supervivencia: {total_removed} tropa(s) perdidas "
+                f"en {total_units_affected} unidad(es) por falta de liderazgo en territorio hostil."
+            )
+
+    except Exception as e:
+        logger.error(f"Error en fase de supervivencia: {e}")
+
 
 def _phase_knowledge_progression(current_tick: int):
     """Fase 8: Progresión de Conocimiento Pasivo (V4.3)."""

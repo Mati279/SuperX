@@ -678,7 +678,8 @@ class UnitMemberSchema(BaseModel):
     entity_type: str # 'character' o 'troop'
     entity_id: int
     name: str # Para UI rápida
-    details: Optional[Dict[str, Any]] = None # Snapshot de datos
+    details: Optional[Dict[str, Any]] = None # Snapshot de datos (habilidades para líder)
+    is_leader: bool = False  # V16.0: True si es el líder de la unidad
 
 
 class UnitLocation(BaseModel):
@@ -737,6 +738,9 @@ class UnitSchema(BaseModel):
     # Unidades disoriented: Restringidas a 1 mov local/tick y penalización en combate
     disoriented: bool = Field(default=False)
 
+    # V16.0: Flag de riesgo (territorio hostil o excede capacidad)
+    is_at_risk: bool = Field(default=False)
+
     # V10.0: Ubicación jerárquica (para compatibilidad, mantenemos los campos legacy)
     location_system_id: Optional[int] = None
     location_planet_id: Optional[int] = None
@@ -762,14 +766,46 @@ class UnitSchema(BaseModel):
     @field_validator('members')
     @classmethod
     def validate_unit_composition(cls, v):
-        """Valida composición: máximo 8 slots, mínimo 1 character si hay miembros."""
-        if len(v) > 8:
-            raise ValueError("Unit cannot have more than 8 members")
+        """
+        Valida composición: máximo 12 slots (hard cap), mínimo 1 character si hay miembros.
+        V16.0: Capacidad dinámica basada en líder se valida en capa de servicio.
+        """
+        if len(v) > 12:  # Hard cap absoluto (líder con 80+ Liderazgo)
+            raise ValueError("Unit cannot have more than 12 members")
         if len(v) > 0:
             characters = [m for m in v if m.entity_type == 'character']
             if len(characters) == 0:
                 raise ValueError("Unit must have at least one character as leader")
         return v
+
+    @property
+    def leader(self) -> Optional['UnitMemberSchema']:
+        """V16.0: Retorna el miembro líder de la unidad."""
+        for member in self.members:
+            if member.is_leader and member.entity_type == 'character':
+                return member
+        # Fallback: primer character si no hay líder explícito
+        for member in self.members:
+            if member.entity_type == 'character':
+                return member
+        return None
+
+    @property
+    def max_capacity(self) -> int:
+        """
+        V16.0: Capacidad máxima basada en la habilidad de Liderazgo del líder.
+        Fórmula: 4 + (skill_liderazgo // 10)
+        Rango: 4 (sin líder o liderazgo 0) hasta 12 (liderazgo 80+)
+        """
+        leader = self.leader
+        if not leader or not leader.details:
+            return 4  # Capacidad base sin líder o sin datos
+
+        # Obtener skill de Liderazgo del snapshot
+        skills = leader.details.get('habilidades', {})
+        leadership_skill = skills.get('Liderazgo', 0)
+
+        return min(12, 4 + (leadership_skill // 10))
 
     @property
     def location(self) -> UnitLocation:
