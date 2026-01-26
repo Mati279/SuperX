@@ -20,6 +20,10 @@ from ui.dialogs.roster_dialogs import (
     create_unit_dialog,
     manage_unit_dialog,
 )
+from services.unit_service import toggle_stealth_mode
+from core.exploration_engine import resolve_sector_exploration
+from data.planet_repository import build_structure, get_planet_sectors_status
+from core.world_constants import SECTOR_TYPE_ORBITAL
 
 
 # --- CSS COMPACTO ---
@@ -240,6 +244,96 @@ def _build_skill_tooltips(members: List[Dict[str, Any]]) -> Dict[str, str]:
     return tooltips
 
 
+def _get_sector_action_context(
+    unit: Any,
+    player_id: int
+) -> Dict[str, Any]:
+    """
+    V18.0: Obtiene el contexto del sector para habilitar/deshabilitar acciones.
+    Retorna info sobre: sector_type, is_discovered, has_outpost.
+    """
+    sector_id = get_prop(unit, "location_sector_id")
+    planet_id = get_prop(unit, "location_planet_id")
+
+    context = {
+        "sector_id": sector_id,
+        "sector_type": None,
+        "is_orbital": False,
+        "is_discovered": False,
+        "has_outpost": False,
+        "can_explore": False,
+        "can_build_outpost": False,
+        "planet_asset_id": None  # Necesario para build_structure
+    }
+
+    if not sector_id or not planet_id:
+        return context
+
+    try:
+        # Obtener sectores del planeta con estado de descubrimiento
+        sectors = get_planet_sectors_status(planet_id, player_id)
+
+        # Buscar el sector actual
+        current_sector = None
+        for s in sectors:
+            if s.get("id") == sector_id:
+                current_sector = s
+                break
+
+        if not current_sector:
+            return context
+
+        sector_type = current_sector.get("sector_type")
+        is_orbital = sector_type == SECTOR_TYPE_ORBITAL
+        is_discovered = current_sector.get("is_discovered", False)
+
+        context["sector_type"] = sector_type
+        context["is_orbital"] = is_orbital
+        context["is_discovered"] = is_discovered
+
+        # Verificar si ya tiene outpost (consultar edificios del sector)
+        from data.database import get_supabase
+        db = get_supabase()
+
+        # Buscar planet_asset_id del jugador para este planeta
+        asset_res = db.table("planet_assets")\
+            .select("id")\
+            .eq("planet_id", planet_id)\
+            .eq("player_id", player_id)\
+            .maybe_single()\
+            .execute()
+
+        if asset_res and asset_res.data:
+            context["planet_asset_id"] = asset_res.data.get("id")
+
+        # Verificar si hay outpost en el sector
+        outpost_res = db.table("planet_buildings")\
+            .select("id")\
+            .eq("sector_id", sector_id)\
+            .eq("building_type", "outpost")\
+            .maybe_single()\
+            .execute()
+
+        context["has_outpost"] = bool(outpost_res and outpost_res.data)
+
+        # Determinar acciones disponibles
+        # Explorar: sector_id válido, NO es orbital
+        context["can_explore"] = (sector_id is not None) and (not is_orbital)
+
+        # Puesto de avanzada: sector descubierto, no tiene outpost, no es orbital
+        context["can_build_outpost"] = (
+            is_discovered and
+            not context["has_outpost"] and
+            not is_orbital and
+            context["planet_asset_id"] is not None
+        )
+
+    except Exception as e:
+        print(f"Error obteniendo contexto de sector: {e}")
+
+    return context
+
+
 def render_unit_row(
     unit: Any,
     player_id: int,
@@ -247,7 +341,12 @@ def render_unit_row(
     available_chars: List[Any],
     available_troops: List[Any]
 ):
-    """Renderiza unidad con header expandible: nombre + botones de gestión y movimiento."""
+    """
+    V18.0: Nueva estructura de fila de unidad.
+    - Cabecera Estática: Icono + Nombre + Badge capacidad
+    - Botonera Continua: Movimiento, Gestionar, Sigilo, Explorar, Puesto de Avanzada
+    - Menú Desplegable: Personal con fichas de personaje
+    """
     unit_id = get_prop(unit, "id")
     name = get_prop(unit, "name", "Unidad")
     members = get_prop(unit, "members", [])
@@ -259,68 +358,132 @@ def render_unit_row(
     max_capacity = calculate_unit_display_capacity(members)
     current_count = len(members)
 
+    # Icono de entorno
     icon = "🌌" if is_space else "🌍"
-    status_emoji = {"GROUND": "🏕️", "SPACE": "🚀", "TRANSIT": "✈️"}.get(status, "❓")
 
-    # Header dinámico con contador de movimientos
-    moves_badge = f"[Movs: {local_moves}/2]" if local_moves < 2 else "[🛑 Sin Movs]"
+    # Badge de capacidad
+    capacity_display = f"{current_count}/{max_capacity}"
+    risk_indicator = " ⚠️" if is_at_risk else ""
 
-    # V13.5: Formateo de texto para tránsito SCO local
-    if status == "TRANSIT":
-        # Intentar recuperar destino para mostrar SCO R[X] -> R[Y]
-        origin_ring = get_prop(unit, "ring", 0)
-        dest_ring = "?"
-        try:
-            # Recuperación robusta del anillo destino
-            dest_ring_raw = get_prop(unit, "transit_destination_ring")
-            if dest_ring_raw is not None:
-                dest_ring = dest_ring_raw
-            else:
-                t_data = get_prop(unit, "transit_destination_data")
-                if t_data:
-                    if isinstance(t_data, str):
-                        parsed = json.loads(t_data)
-                        dest_ring = parsed.get("ring", "?")
-                    elif isinstance(t_data, dict):
-                        dest_ring = t_data.get("ring", "?")
-        except:
-            pass
+    # Verificar si está en modo sigilo
+    is_stealth = status == "STEALTH_MODE"
+    is_transit = status == "TRANSIT"
 
-        status_text = f"✈️ SCO R[{origin_ring}] → R[{dest_ring}]"
-    else:
-        status_text = status_emoji
+    # Obtener contexto del sector para botones condicionales
+    sector_context = _get_sector_action_context(unit, player_id)
 
-    # V16.0: Capacidad dinámica y color de riesgo
-    capacity_display = f"({current_count}/{max_capacity})"
-    risk_indicator = "⚠️ " if is_at_risk else ""
+    # ═══════════════════════════════════════════════════════════════
+    # CABECERA ESTÁTICA (Fila de Control)
+    # ═══════════════════════════════════════════════════════════════
+    header_cols = st.columns([0.4, 3, 1])
 
-    header_text = f"{icon} 🎖️ **{name}** {capacity_display} {status_text} {moves_badge} {risk_indicator}"
+    with header_cols[0]:
+        st.markdown(f"**{icon}**")
 
-    # Header compacto con expander
-    with st.expander(header_text, expanded=False):
+    with header_cols[1]:
+        # Nombre + Badge de capacidad
+        stealth_badge = " 🥷" if is_stealth else ""
+        transit_badge = " ✈️" if is_transit else ""
+        st.markdown(f"🎖️ **{name}** `[{capacity_display}]`{stealth_badge}{transit_badge}{risk_indicator}")
+
+    with header_cols[2]:
+        # Mostrar estado de movimientos
+        if local_moves < 2:
+            st.caption(f"Movs: {local_moves}/2")
+        else:
+            st.caption("🛑 Sin Movs")
+
+    # ═══════════════════════════════════════════════════════════════
+    # BOTONERA CONTINUA (Acciones Rápidas)
+    # ═══════════════════════════════════════════════════════════════
+    btn_cols = st.columns([1, 1, 1, 1, 1])
+
+    # 🚀 Botón de Movimiento
+    with btn_cols[0]:
+        if is_transit:
+            st.button("✈️", key=f"move_transit_{unit_id}", disabled=True, help="En tránsito")
+        elif local_moves >= 2:
+            st.button("🚀", key=f"move_lock_{unit_id}", disabled=True, help="Sin movimientos")
+        else:
+            if st.button("🚀", key=f"move_{unit_id}", help="Control de Movimiento"):
+                st.session_state.selected_unit_movement = unit_id
+                movement_dialog()
+
+    # ⚙ Botón de Gestionar
+    with btn_cols[1]:
+        if st.button("⚙️", key=f"manage_{unit_id}", help="Gestionar unidad"):
+            manage_unit_dialog(unit, player_id, available_chars, available_troops)
+
+    # 🐱‍👤 Botón de Modo Sigilo
+    with btn_cols[2]:
+        stealth_disabled = is_transit
+        stealth_type = "primary" if is_stealth else "secondary"
+        stealth_help = "Desactivar Sigilo" if is_stealth else "Activar Modo Sigilo"
+
+        if stealth_disabled:
+            st.button("🐱‍👤", key=f"stealth_disabled_{unit_id}", disabled=True, help="No disponible en tránsito")
+        else:
+            if st.button("🐱‍👤", key=f"stealth_{unit_id}", help=stealth_help, type=stealth_type):
+                result = toggle_stealth_mode(unit_id, player_id)
+                if result.get("success"):
+                    st.success(f"Sigilo: {result.get('new_status')}")
+                    st.rerun()
+                else:
+                    st.error(result.get("error", "Error al cambiar modo sigilo"))
+
+    # 🔭 Botón de Explorar (Condicional)
+    with btn_cols[3]:
+        can_explore = sector_context.get("can_explore", False) and not is_transit
+        sector_id = sector_context.get("sector_id")
+
+        if not can_explore or sector_id is None:
+            st.button("🔭", key=f"explore_disabled_{unit_id}", disabled=True, help="Exploración no disponible")
+        else:
+            if st.button("🔭", key=f"explore_{unit_id}", help="Explorar Sector"):
+                try:
+                    result = resolve_sector_exploration(unit_id, sector_id, player_id)
+                    if result.success:
+                        st.success(f"Exploración exitosa: {result.narrative}")
+                    else:
+                        st.warning(f"Exploración fallida: {result.narrative}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error en exploración: {e}")
+
+    # 🏛 Botón de Puesto de Avanzada (Condicional)
+    with btn_cols[4]:
+        can_build = sector_context.get("can_build_outpost", False) and not is_transit
+        planet_asset_id = sector_context.get("planet_asset_id")
+
+        if not can_build or planet_asset_id is None:
+            help_text = "Requiere sector descubierto sin outpost"
+            if sector_context.get("has_outpost"):
+                help_text = "Ya existe un puesto en este sector"
+            st.button("🏛", key=f"outpost_disabled_{unit_id}", disabled=True, help=help_text)
+        else:
+            if st.button("🏛", key=f"outpost_{unit_id}", help="Construir Puesto de Avanzada"):
+                try:
+                    result = build_structure(
+                        planet_asset_id=planet_asset_id,
+                        player_id=player_id,
+                        building_type="outpost",
+                        sector_id=sector_context.get("sector_id")
+                    )
+                    if result:
+                        st.success("Puesto de Avanzada construido")
+                        st.rerun()
+                    else:
+                        st.error("No se pudo construir el puesto")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+    # ═══════════════════════════════════════════════════════════════
+    # MENÚ DESPLEGABLE DE PERSONAL (Expander)
+    # ═══════════════════════════════════════════════════════════════
+    with st.expander("👥 Personal", expanded=False):
         # V16.0: Mostrar advertencia si está en riesgo
         if is_at_risk:
-            st.warning("Esta unidad está en riesgo: territorio hostil o excede capacidad del líder.")
-
-        # Botones de acción en la parte superior del contenido expandido
-        col_info, col_move, col_btn = st.columns([3, 1, 1])
-
-        # Botón de movimiento (solo si no está en tránsito)
-        with col_move:
-            if status != "TRANSIT":
-                if local_moves >= 2:
-                    st.button("🛑", key=f"move_unit_lock_{unit_id}", disabled=True, help="Límite de movimientos diarios alcanzado")
-                else:
-                    if st.button("🚀", key=f"move_unit_{unit_id}", help="Control de Movimiento"):
-                        st.session_state.selected_unit_movement = unit_id
-                        movement_dialog()
-            else:
-                st.markdown("✈️", help="En tránsito")
-
-        # Botón de gestión
-        with col_btn:
-            if st.button("⚙️", key=f"manage_unit_{unit_id}", help="Gestionar unidad"):
-                manage_unit_dialog(unit, player_id, available_chars, available_troops)
+            st.warning("⚠️ Unidad en riesgo: territorio hostil o excede capacidad del líder.")
 
         # V17.0: Habilidades Colectivas de Unidad
         _render_unit_skills(unit)
@@ -328,19 +491,32 @@ def render_unit_row(
         # Lista de miembros
         if members:
             st.caption("Composición:")
-            # Sort seguro
             sorted_members = sorted(members, key=sort_key_by_prop("slot_index", 0))
 
             for m in sorted_members:
                 etype = get_prop(m, "entity_type", "?")
                 slot = get_prop(m, "slot_index", 0)
                 member_name = get_prop(m, "name", "???")
-                # V16.0: Indicador de líder
                 is_leader = get_prop(m, "is_leader", False)
                 leader_icon = "⭐ " if is_leader else ""
 
+                # Fila de miembro con botón de ficha para personajes
                 if etype == "character":
-                    st.markdown(f"`[{slot}]` {leader_icon}👤 {member_name}")
+                    char_cols = st.columns([4, 1])
+                    with char_cols[0]:
+                        st.markdown(f"`[{slot}]` {leader_icon}👤 {member_name}")
+                    with char_cols[1]:
+                        # 📄 Botón de Ficha de Personaje
+                        char_id = get_prop(m, "entity_id")
+                        char_details = get_prop(m, "details", {})
+                        if st.button("📄", key=f"sheet_{unit_id}_{char_id}", help="Ver ficha de personaje"):
+                            # Construir objeto de personaje para el diálogo
+                            char_data = {
+                                "id": char_id,
+                                "nombre": member_name,
+                                **char_details
+                            }
+                            view_character_dialog(char_data, player_id)
                 else:
                     st.markdown(f"`[{slot}]` 🪖 {member_name}")
         else:
