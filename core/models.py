@@ -17,6 +17,7 @@ Actualizado V11.2: Unidades - Campo local_moves_count para límite de movimiento
 Actualizado V14.0: Unidades - Campo ship_count para tamaño de flota.
 Actualizado V14.1: Sistema de Detección - Estados STEALTH_MODE, HIDDEN y flag disoriented.
 Actualizado V15.1: Soporte para 'ring' en CommanderData y CharacterLocation.
+Actualizado V15.2: Fix Validación CommanderData (Ring Nullable).
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -375,7 +376,15 @@ class CommanderData(BaseModel):
     location_system_id: Optional[int] = None
     location_planet_id: Optional[int] = None
     location_sector_id: Optional[int] = None
-    ring: int = 0 # V15.1: Added ring persistence
+    ring: int = Field(default=0) # V15.1: Added ring persistence with default
+
+    # V15.2: Validador para asegurar que ring nunca sea None al leer de DB
+    @field_validator('ring', mode='before')
+    @classmethod
+    def sanitize_ring(cls, v: Any) -> int:
+        if v is None:
+            return 0
+        return v
     
     # Datos unidos (Joined Data) - Refactor V11.0
     planets: Optional[Dict[str, Any]] = None 

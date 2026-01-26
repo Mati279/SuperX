@@ -14,6 +14,7 @@ Actualizado v5.2.1: Soporte para actualización de ubicacion_local en reclutamie
 Refactorizado v10.0: Purga de ubicación en JSON (Ubicación SQL como Source of Truth).
 Refactorizado v10.2: Asignación automática de ubicación base para Comandante (Create/Update).
 Refactorizado v11.1: Hotfix Fetch & Stitch para garantizar carga de personajes.
+Actualizado V15.2: Soporte completo para persistencia de 'ring' en funciones CRUD.
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -74,6 +75,7 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
     Separa los datos que van a columnas SQL (Fuente de Verdad) de los que se quedan en JSON.
     Convierte nombres de roles a IDs numéricos para compatibilidad SQL.
     Refactor V10: Elimina la ubicación del JSON tras extraerla.
+    V15.2: Soporte para extracción de 'ring'.
     """
     stats = copy.deepcopy(full_stats)
     columns = {}
@@ -122,6 +124,7 @@ def _extract_and_clean_data(full_stats: Dict[str, Any]) -> Tuple[Dict[str, Any],
             columns["location_system_id"] = loc.get("system_id")
             columns["location_planet_id"] = loc.get("planet_id")
             columns["location_sector_id"] = loc.get("sector_id")
+            columns["ring"] = loc.get("ring", 0) # V15.2: Extract ring
         
         # TAREA 2: Limpieza obligatoria. La ubicación NO debe persistir en JSON.
         stats["estado"].pop("ubicacion", None)
@@ -274,7 +277,8 @@ def create_commander(
             # V10.2: Inyección explícita de Coordenadas SQL
             "location_system_id": loc_system_id,
             "location_planet_id": loc_planet_id,
-            "location_sector_id": loc_sector_id
+            "location_sector_id": loc_sector_id,
+            "ring": 0 # V15.2: Default safe value for ring
         }
 
         response = _get_db().table("characters").insert(new_char_data).execute()
@@ -325,7 +329,8 @@ def update_commander_profile(
             "class_id": cols.get("class_id"),
             "nombre": cols.get("nombre"),
             "apellido": cols.get("apellido"),
-            "rol": cols.get("rol") # ID numérico procesado por ROLE_ID_MAP
+            "rol": cols.get("rol"), # ID numérico procesado por ROLE_ID_MAP
+            "ring": cols.get("ring", 0) # V15.2: Ensure ring is updated
         }
 
         # --- V10.2: Sincronización de Ubicación (Auto-Healing) ---
@@ -337,6 +342,7 @@ def update_commander_profile(
                 update_payload["location_system_id"] = base_coords.get("system_id")
                 update_payload["location_planet_id"] = base_coords.get("planet_id")
                 update_payload["location_sector_id"] = base_coords.get("sector_id")
+                update_payload["ring"] = base_coords.get("ring", 0)
                 
                 # Actualizar JSON para consistencia UI
                 loc_name = base_coords.get("nombre_asentamiento", "Base Principal")
@@ -398,7 +404,8 @@ def create_character(player_id: Optional[int], character_data: Dict[str, Any]) -
             
             "location_system_id": cols.get("location_system_id"),
             "location_planet_id": cols.get("location_planet_id"),
-            "location_sector_id": cols.get("location_sector_id")
+            "location_sector_id": cols.get("location_sector_id"),
+            "ring": cols.get("ring", 0) # V15.2: Ring persistence
         }
 
         response = _get_db().table("characters").insert(payload).execute()
