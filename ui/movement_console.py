@@ -17,10 +17,12 @@ V14.7: Sincronización dinámica de ticks de viaje (Real-time calculation vs Wor
 V15.0: Integración de Exploración Táctica de Sectores.
 V15.1: Feedback persistente de exploración y gestión de fatiga.
 V15.2: Integración de @st.fragment y widget MRG. Feedback simplificado.
+V15.3: Fix coordenadas Warp (Cálculo 2D local).
 """
 
 import streamlit as st
 import json
+import math  # Import necesario para cálculo de distancias
 from typing import Dict, Any, List, Optional, Tuple
 
 from data.unit_repository import get_unit_by_id
@@ -629,21 +631,20 @@ def _render_ring_options(
 
         all_systems = get_all_systems_from_db()
         
-        # Filtro V14.0: Solo sistemas dentro de rango (30.0) y excluir actual
-        origin_sys_coords = (0, 0, 0) # Fallback, debería buscarse
+        # Corrección de coordenadas 2D y cálculo local
         origin_sys_data = get_system_by_id(system_id)
-        if origin_sys_data:
-            origin_sys_coords = (origin_sys_data['x'], origin_sys_data['y'], origin_sys_data['z'])
+        ox = origin_sys_data.get('x', 0.0) if origin_sys_data else 0.0
+        oy = origin_sys_data.get('y', 0.0) if origin_sys_data else 0.0
 
         warp_targets = []
         for s in all_systems:
             if s['id'] == system_id:
                 continue
             
-            dist = calculate_euclidean_distance(
-                origin_sys_coords, 
-                (s['x'], s['y'], s['z'])
-            )
+            # Cálculo directo 2D (evita errores de tuplas/z)
+            dx = ox - s.get('x', 0.0)
+            dy = oy - s.get('y', 0.0)
+            dist = math.sqrt(dx**2 + dy**2)
             
             if dist <= WARP_MAX_DISTANCE:
                  warp_targets.append({
