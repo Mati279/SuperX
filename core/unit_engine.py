@@ -1,4 +1,4 @@
-# core/unit_engine.py
+# core/unit_engine.py (Completo)
 """
 Motor de Lógica de Unidades y Tropas (V9.0, V16.0).
 Gestiona:
@@ -22,6 +22,7 @@ from data.unit_repository import (
 from data.log_repository import log_event
 from services.character_generation_service import recruit_character_with_ai
 from core.models import TroopSchema, UnitSchema, UnitMemberSchema, CharacterRole, UnitStatus
+from data.character_repository import get_character_by_id
 
 # Constantes de configuración
 MAX_TROOP_LEVEL = 4
@@ -397,3 +398,42 @@ def process_troop_survival(player_id: int, current_tick: int) -> Dict[str, Any]:
 
     result["total_removed"] = len(result["troops_removed"])
     return result
+
+
+def calculate_unit_exploration_merit(unit_id: int) -> int:
+    """
+    V16.0: Calcula el mérito de exploración de una unidad.
+    Formula: (Promedio de 'Orientación y exploración' de personajes) + (3 * Cantidad de personajes).
+    Valor base de habilidad: 5.
+    """
+    unit_data = get_unit_by_id(unit_id)
+    if not unit_data:
+        return 5
+
+    members = unit_data.get("members", [])
+    if not members:
+        return 5
+
+    character_skills = []
+    
+    for member in members:
+        if member.get("entity_type") == "character":
+            char_id = member.get("entity_id")
+            char_data = get_character_by_id(char_id)
+            if char_data:
+                stats = char_data.get("stats_json", {})
+                skills = stats.get("capacidades", {}).get("habilidades", {})
+                # Skill base 5 si no existe
+                skill_val = skills.get("Orientación y exploración", 5)
+                # Validación adicional por si viene nulo
+                if skill_val is None: skill_val = 5
+                character_skills.append(skill_val)
+
+    count = len(character_skills)
+    if count == 0:
+        return 5 # Valor base para unidad sin oficiales/personajes
+
+    avg_skill = sum(character_skills) / count
+    merit = avg_skill + (3 * count)
+    
+    return int(round(merit))

@@ -43,7 +43,9 @@ from core.prestige_engine import (
 # IMPORT V10.0: Motores de Movimiento y Detección
 from core.movement_engine import process_transit_arrivals
 from core.detection_engine import process_detection_phase
-from data.unit_repository import reset_all_movement_locks, decrement_transit_ticks
+from data.unit_repository import reset_all_movement_locks, decrement_transit_ticks, get_unit_by_id
+from data.planet_repository import grant_sector_knowledge, get_sector_details
+from core.unit_engine import calculate_unit_exploration_merit
 
 # Forzamos la zona horaria a Argentina (GMT-3)
 SAFE_TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
@@ -341,6 +343,11 @@ def _phase_concurrency_resolution():
                 mark_action_processed(action_id, "PROCESSED")
                 continue
 
+            if "[INTERNAL_EXECUTE_EXPLORATION]" in action_text:
+                _process_sector_exploration(player_id, action_text)
+                mark_action_processed(action_id, "PROCESSED")
+                continue
+
             log_event(f"Ejecutando orden diferida ID {action_id}...", player_id)
             resolve_player_action(action_text, player_id)
             mark_action_processed(action_id, "PROCESSED")
@@ -480,6 +487,66 @@ def _apply_member_investigation_result(player_id: int, character_id: int, name: 
         log_event(f"INTEL: Datos de {name} actualizados a nivel CONOCIDO.", player_id)
     else:
         log_event(f"INTEL: Investigación sobre {name} sin resultados.", player_id)
+
+def _process_sector_exploration(player_id: int, action_text: str):
+    """
+    V16.0: Procesa la acción diferida de exploración de sectores usando MRG.
+    """
+    try:
+        # Parsing
+        unit_id = None
+        sector_id = None
+        
+        u_match = re.search(r"unit_id=(\d+)", action_text)
+        s_match = re.search(r"sector_id=(\d+)", action_text)
+        
+        if u_match: unit_id = int(u_match.group(1))
+        if s_match: sector_id = int(s_match.group(1))
+        
+        if not unit_id or not sector_id:
+            logger.error(f"Parametros invalidos en exploracion: {action_text}")
+            return
+
+        unit_data = get_unit_by_id(unit_id)
+        unit_name = unit_data.get("name", "Unidad") if unit_data else "Unidad"
+        
+        # Validar estado (No explorar en tránsito)
+        if unit_data and (unit_data.get("status") == "TRANSIT" or unit_data.get("status") == "Desconocido"):
+             log_event(f"⚠️ La unidad {unit_name} no pudo explorar: Estaba en movimiento.", player_id)
+             return
+
+        # Calcular Mérito
+        merit = calculate_unit_exploration_merit(unit_id)
+        
+        # Resolución MRG
+        # Dificultad base 50 (Normal)
+        result = resolve_action(
+            merit_points=merit,
+            difficulty=50,
+            action_description=f"Exploración de Sector {sector_id} por {unit_name}"
+        )
+        
+        if result.success:
+            if grant_sector_knowledge(player_id, sector_id):
+                msg_base = f"🔭 La unidad '{unit_name}' ha cartografiado con éxito el sector."
+                if result.result_type == ResultType.CRITICAL_SUCCESS:
+                    msg_base = f"🌟 CRÍTICO: ¡{unit_name} ha realizado un mapeo detallado y rápido del sector!"
+                elif result.result_type == ResultType.PARTIAL_SUCCESS:
+                    msg_base = f"⚠️ {unit_name} logró cartografiar el sector con dificultades."
+                
+                log_event(msg_base, player_id)
+            else:
+                log_event(f"Error técnico al registrar exploración del sector {sector_id}.", player_id, is_error=True)
+        else:
+            fail_msg = f"❌ La patrulla de '{unit_name}' no logró establecer datos fiables del sector. (Fallo de Exploración)"
+            if result.result_type == ResultType.CRITICAL_FAILURE:
+                fail_msg = f"💀 FALLO CRÍTICO: '{unit_name}' se perdió temporalmente y reportó datos corruptos del sector."
+            
+            log_event(fail_msg, player_id)
+
+    except Exception as e:
+        logger.error(f"Error procesando exploracion de sector: {e}")
+        log_event(f"Error interno en misión de exploración.", player_id, is_error=True)
 
 def _phase_prestige_calculation(current_tick: int):
     """

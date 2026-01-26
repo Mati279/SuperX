@@ -18,6 +18,7 @@ Actualizado V8.1.0: Estandarización de Recursos (RESOURCE_UI_CONFIG) y Limpieza
 Actualizado V8.2.0: Botón directo de Puesto de Avanzada (Debug Mode) en sectores no reclamados.
 Actualizado V8.3.0: Estandarización de Seguridad (Sp) - Base 30 para todos los planetas.
 Fix V8.3.1: Corrección de color en recursos de lujo (magenta no soportado -> violet).
+Actualizado V16.0: Integración de exploración de sectores por unidades (acción diferida).
 """
 
 import streamlit as st
@@ -41,6 +42,8 @@ from core.world_constants import (
     RESOURCE_UI_CONFIG
 )
 from ui.state import get_player_id
+from data.unit_repository import get_units_by_player
+from data.world_repository import submit_player_action
 
 
 # --- Helpers de Facciones (Simplificado) ---
@@ -110,6 +113,10 @@ def render_planet_surface(planet_id: int):
     sectors = get_planet_sectors_status(planet['id'], player_id=player_id)
     buildings = get_planet_buildings(asset['id']) if asset else []
     asset_id = asset['id'] if asset else None
+    
+    # Pre-carga de unidades del jugador para lógica de exploración
+    all_units = get_units_by_player(player_id)
+    units_on_planet = [u for u in all_units if u.get("location_planet_id") == planet_id]
 
     # Filtrado de sectores (Orbital vs Superficie)
     orbital_sector = next((s for s in sectors if s.get('sector_type') == SECTOR_TYPE_ORBITAL), None)
@@ -123,7 +130,7 @@ def render_planet_surface(planet_id: int):
     
     if orbital_sector:
         with st.container(border=True):
-             _render_sector_card(orbital_sector, buildings, asset_id, player_id, debug_mode)
+             _render_sector_card(orbital_sector, buildings, asset_id, player_id, debug_mode, units_on_planet)
     else:
         # Fallback por si la generación antigua no tiene sector orbital
         with st.container(border=True):
@@ -133,7 +140,7 @@ def render_planet_surface(planet_id: int):
     st.divider()
 
     # 4. Grid de Sectores y Gestión de Edificios (Solo Superficie)
-    _render_sectors_management(planet, asset, player_id, debug_mode, surface_sectors, buildings)
+    _render_sectors_management(planet, asset, player_id, debug_mode, surface_sectors, buildings, units_on_planet)
 
 
 def _render_info_header(planet: dict, asset: dict):
@@ -189,7 +196,7 @@ def _render_info_header(planet: dict, asset: dict):
     st.divider()
 
 
-def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_mode: bool, sectors: list, buildings: list):
+def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_mode: bool, sectors: list, buildings: list, units: list):
     """Renderiza el grid de sectores de superficie y sus opciones interactivas."""
     st.subheader("Distribución de Sectores")
     
@@ -207,10 +214,10 @@ def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_
         for idx, sector in enumerate(row_sectors):
             with cols[idx]:
                 with st.container(border=True):
-                    _render_sector_card(sector, buildings, asset_id, player_id, debug_mode)
+                    _render_sector_card(sector, buildings, asset_id, player_id, debug_mode, units)
 
 
-def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id: int, debug_mode: bool):
+def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id: int, debug_mode: bool, units: list = []):
     """
     Renderiza una tarjeta individual para un sector específico con estilo estricto.
     V7.2: Manejo de Niebla de Superficie.
@@ -218,6 +225,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     V7.7: Cálculo de Slots dinámico basado en World Constants.
     V8.1: Refactor UI (Recursos Estandarizados, Sin ID, Propiedad Destacada).
     V8.2: Botón 'Puesto de Avanzada' directo en sectores no reclamados (Debug).
+    V16.0: Integración de exploración de sectores por unidades.
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE (V7.2) ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -232,13 +240,39 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
         st.write("**Recursos:** ???")
         
         st.markdown("---")
-        # Botón de Exploración Temporal
-        if st.button("🔭 Iniciar Exploración", key=f"btn_explore_{sector['id']}", use_container_width=True):
-            if grant_sector_knowledge(player_id, sector['id']):
-                st.toast("¡Exploración completada! Datos del sector actualizados.")
-                st.rerun()
-            else:
-                st.error("Error al registrar la exploración.")
+        
+        # --- V16.0 LÓGICA DE EXPLORACIÓN POR UNIDADES ---
+        # Buscar si hay alguna unidad del jugador en este sector
+        units_in_sector = [u for u in units if u.get("location_sector_id") == sector['id']]
+        
+        if units_in_sector:
+            # Seleccionar unidad para explorar
+            unit_options = {u['id']: u['name'] for u in units_in_sector}
+            selected_unit_id = st.selectbox(
+                "Seleccionar Unidad de Exploración", 
+                options=list(unit_options.keys()), 
+                format_func=lambda x: unit_options[x],
+                key=f"sel_unit_exp_{sector['id']}"
+            )
+            
+            if st.button("🗺️ Explorar Sector (1 Tick)", key=f"btn_explore_unit_{sector['id']}", use_container_width=True):
+                # Encolar acción diferida
+                action_text = f"[INTERNAL_EXECUTE_EXPLORATION] unit_id={selected_unit_id} sector_id={sector['id']}"
+                if submit_player_action(player_id, action_text):
+                    st.success("Orden de exploración enviada. Resultados en el próximo ciclo.")
+                else:
+                    st.error("Error al enviar la orden.")
+        else:
+            st.caption("❌ Se requiere una unidad en el sector para explorar.")
+        
+        # Botón de Exploración Temporal (Debug/Legacy) - Solo si DEBUG está activo
+        if debug_mode:
+            if st.button("🔭 [DEBUG] Exploración Inmediata", key=f"btn_explore_{sector['id']}", use_container_width=True):
+                if grant_sector_knowledge(player_id, sector['id']):
+                    st.toast("¡Exploración completada! Datos del sector actualizados.")
+                    st.rerun()
+                else:
+                    st.error("Error al registrar la exploración.")
         return # Salir temprano, no mostrar detalles
     
     # --- RENDERIZADO NORMAL (Explorado, Orbital o Debug) ---
