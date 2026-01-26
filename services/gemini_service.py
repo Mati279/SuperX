@@ -9,6 +9,7 @@ Características:
 - Integración con Motor de Resolución Galáctico (MRG)
 - Manejo robusto de Function Calling
 - Detección inteligente de habilidades (Business Intelligence)
+- V2.2: Delegación inteligente de operaciones de exploración (evita doble MRG).
 """
 
 import json
@@ -47,6 +48,12 @@ QUERY_KEYWORDS = [
     "donde", "dónde", "quien", "quién", "estado", "listar",
     "ver", "info", "ayuda", "analisis", "análisis", "describir",
     "explicar", "mostrar"
+]
+
+# Palabras clave que indican operación de exploración (Delegada a Tool, sin MRG de comandante)
+EXPLORATION_KEYWORDS = [
+    "explorar", "exploracion", "cartografiar", "escanear sector",
+    "reconocimiento", "survey", "mapear"
 ]
 
 # Mapa sugerido de Skill -> Atributo para cálculos inteligentes
@@ -154,6 +161,7 @@ Cuando debas evaluar personal, asignar tareas o determinar quién es el mejor pa
    - Para consultas simples de estado: Contexto Táctico.
    - Para detalles de un personaje específico: `investigate_character`.
    - Para búsquedas, comparaciones o listados: `execute_sql_query`.
+   - **Para EXPLORACIÓN:** Si el comandante ordena explorar, cartografiar o escanear sectores con una unidad, EJECUTA la herramienta `resolve_sector_exploration`. No intentes resolverlo tú.
 4. **Responder:** Informa el resultado con tu personalidad de IA Táctica, justificando tus recomendaciones basándote en la Jerarquía de Competencias.
 
 ## PROTOCOLO DE RENDERIZADO VISUAL (CRÍTICO)
@@ -498,11 +506,15 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
     faction_name = str(commander.get('faccion_id', 'Independiente'))
     system_prompt = _get_system_prompt(commander['nombre'], faction_name)
 
-    # 4. Resolver MRG (si no es consulta informativa)
+    # 4. Resolver MRG
     mrg_result = None
     mrg_info_block = ""
 
-    if _is_informational_query(action_text):
+    # Detección de tipo de acción
+    is_exploration_intent = any(k in action_text.lower() for k in EXPLORATION_KEYWORDS)
+    is_informational = _is_informational_query(action_text)
+
+    if is_informational:
         # Crear un resultado dummy para consultas
         @dataclass
         class DummyResult:
@@ -512,8 +524,21 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
         mrg_result = DummyResult()
         mrg_info_block = ">>> TIPO: SOLICITUD DE INFORMACIÓN. No requiere tirada de habilidad externa."
     
+    elif is_exploration_intent:
+        # EXCLUSIÓN DE MRG PARA EXPLORACIÓN (V2.2)
+        # No ejecutamos MRG del comandante porque la mecánica depende de la UNIDAD
+        # y será resuelta por la herramienta 'resolve_sector_exploration'.
+        mrg_result = None
+        mrg_info_block = (
+            ">>> TIPO: OPERACIÓN DE UNIDAD (EXPLORACIÓN/RECONOCIMIENTO).\n"
+            "ESTADO: Delegado a Sistemas de Flota.\n"
+            "INSTRUCCIÓN PARA IA: Ejecuta la herramienta 'resolve_sector_exploration'.\n"
+            "ADVERTENCIA: NO inventes el resultado. Usa estrictamente el output de la herramienta.\n"
+            "La resolución mecánica (éxito/fallo) será procesada internamente por la herramienta."
+        )
+
     else:
-        # --- LÓGICA DE RESOLUCIÓN INTELIGENTE ---
+        # --- LÓGICA DE RESOLUCIÓN INTELIGENTE (MRG Comandante) ---
         difficulty = DIFFICULTY_STANDARD
         
         # Caso especial: Investigación Interna (Faction Roster / Recruitment)
@@ -521,9 +546,7 @@ def resolve_player_action(action_text: str, player_id: int) -> Optional[Dict[str
             # Forzamos una tirada "Rutinaria" pero real para que salga en el widget
             difficulty = DIFFICULTY_ROUTINE
             # Forzamos lógica de investigación
-            # Simular un texto que active la detección de "Investigación" + "Intelecto"
             merit_points, bonus_explanation = _calculate_dynamic_merit(commander, "investigacion profunda")
-            # Override para asegurar que quede claro en el widget
             bonus_explanation = f"Investigación Automática ({merit_points} pts)"
         else:
             # Caso normal: Detección inteligente basada en texto
