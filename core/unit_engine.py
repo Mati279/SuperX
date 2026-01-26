@@ -1,4 +1,4 @@
-# core/unit_engine.py
+# core/unit_engine.py (Completo)
 """
 Motor de Lógica de Unidades y Tropas (V9.0, V16.0).
 Gestiona:
@@ -6,6 +6,7 @@ Gestiona:
 2. Promoción de Tropas a Héroes (Hero Spawn).
 3. Gestión de miembros de unidad.
 4. V16.0: Liderazgo dinámico y supervivencia de tropas.
+V17.2: Refactorización de cálculo de habilidades para aislamiento estricto de datos.
 """
 
 from typing import Optional, Dict, Any, List
@@ -367,14 +368,16 @@ def process_troop_survival(player_id: int, current_tick: int) -> Dict[str, Any]:
             continue  # Sin tropas que eliminar
 
         # Ordenar por nivel (eliminar las de menor nivel primero)
+        # Hacemos copia de la lista para ordenar seguro
         troops_sorted = sorted(
-            troops,
+            list(troops),
             key=lambda t: t.get("details", {}).get("level", 1) if t.get("details") else 1
         )
 
         # Eliminar hasta cubrir el exceso
         removed_count = 0
-        for troop_member in troops_sorted:
+        # Iterar sobre copia de la lista para evitar problemas de modificación concurrente
+        for troop_member in troops_sorted[:]: 
             if removed_count >= excess:
                 break
 
@@ -444,10 +447,11 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
     }
 
     # 1. Obtener datos de la unidad con miembros hidratados
+    # Al usar get_unit_by_id con el repositorio refactorizado, obtenemos una COPIA limpia de datos.
     unit_data = get_unit_by_id(unit_id)
     if not unit_data:
         result["message"] = f"Unit {unit_id} not found"
-        # Aún así intentamos resetear las habilidades a 0
+        # Aún así intentamos resetear las habilidades a 0 para consistencia
         update_unit_skills(unit_id, result["skills"])
         return result
 
@@ -469,54 +473,39 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
     others = []
 
     for char in characters:
-        if char.get("is_leader", False):
+        # Asegurar lectura booleana
+        if char.get("is_leader") is True:
             leader = char
         else:
             others.append(char)
 
-    # Si no hay líder explícito, el primer personaje asume el rol
+    # Si no hay líder explícito, el primer personaje asume el rol (fallback)
     if leader is None:
         leader = characters[0]
         others = characters[1:]
 
-    # 5. Extraer habilidades ya calculadas del líder (con multiplicador *2 de rules.py)
+    # 5. Extraer habilidades saneadas del líder
     leader_skills = _extract_character_skills(leader)
 
-    # 6. Extraer habilidades de los otros personajes
+    # 6. Extraer habilidades saneadas de los otros personajes
     others_skills = [_extract_character_skills(c) for c in others]
 
     # 7. Calcular cada habilidad con promedio ponderado
     skills = {}
 
-    # Detección: usa habilidad 'deteccion' ya calculada
-    skills["skill_deteccion"] = _calculate_weighted_skill(
-        leader_skills["deteccion"],
-        [s["deteccion"] for s in others_skills]
-    )
+    skill_keys = ["deteccion", "radares", "exploracion", "sigilo", "evasion_sensores"]
 
-    # Radares: usa habilidad 'radares' ya calculada
-    skills["skill_radares"] = _calculate_weighted_skill(
-        leader_skills["radares"],
-        [s["radares"] for s in others_skills]
-    )
-
-    # Exploración: usa habilidad 'exploracion' ya calculada
-    skills["skill_exploracion"] = _calculate_weighted_skill(
-        leader_skills["exploracion"],
-        [s["exploracion"] for s in others_skills]
-    )
-
-    # Sigilo: usa habilidad 'sigilo' ya calculada
-    skills["skill_sigilo"] = _calculate_weighted_skill(
-        leader_skills["sigilo"],
-        [s["sigilo"] for s in others_skills]
-    )
-
-    # Evasión de sensores: usa habilidad 'evasion_sensores' ya calculada
-    skills["skill_evasion_sensores"] = _calculate_weighted_skill(
-        leader_skills["evasion_sensores"],
-        [s["evasion_sensores"] for s in others_skills]
-    )
+    for key in skill_keys:
+        # Calcular promedio ponderado
+        # Construimos la lista de valores de 'otros' para esa key específica
+        others_values_for_key = [s.get(key, 0) for s in others_skills]
+        
+        # Mapeamos la key interna a la key de base de datos (skill_*)
+        db_key = f"skill_{key}"
+        skills[db_key] = _calculate_weighted_skill(
+            leader_skills.get(key, 0),
+            others_values_for_key
+        )
 
     # 8. Persistir en base de datos
     if update_unit_skills(unit_id, skills):
@@ -531,19 +520,16 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
 
 def _extract_character_skills(member: Dict[str, Any]) -> Dict[str, int]:
     """
-    V17.1: Extrae las habilidades ya calculadas de un miembro tipo character.
-
-    Las habilidades vienen en member['details']['habilidades'] y ya tienen
-    aplicado el multiplicador *2 de rules.py. Usar estos valores directamente
-    asegura consistencia con lo mostrado en pantalla.
-
+    V17.2: Extrae las habilidades de un miembro tipo character de forma defensiva.
+    Retorna SIEMPRE un nuevo diccionario con valores enteros garantizados.
+    
     Args:
-        member: Dict del miembro con estructura de UnitMemberSchema
+        member: Dict del miembro
 
     Returns:
-        Dict con las 5 habilidades de unidad (default 20 si no existen)
+        Dict con las 5 habilidades de unidad saneadas.
     """
-    # Defaults basados en atributos 5+5 * 2 = 20
+    # Defaults de seguridad
     defaults = {
         "deteccion": 20,
         "radares": 20,
@@ -552,47 +538,51 @@ def _extract_character_skills(member: Dict[str, Any]) -> Dict[str, int]:
         "evasion_sensores": 20
     }
 
-    details = member.get("details", {})
-    if not details:
-        return defaults
+    if not member:
+        return defaults.copy()
 
-    # Extraer habilidades ya calculadas del JSON del personaje
-    habilidades = details.get("habilidades", {})
+    details = member.get("details")
+    if not isinstance(details, dict):
+        return defaults.copy()
 
-    if habilidades:
-        return {
-            "deteccion": habilidades.get("deteccion", 20),
-            "radares": habilidades.get("radares", 20),
-            "exploracion": habilidades.get("exploracion", 20),
-            "sigilo": habilidades.get("sigilo", 20),
-            "evasion_sensores": habilidades.get("evasion_sensores", 20)
-        }
+    # Extraer habilidades
+    habilidades = details.get("habilidades")
+    if not isinstance(habilidades, dict):
+        return defaults.copy()
 
-    return defaults
+    # Construir nuevo diccionario validando tipos
+    sanitized_skills = {}
+    for key, default_val in defaults.items():
+        val = habilidades.get(key, default_val)
+        # Asegurar que sea entero (maneja float o strings numéricos por si acaso)
+        try:
+            sanitized_skills[key] = int(val)
+        except (ValueError, TypeError):
+            sanitized_skills[key] = default_val
+
+    return sanitized_skills
 
 
-def _calculate_weighted_skill(leader_value: int, others_values: list) -> int:
+def _calculate_weighted_skill(leader_value: int, others_values: List[int]) -> int:
     """
     V17.0: Calcula el promedio ponderado de una habilidad.
 
     Fórmula: (Valor_Líder * W + Suma_Otros) / (W + Cantidad_Otros)
     Donde W = LEADER_WEIGHT (4)
-
-    Args:
-        leader_value: Valor calculado para el líder
-        others_values: Lista de valores de los otros personajes
-
-    Returns:
-        Valor entero redondeado al más cercano
     """
-    others_sum = sum(others_values)
-    others_count = len(others_values)
+    # Defensive math
+    try:
+        clean_others = [int(v) for v in others_values if isinstance(v, (int, float))]
+        others_sum = sum(clean_others)
+        others_count = len(clean_others)
 
-    weighted_sum = (leader_value * LEADER_WEIGHT) + others_sum
-    total_weight = LEADER_WEIGHT + others_count
+        weighted_sum = (leader_value * LEADER_WEIGHT) + others_sum
+        total_weight = LEADER_WEIGHT + others_count
 
-    # Evitar división por cero (no debería ocurrir ya que siempre hay líder)
-    if total_weight == 0:
+        if total_weight <= 0:
+            return 0
+
+        return round(weighted_sum / total_weight)
+    except Exception:
+        # Fallback seguro en caso de error matemático imprevisto
         return 0
-
-    return round(weighted_sum / total_weight)

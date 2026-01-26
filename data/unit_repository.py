@@ -13,6 +13,7 @@ V14.0: Soporte para ship_count (Tamaño de Flota) en creación y actualización.
 V14.2: Fix disolución de unidades (persistencia personajes) y bloqueo de edición en tránsito.
 V15.1: Fix Crítico Disolución - Persistencia de 'ring' en Characters y Troops.
 V15.2: Fix "Problema del Anillo 0" en creación y limpieza de ubicación en disolución.
+V17.2: Fix Crítico Hydration - Aislamiento estricto de datos de miembros y validación de tipos.
 """
 
 from typing import Optional, List, Dict, Any
@@ -27,22 +28,23 @@ def _hydrate_member_names(members: List[Dict[str, Any]]) -> None:
     Hidrata una lista de miembros de unidad con el nombre de la entidad.
     V16.0: También incluye habilidades en 'details' para cálculo de capacidad.
     V17.0: Incluye atributos en 'details' para cálculo de habilidades colectivas.
+    V17.2: Refactorización defensiva para evitar cruce de datos entre unidades.
+           Usa copias profundas y validación estricta de IDs.
     Realiza consultas en lote para optimizar rendimiento.
     Modifica la lista in-place agregando los campos 'name' y 'details'.
-    Nota: 'is_leader' ya viene de la consulta a unit_members y se preserva.
     """
     if not members:
         return
 
     db = get_supabase()
 
-    # 1. Recolectar IDs únicos por tipo
-    char_ids = list({m["entity_id"] for m in members if m["entity_type"] == "character"})
-    troop_ids = list({m["entity_id"] for m in members if m["entity_type"] == "troop"})
+    # 1. Recolectar IDs únicos por tipo (Set comprehension garantiza unicidad)
+    char_ids = list({m.get("entity_id") for m in members if m.get("entity_type") == "character"})
+    troop_ids = list({m.get("entity_id") for m in members if m.get("entity_type") == "troop"})
 
-    char_map = {}
-    char_details = {}  # V16.0/V17.0: Snapshot de habilidades y atributos
-    troop_map = {}
+    # Diccionarios locales para el mapeo (Asegura scope limpio)
+    char_data_map = {} 
+    troop_data_map = {}
 
     # 2. Consultar Nombres y Stats de Personajes
     if char_ids:
@@ -51,29 +53,53 @@ def _hydrate_member_names(members: List[Dict[str, Any]]) -> None:
             # V17.1: También incluir rango para tooltips informativos
             resp = db.table("characters").select("id, nombre, rango, stats_json").in_("id", char_ids).execute()
             if resp.data:
-                for item in resp.data:
-                    char_map[item["id"]] = item["nombre"]
-                    # V16.0/V17.0: Extraer habilidades y atributos
-                    stats = item.get("stats_json", {})
-                    if isinstance(stats, dict):
-                        capacidades = stats.get("capacidades", {})
-                        skills = capacidades.get("habilidades", {})
-                        attrs = capacidades.get("atributos", {})
+                for row in resp.data:
+                    c_id = row["id"]
+                    c_name = row.get("nombre", "Desconocido")
+                    c_rango = row.get("rango", "")
+                    
+                    # Extracción segura de stats (Defensive Coding)
+                    stats = row.get("stats_json")
+                    if not isinstance(stats, dict):
+                        stats = {}
+                    
+                    capacidades = stats.get("capacidades")
+                    if not isinstance(capacidades, dict):
+                        capacidades = {}
 
-                        # V17.1: Si las habilidades están vacías o incompletas, calcularlas
-                        required_skills = ["deteccion", "radares", "exploracion", "sigilo", "evasion_sensores"]
-                        if not skills or not all(k in skills for k in required_skills):
-                            if attrs:
-                                # Calcular habilidades desde atributos (aplica *2 de rules.py)
-                                skills = calculate_skills(attrs)
-
-                        char_details[item["id"]] = {
-                            "habilidades": skills,
-                            "atributos": attrs,  # V17.0: Para cálculo de habilidades colectivas
-                            "rango": item.get("rango", "")  # V17.1: Para tooltips informativos
-                        }
+                    # Copias explícitas para evitar referencias compartidas
+                    current_skills = capacidades.get("habilidades", {})
+                    if not isinstance(current_skills, dict):
+                        current_skills = {}
                     else:
-                        char_details[item["id"]] = {"habilidades": {}, "atributos": {}, "rango": ""}
+                        current_skills = current_skills.copy()
+
+                    current_attrs = capacidades.get("atributos", {})
+                    if not isinstance(current_attrs, dict):
+                        current_attrs = {}
+                    else:
+                        current_attrs = current_attrs.copy()
+
+                    # V17.1: Si las habilidades están vacías o incompletas, calcularlas
+                    required_skills = ["deteccion", "radares", "exploracion", "sigilo", "evasion_sensores"]
+                    is_missing_skills = not current_skills or not all(k in current_skills for k in required_skills)
+
+                    if is_missing_skills and current_attrs:
+                        # Calcular habilidades desde atributos (aplica *2 de rules.py)
+                        # calculate_skills debe ser pura y retornar nuevo dict
+                        calculated = calculate_skills(current_attrs)
+                        if isinstance(calculated, dict):
+                            current_skills = calculated
+
+                    # Almacenar en el mapa local
+                    char_data_map[c_id] = {
+                        "name": c_name,
+                        "details": {
+                            "habilidades": current_skills,
+                            "atributos": current_attrs,  # V17.0: Para cálculo de habilidades colectivas
+                            "rango": c_rango  # V17.1: Para tooltips informativos
+                        }
+                    }
         except Exception as e:
             print(f"Error hydrating characters batch: {e}")
 
@@ -83,28 +109,45 @@ def _hydrate_member_names(members: List[Dict[str, Any]]) -> None:
             # Troops usa la columna 'name'
             resp = db.table("troops").select("id, name, level").in_("id", troop_ids).execute()
             if resp.data:
-                troop_map = {item["id"]: {"name": item["name"], "level": item.get("level", 1)} for item in resp.data}
+                for row in resp.data:
+                    t_id = row["id"]
+                    troop_data_map[t_id] = {
+                        "name": row.get("name", "Tropa"),
+                        "level": row.get("level", 1)
+                    }
         except Exception as e:
             print(f"Error hydrating troops batch: {e}")
 
-    # 4. Asignar nombres y detalles a los miembros
+    # 4. Asignar nombres y detalles a los miembros (Assignment Loop)
     for m in members:
-        e_id = m["entity_id"]
-        e_type = m["entity_type"]
-
+        e_id = m.get("entity_id")
+        e_type = m.get("entity_type")
+        
+        # Inicializar valores por defecto para evitar residuos
         assigned_name = "Entidad Desconocida"
+        assigned_details = {}
 
         if e_type == "character":
-            assigned_name = char_map.get(e_id, f"Personaje {e_id} (No encontrado)")
-            m["details"] = char_details.get(e_id, {"habilidades": {}})  # V16.0
+            data = char_data_map.get(e_id)
+            if data:
+                assigned_name = data["name"]
+                # CRÍTICO: Usar .copy() para asegurar que cada miembro tenga su propia instancia de dict
+                assigned_details = data["details"].copy()
+            else:
+                assigned_name = f"Personaje {e_id} (No encontrado)"
+                assigned_details = {"habilidades": {}, "atributos": {}, "rango": ""}
+                
         elif e_type == "troop":
-            troop_data = troop_map.get(e_id, {})
-            assigned_name = troop_data.get("name", f"Tropa {e_id} (No encontrada)")
-            m["details"] = {"level": troop_data.get("level", 1)}  # V16.0: Nivel para priorizar eliminación
-        else:
-            m["details"] = {}
+            data = troop_data_map.get(e_id)
+            if data:
+                assigned_name = data["name"]
+                assigned_details = {"level": data["level"]}
+            else:
+                assigned_name = f"Tropa {e_id} (No encontrada)"
+                assigned_details = {"level": 1}
 
         m["name"] = assigned_name
+        m["details"] = assigned_details
 
         # V16.0: Asegurar que is_leader tenga un valor por defecto si no viene de DB
         if "is_leader" not in m:
