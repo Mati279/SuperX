@@ -1,7 +1,7 @@
 # ui/dialogs/roster_dialogs.py
 """
 Diálogos modales para el Roster de Facción.
-Contiene: view_character_dialog, movement_dialog, create_unit_dialog, manage_unit_dialog, exploration_result_dialog.
+Contiene: view_character_dialog, movement_dialog, create_unit_dialog, manage_unit_dialog, render_exploration_result_view.
 Extraído de ui/faction_roster.py V17.0.
 """
 
@@ -17,7 +17,7 @@ from data.unit_repository import (
 )
 from core.models import UnitStatus
 from ui.character_sheet import render_character_sheet
-# from ui.movement_console import render_movement_console  <-- MOVIDO A IMPORTACIÓN LOCAL
+# NOTA: render_movement_console se importa dentro de la función para evitar ciclo
 from ui.logic.roster_logic import (
     get_prop,
     set_prop,
@@ -49,9 +49,12 @@ def movement_dialog():
     render_movement_console()
 
 
-@st.dialog("Resultado de Exploración", width="small")
-def exploration_result_dialog(result: ExplorationResult):
-    """Modal para mostrar el resultado de una exploración."""
+def render_exploration_result_view(result: ExplorationResult):
+    """
+    Vista (no modal) para mostrar el resultado de una exploración.
+    Diseñada para ser renderizada dentro de otro contenedor o diálogo existente.
+    """
+    st.subheader("Resultado de Exploración")
     
     # Mostrar narrativa del resultado
     if result.success:

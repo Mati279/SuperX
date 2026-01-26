@@ -18,7 +18,7 @@ V15.0: Integración de Exploración Táctica de Sectores.
 V15.1: Feedback persistente de exploración y gestión de fatiga.
 V15.2: Integración de @st.fragment y widget MRG. Feedback simplificado.
 V15.3: Fix coordenadas Warp (Cálculo 2D local y eliminación de referencia a 'z').
-V15.4: Desacople de visualización MRG a Modal (Exploration Dialog).
+V15.4: Desacople de visualización MRG a Vista Condicional (Fix Nesting Dialogs).
 """
 
 import streamlit as st
@@ -53,8 +53,8 @@ from data.world_repository import get_world_state
 from services.unit_service import toggle_stealth_mode
 from core.exploration_engine import resolve_sector_exploration, ExplorationResult
 from core.mrg_engine import ResultType
-# Importamos el diálogo desde roster_dialogs (ahora seguro gracias a la refactorización de importación local en dialogs)
-from ui.dialogs.roster_dialogs import exploration_result_dialog
+# Importamos la VISTA de resultado (no el diálogo) para renderizarla in-place
+from ui.dialogs.roster_dialogs import render_exploration_result_view
 
 
 def _inject_movement_css():
@@ -839,9 +839,10 @@ def render_movement_console():
     from .state import get_player
     
     # Detectar si hay un resultado de exploración pendiente para mostrar en modal
-    # Se hace check al inicio del fragmento para disparar el diálogo
+    # Si existe, reemplazamos la vista de la consola con la vista de resultado (Fix nesting)
     if 'last_exploration_result' in st.session_state:
-        exploration_result_dialog(st.session_state.last_exploration_result)
+        render_exploration_result_view(st.session_state.last_exploration_result)
+        return  # 🛑 DETENER EJECUCIÓN AQUÍ para ocultar el resto de la consola
 
     _inject_movement_css()
     
