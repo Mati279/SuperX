@@ -4,6 +4,7 @@ Motor de Exploración de Sectores V1.3.
 Transforma la exploración de una acción de UI a una orden operativa basada en habilidades.
 Gestiona la resolución MRG, la validación de ubicación y la narrativa determinista.
 Actualizado V1.3: Eliminación de dependencia de IA para narrativas. Textos estandarizados.
+Refactorizado: Inyección dinámica de datos de recursos en narrativa.
 """
 
 from typing import Optional, Dict, Any
@@ -120,11 +121,16 @@ def resolve_sector_exploration(
     increment_unit_local_moves(unit_id)
 
     if success:
-        narrative = "Sector cartografiado. Análisis de recursos completado."
+        # Lógica de narrativa dinámica mejorada
+        sec_name = sector_data.get('name', f"S-{sector_id}")
+        res_cat = sector_data.get('resource_category') or "No detectado"
+        res_lux = sector_data.get('luxury_resource') or "No detectado"
+        
+        narrative = f"Sector {sec_name} cartografiado. Recursos: {res_cat}. Especial: {res_lux}."
         
         # Efecto mecánico: Revelar sector
         grant_sector_knowledge(player_id, sector_id)
-        log_event(f"🗺️ Exploración exitosa: {unit.name} ha cartografiado el sector {sector_data['name']}.", player_id)
+        log_event(f"🗺️ Exploración exitosa: {unit.name} ha cartografiado el sector {sec_name}.", player_id)
 
     else:
         # Penalización Condicional

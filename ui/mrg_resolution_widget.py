@@ -39,46 +39,46 @@ RESULT_UI_CONFIG = {
 
 
 def render_mrg_roll_animation(result: MRGResult):
-    """Renderiza la animación de dados y resultado (Versión Compacta)."""
+    """Renderiza la animación de dados y resultado (Versión Compacta V2)."""
 
-    # Contenedor principal con estilo reducido
+    # Contenedor principal con estilo reducido y fuentes más pequeñas
     st.markdown("""
         <style>
         .dice-container {
             display: flex;
             justify-content: center;
-            gap: 10px;
-            margin: 10px 0;
+            gap: 8px;
+            margin: 5px 0;
         }
         .dice {
-            font-size: 2.2em;
+            font-size: 1.5em; /* Reducido de 2.2em */
             animation: roll 0.5s ease-out;
         }
         @keyframes roll {
             0% { transform: rotate(0deg) scale(0.5); opacity: 0; }
-            50% { transform: rotate(180deg) scale(1.2); }
+            50% { transform: rotate(180deg) scale(1.1); }
             100% { transform: rotate(360deg) scale(1); opacity: 1; }
         }
         </style>
     """, unsafe_allow_html=True)
 
     # Mostrar dados
-    col1, col2, col3 = st.columns([1, 3, 1])
+    col1, col2, col3 = st.columns([1, 4, 1])
     with col2:
         st.markdown(f"""
             <div class="dice-container">
                 <span class="dice">🎲</span>
-                <span style="font-size: 1.5em; line-height: 2;">+</span>
+                <span style="font-size: 1.1em; line-height: 2;">+</span>
                 <span class="dice">🎲</span>
             </div>
         """, unsafe_allow_html=True)
 
         # Resultado numérico compacto
         st.markdown(f"""
-            <div style="text-align: center; margin: 5px 0;">
-                <span style="font-size: 1.2em; font-family: monospace;">
+            <div style="text-align: center; margin: 2px 0;">
+                <span style="font-size: 1.0em; font-family: monospace;">
                     {result.roll.die_1} + {result.roll.die_2} =
-                    <strong style="font-size: 1.3em;">{result.roll.total}</strong>
+                    <strong style="font-size: 1.1em;">{result.roll.total}</strong>
                 </span>
             </div>
         """, unsafe_allow_html=True)
@@ -87,7 +87,7 @@ def render_mrg_roll_animation(result: MRGResult):
 def render_mrg_calculation(result: MRGResult):
     """
     Muestra el desglose del cálculo (Layout Compacto 2x2).
-    Incluye Tooltips (help) extraídos de result.details.
+    Sustituye st.metric por markdown para ahorrar espacio vertical.
     """
 
     st.markdown("###### 📊 Cálculo")
@@ -114,16 +114,17 @@ def render_mrg_calculation(result: MRGResult):
     # Usamos 2 columnas para apilar verticalmente y ahorrar ancho
     col_a, col_b = st.columns(2)
 
+    # Renderizado compacto estilo clave: valor
     with col_a:
-        st.metric("Tirada", result.roll.total, help=tip_roll)
-        st.metric("Dificultad", result.difficulty, help=tip_diff)
+        st.markdown(f"**Tirada:** {result.roll.total}", help=tip_roll)
+        st.markdown(f"**Dificultad:** {result.difficulty}", help=tip_diff)
         
     with col_b:
-        st.metric("Bono", f"+{result.bonus_applied}", help=tip_bonus)
+        st.markdown(f"**Bono:** +{result.bonus_applied}", help=tip_bonus)
         margin_delta = "+" if result.margin >= 0 else ""
-        st.metric("Margen", f"{margin_delta}{result.margin}", help=tip_margin)
+        st.markdown(f"**Margen:** {margin_delta}{result.margin}", help=tip_margin)
 
-    # Fórmula simplificada
+    # Fórmula simplificada al pie
     st.caption(f"**F:** {result.roll.total} + {result.bonus_applied} - {result.difficulty} = **{result.margin}**")
 
 
@@ -140,13 +141,13 @@ def render_mrg_result(result: MRGResult):
         <div style="
             background: linear-gradient(135deg, {config['color']}22, {config['color']}11);
             border: 1px solid {config['color']};
-            border-radius: 8px;
-            padding: 10px;
+            border-radius: 6px;
+            padding: 8px;
             text-align: center;
-            margin: 10px 0;
+            margin: 5px 0;
         ">
-            <h4 style="color: {config['color']}; margin: 0; font-size: 1.1em;">{config['title']}</h4>
-            <p style="margin: 5px 0 0 0; color: #ccc; font-size: 0.8em; line-height: 1.2;">{config['description']}</p>
+            <h5 style="color: {config['color']}; margin: 0; font-size: 1.0em;">{config['title']}</h5>
+            <p style="margin: 2px 0 0 0; color: #ccc; font-size: 0.75em; line-height: 1.1;">{config['description']}</p>
         </div>
     """, unsafe_allow_html=True)
 
@@ -154,21 +155,22 @@ def render_mrg_result(result: MRGResult):
 def render_full_mrg_resolution(result: MRGResult):
     """
     Renderiza el flujo completo de resolución MRG.
-    Versión compacta para Sidebar o Columna Lateral.
+    Versión Ultracompacta para Sidebar o Columna Lateral.
+    Eliminados los bordes y dividers pesados.
     """
+    
+    # Renderizado directo sin contenedor externo para mejor integración
+    st.markdown(f"**🎲 Acción:** {result.action_description or 'Resolución'}")
 
-    with st.container(border=True):
-        st.markdown(f"**🎲 Acción:** {result.action_description or 'Resolución'}")
+    st.write("---")
 
-        st.divider()
+    # 1. Animación de dados (Compacta)
+    render_mrg_roll_animation(result)
 
-        # 1. Animación de dados
-        render_mrg_roll_animation(result)
+    # 2. Resultado (Compacto)
+    render_mrg_result(result)
 
-        # 2. Resultado
-        render_mrg_result(result)
+    st.write("---")
 
-        st.divider()
-
-        # 3. Cálculo (al final para jerarquía visual)
-        render_mrg_calculation(result)
+    # 3. Cálculo (Compacto markdown)
+    render_mrg_calculation(result)

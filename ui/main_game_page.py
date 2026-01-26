@@ -579,7 +579,7 @@ def _render_war_room_page():
             st.rerun()
 
     with col_right:
-        st.caption("🎯 Monitor de Operaciones")
+        # Se ha eliminado el caption para maximizar el uso del espacio con el nuevo widget compacto
         if "last_mrg_result" in st.session_state and st.session_state.last_mrg_result:
             mrg_res = st.session_state.last_mrg_result
             if hasattr(mrg_res, 'roll') and mrg_res.roll is not None:
