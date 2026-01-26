@@ -3,6 +3,7 @@
 Motor de Exploración de Sectores V1.0.
 Transforma la exploración de una acción de UI a una orden operativa basada en habilidades.
 Gestiona la resolución MRG, la validación de ubicación y la narrativa técnica.
+Actualizado V1.1: Dificultad Estándar (50) y penalización condicional (Solo Críticos).
 """
 
 from typing import Optional, Dict, Any
@@ -10,7 +11,7 @@ from dataclasses import dataclass
 
 from core.mrg_engine import resolve_action, MRGResult, ResultType
 from core.models import UnitSchema, UnitStatus
-from core.mrg_constants import DIFFICULTY_CHALLENGING
+from core.mrg_constants import DIFFICULTY_STANDARD
 from data.unit_repository import get_unit_by_id, update_unit_status
 from data.planet_repository import grant_sector_knowledge, get_sector_by_id
 from data.database import get_supabase, get_service_container
@@ -42,6 +43,8 @@ def _generate_exploration_narrative(
     container = get_service_container()
     
     # Fallback si no hay IA disponible
+    status_text = "ÉXITO CONFIRMADO" if success else "FALLO DE SENSORES"
+    
     if not container.is_ai_available():
         if success:
             return f"REPORT: Análisis topográfico completado por {unit_name}. Sector cartografiado exitosamente."
@@ -51,8 +54,6 @@ def _generate_exploration_narrative(
         # Prompt técnico para Gemini 2.5 Flash
         sector_type = sector_data.get('sector_type', 'Desconocido')
         planet_name = sector_data.get('planet_name', 'Planeta Desconocido')
-        
-        status_text = "ÉXITO CONFIRMADO" if success else "FALLO DE SENSORES"
         
         prompt = (
             f"Genera un reporte corto de exploración militar sci-fi (max 2 frases).\n"
@@ -81,11 +82,13 @@ def resolve_sector_exploration(
     """
     Ejecuta una operación de exploración sobre un sector.
     
-    Reglas:
+    Reglas V1.1:
     1. La unidad debe estar en el mismo planeta/ubicación que el sector.
-    2. MRG: skill_exploracion vs Dificultad 65 (CHALLENGING).
+    2. MRG: skill_exploracion vs Dificultad 50 (STANDARD).
     3. Éxito: Revela el sector (grant_sector_knowledge).
-    4. Fallo: Bloquea movimiento de la unidad (fatiga de sensores).
+    4. Fallo:
+       - Fallo Normal: No pasa nada (solo gasto de acción/tiempo).
+       - Fallo Crítico/Total: Bloquea movimiento (fatiga de sensores).
     """
     
     # 1. Obtener y Validar Unidad
@@ -120,12 +123,12 @@ def resolve_sector_exploration(
     # Validación de Proximidad Física
     # La unidad debe estar en el mismo planeta que el sector objetivo
     if unit.location_planet_id != sector_planet_id:
-        raise ValueError(f"La unidad debe estar en el planeta superficie para explorar este sector.")
+        raise ValueError(f"La unidad debe estar en la superficie del planeta para explorar este sector.")
 
     # 3. Preparar Tirada MRG
     # Usar skill_exploracion (Habilidad Colectiva de Unidad V17)
     merit_points = unit.skill_exploracion
-    difficulty = DIFFICULTY_CHALLENGING # 65
+    difficulty = DIFFICULTY_STANDARD # 50 (Ajuste V1.1)
     
     action_desc = f"Exploración de Sector {sector_id} por {unit.name}"
 
@@ -148,14 +151,17 @@ def resolve_sector_exploration(
     if success:
         # Revelar sector
         grant_sector_knowledge(player_id, sector_id)
-        log_event(f"🗺️ Exploración exitosa: {unit.name} ha cartografiado un nuevo sector.", player_id)
+        log_event(f"🗺️ Exploración exitosa: {unit.name} ha cartografiado un nuevo sector. {narrative}", player_id)
     else:
-        # Penalización por fallo: Bloqueo de movimiento (simula recalibración/fatiga)
-        # Se asume que existe una función o se hace update directo
-        # Marcamos movement_locked = True
-        get_supabase().table('units').update({'movement_locked': True}).eq('id', unit.id).execute()
+        # Penalización Condicional (V1.1)
+        # Solo bloqueamos movimiento si es un fallo grave (CRITICAL o TOTAL)
+        is_severe_failure = mrg_result.result_type in [ResultType.CRITICAL_FAILURE, ResultType.TOTAL_FAILURE]
         
-        log_event(f"❌ Exploración fallida: {unit.name} no pudo obtener datos concluyentes.", player_id)
+        if is_severe_failure:
+            get_supabase().table('units').update({'movement_locked': True}).eq('id', unit.id).execute()
+            log_event(f"❌ FALLO CRÍTICO DE SENSORES: {unit.name} requiere recalibración de emergencia. Movimiento bloqueado. {narrative}", player_id)
+        else:
+            log_event(f"⚠️ Exploración fallida: {unit.name} no pudo obtener datos concluyentes, pero los sistemas permanecen operativos. {narrative}", player_id)
 
     return ExplorationResult(
         success=success,

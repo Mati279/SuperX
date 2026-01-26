@@ -3,22 +3,8 @@
 Vista Planetaria.
 Interfaz para la gestión de sectores, visualización orbital y construcción.
 Implementa la visualización de la Planetología Avanzada.
-Actualizado V4.5: Soporte para Modo Omnisciencia (Debug) y modernización UI.
-Refactor V5.8: Estandarización a 'population' y métricas mejoradas.
-Corrección V6.0: Adaptación a 'sector_type' para consistencia con DB.
-Refactor V7.0: Modo Observador, Navegación de Sistema, Sección Orbital y Estilo de Recursos estricto.
-Mejora V7.1: Navegación contextual (Volver al Sistema del planeta actual).
-Actualizado V7.2: Implementación de Niebla de Superficie (Exploración de Sectores).
-Actualizado V7.6: Visualización Orbital Integrada y Filtro de Superficie.
-Feature: Visualización de Soberanía y Dueños de Sectores.
-Hotfix V7.7: Sincronización DB (nombre) y corrección de Slots Urbanos.
-Hotfix V7.8: Corrección visualización Soberanía (Join backend).
-Actualizado V7.9.0: Cambio de fuente de nombre de facción a 'players.faccion_nombre' y actualización de etiquetas UI.
-Actualizado V8.1.0: Estandarización de Recursos (RESOURCE_UI_CONFIG) y Limpieza de UI (Remove ID, Fix Colors).
-Actualizado V8.2.0: Botón directo de Puesto de Avanzada (Debug Mode) en sectores no reclamados.
-Actualizado V8.3.0: Estandarización de Seguridad (Sp) - Base 30 para todos los planetas.
-Fix V8.3.1: Corrección de color en recursos de lujo (magenta no soportado -> violet).
-Actualizado V9.0: Eliminación de acciones manuales de exploración (Exploration Engine Integration).
+Refactor V10.0: Limpieza total de acciones de exploración manual y debug buttons. 
+Ahora todas las acciones tácticas (Explorar/Colonizar) se realizan desde la Consola de Movimiento.
 """
 
 import streamlit as st
@@ -26,12 +12,10 @@ from data.database import get_supabase
 from data.planet_repository import (
     get_planet_by_id,
     get_planet_asset,
-    get_base_slots_info,
     get_planet_sectors_status,
     get_planet_buildings,
     build_structure,
-    demolish_building,
-    grant_sector_knowledge
+    demolish_building
 )
 from core.rules import calculate_planet_habitability
 from core.world_constants import (
@@ -45,9 +29,6 @@ from ui.state import get_player_id
 
 
 # --- Helpers de Facciones (Simplificado) ---
-# Ya no necesitamos _get_faction_map masivo para la cabecera, 
-# pero lo mantenemos para _get_faction_name_by_player en tarjetas de sector individuales
-
 @st.cache_data(ttl=600)
 def _get_faction_name_by_player(player_id):
     """Resuelve el nombre de la facción de un jugador específico."""
@@ -64,18 +45,13 @@ def _get_faction_name_by_player(player_id):
 def render_planet_surface(planet_id: int):
     """
     Renderiza la interfaz completa de gestión y visualización para un planeta.
-    Soporta modo 'Observador' si no existe una colonia (asset).
-    
-    Args:
-        planet_id: ID del planeta que se desea visualizar y gestionar.
     """
     player_id = get_player_id()
     if not player_id:
         st.error("Error: Sesión de jugador no detectada. Por favor, reincie sesión.")
         return
 
-    # 1. Carga de Datos (Prioritaria para navegación)
-    # Ahora 'planet' trae surface_owner_name y orbital_owner_name pre-cargados
+    # 1. Carga de Datos
     planet = get_planet_by_id(planet_id)
     
     if not planet:
@@ -89,12 +65,10 @@ def render_planet_surface(planet_id: int):
 
     asset = get_planet_asset(planet_id, player_id)
 
-    # Navegación manejada por breadcrumbs globales en main_game_page.py
-
     # Validar modo Omnisciencia (Debug)
     debug_mode = st.session_state.get("debug_omniscience", False)
 
-    # Lógica de Modo Observador: Ya no retornamos si no hay asset
+    # Lógica de Modo Observador
     is_observer = asset is None and not debug_mode
 
     # 2. Cabecera de Información General
@@ -107,12 +81,12 @@ def render_planet_surface(planet_id: int):
 
     st.divider()
 
-    # Pre-carga de datos de sectores y edificios para distribución
+    # Pre-carga de datos
     sectors = get_planet_sectors_status(planet['id'], player_id=player_id)
     buildings = get_planet_buildings(asset['id']) if asset else []
     asset_id = asset['id'] if asset else None
 
-    # Filtrado de sectores (Orbital vs Superficie)
+    # Filtrado de sectores
     orbital_sector = next((s for s in sectors if s.get('sector_type') == SECTOR_TYPE_ORBITAL), None)
     surface_sectors = [s for s in sectors if s.get('sector_type') != SECTOR_TYPE_ORBITAL]
 
@@ -126,10 +100,8 @@ def render_planet_surface(planet_id: int):
         with st.container(border=True):
              _render_sector_card(orbital_sector, buildings, asset_id, player_id, debug_mode)
     else:
-        # Fallback por si la generación antigua no tiene sector orbital
         with st.container(border=True):
             st.caption("Espacio orbital no cartografiado.")
-            if debug_mode: st.warning("Falta registro SECTOR_TYPE_ORBITAL en DB.")
 
     st.divider()
 
@@ -141,14 +113,10 @@ def _render_info_header(planet: dict, asset: dict):
     """Muestra el resumen del planeta, tamaño y capacidad global."""
     st.title(f"Vista Planetaria: {planet['name']}")
     
-    # --- VISUALIZACIÓN DE SOBERANÍA (FIX V8.1.0) ---
     s_owner = planet.get('surface_owner_name', "Desconocido")
     o_owner = planet.get('orbital_owner_name') # Puede ser None
-    
-    # Validación segura para string
     o_owner_str = o_owner if o_owner else "Neutral"
     
-    # Actualización de etiquetas a 'Controlador' y corrección de color orbital (:cyan -> :blue)
     st.markdown(f"**Controlador planetario:** :orange[{s_owner}] | **Controlador de la órbita:** :blue[{o_owner_str}]")
 
     col1, col2, col3, col4 = st.columns(4)
@@ -159,34 +127,24 @@ def _render_info_header(planet: dict, asset: dict):
         st.caption(PLANET_BIOMES.get(biome, {}).get("description", "Entorno."))
         
     with col2:
-        # Refactor V5.8: Métrica de población estandarizada
         pop_val = planet.get('population', 0.0)
         st.metric("Población", f"{pop_val:,.2f}B")
         st.caption("Ciudadanos registrados")
 
     with col3:
-        # Refactor V7.0: Reemplazo de Habitabilidad por Tamaño/Clase
         mass_class = planet.get('mass_class', 'Estándar')
         st.metric("Clase", mass_class)
         st.caption("Tamaño Planetario")
 
-    # V4.4: Visualización Transparente de Seguridad
     with col4:
-        # Usamos el valor centralizado en 'planets' como Source of Truth
         security_val = planet.get('security', 0.0)
         sec_breakdown = planet.get('security_breakdown') or {}
-        
-        st.metric(
-            "Seguridad (Sp)", 
-            f"{security_val:.1f}%", 
-            help="Base Estándar (30) + Población + Infraestructura."
-        )
+        st.metric("Seguridad (Sp)", f"{security_val:.1f}%")
         
         if sec_breakdown and "text" in sec_breakdown:
             with st.expander("🔍 Desglose"):
                 st.caption(f"{sec_breakdown['text']}")
     
-    # V8.1: Eliminada la sección redundante de "Slots Info" para limpiar la cabecera.
     st.divider()
 
 
@@ -213,15 +171,11 @@ def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_
 
 def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id: int, debug_mode: bool):
     """
-    Renderiza una tarjeta individual para un sector específico con estilo estricto.
-    V7.2: Manejo de Niebla de Superficie.
-    V7.6: Soporte explícito para visualización Orbital y Bypass de Niebla.
-    V7.7: Cálculo de Slots dinámico basado en World Constants.
-    V8.1: Refactor UI (Recursos Estandarizados, Sin ID, Propiedad Destacada).
-    V8.2: Botón 'Puesto de Avanzada' directo en sectores no reclamados (Debug).
-    V9.0: Eliminación de acciones manuales de exploración (Exploration Engine Integration).
+    Renderiza una tarjeta individual para un sector específico.
+    V10.0: Eliminación de acciones de exploración y puestos de avanzada debug.
+    Solo muestra información y gestión de edificios existentes.
     """
-    # --- LÓGICA DE NIEBLA DE SUPERFICIE (V7.2) ---
+    # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
     is_orbital = sector.get('sector_type') == SECTOR_TYPE_ORBITAL
     
@@ -232,16 +186,12 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
         st.caption("Zona no cartografiada. Sensores bloqueados.")
         st.write("**Terreno:** ???")
         st.write("**Recursos:** ???")
-        
         st.markdown("---")
-        # V9.0: Eliminado botón manual. Ahora requiere orden de unidad.
-        st.info("⚠️ Requiere exploración mediante Unidad con capacidad de sensores.", icon="📡")
-        
-        return # Salir temprano, no mostrar detalles
+        st.info("⚠️ Requiere exploración mediante Unidad en el menú de Comando.", icon="📡")
+        return # Salir temprano
     
-    # --- RENDERIZADO NORMAL (Explorado, Orbital o Debug) ---
+    # --- RENDERIZADO VISIBLE ---
     
-    # Iconografía por tipo de sector
     icons = {
         "Urbano": "🏙️",
         "Llanura": "🌿",
@@ -250,60 +200,44 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
         "Orbital": "🛰️"
     }
     
-    # Fix V6.0: Uso seguro de 'sector_type' (DB) con fallback a 'type' (Legacy/Model)
     s_type = sector.get('sector_type') or sector.get('type') or "Desconocido"
     icon = icons.get(s_type, "💠")
     
-    # V8.1: Título Limpio (Sin ID visible)
     st.markdown(f"### {icon} {s_type}")
     
     # --- PROPIEDAD DEL SECTOR ---
     sector_buildings = [b for b in buildings if b.get('sector_id') == sector['id']]
-    
-    # Determinamos el dueño actual del sector para lógica de construcción
     current_sector_owner_id = None
     
     if sector_buildings:
-        # Tomar el primer edificio para determinar el dueño
         owner_pid = sector_buildings[0].get('player_id')
         current_sector_owner_id = owner_pid
         if owner_pid:
             faction_name = _get_faction_name_by_player(owner_pid)
-            # V8.1: Nombre de facción destacado en color
             st.caption(f"Propiedad de: :orange[**{faction_name}**]")
         else:
              st.caption("Propiedad: Desconocida")
     else:
         st.caption("Sector No Reclamado")
 
-
-    # V8.1: Visualización Estricta de Recursos (RESOURCE_UI_CONFIG)
+    # --- RECURSOS ---
     res_cat = sector.get('resource_category')
     lux_res = sector.get('luxury_resource')
     
     if res_cat:
-        # Normalizar clave (por si viene en mayúsculas o sucio)
         cat_key = res_cat.lower().strip()
-        
         if cat_key in RESOURCE_UI_CONFIG:
             cfg = RESOURCE_UI_CONFIG[cat_key]
-            # Formato: :color[**ICON Nombre.**] en Sentence Case
             name_display = cat_key.capitalize()
             st.markdown(f":{cfg['color']}[**{cfg['icon']} {name_display}.**]")
         else:
-            # Fallback si no está en config
             st.markdown(f":gray[**{res_cat.capitalize()}.**]")
         
     if lux_res:
-        # Recurso de lujo con estilo genérico diamante violeta
-        # Fix V8.3.1: :magenta no es soportado por st.markdown, usamos :violet
         st.markdown(f":violet[**💎 {lux_res}.**]")
 
-    # Visualización de capacidad del sector
-    # Nota: 'buildings_count' es inyectado dinámicamente por planet_repository V6.0
+    # --- CAPACIDAD ---
     used = sector.get('buildings_count', 0)
-    
-    # Fix V7.7: Uso de SECTOR_SLOTS_CONFIG para determinar total de slots
     total = sector.get('slots') or SECTOR_SLOTS_CONFIG.get(s_type, 2)
     
     st.write(f"Capacidad: {used} / {total}")
@@ -318,9 +252,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
             c1, c2 = st.columns([0.8, 0.2])
             c1.write(f"• {name} (Tier {b['building_tier']})")
             
-            # Opción de Demolición (Solo si hay asset/colonia Y es mi edificio)
-            # Nota: Si asset_id existe, implica que el jugador tiene presencia en el planeta.
-            # Verificamos si el edificio pertenece al jugador actual.
+            # Demolición
             if asset_id and b.get('player_id') == player_id and c2.button("🗑️", key=f"dem_{b['id']}", help=f"Demoler {name}"):
                 if demolish_building(b['id'], player_id):
                     st.toast(f"Estructura {name} demolida.")
@@ -328,26 +260,15 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     else:
         st.caption("No hay estructuras en este sector.")
 
-    # --- PANEL DE CONSTRUCCIÓN (V8.2) ---
-    # REGLA 1: Sector VACÍO -> Mostrar Botón directo "Construir Puesto de Avanzada".
-    # REGLA 2: Sector PROPIO -> Mostrar Expander para construir otros edificios.
-    # REGLA 3: Sector AJENO -> Bloqueado.
-    
+    # --- PANEL DE CONSTRUCCIÓN (Solo si es dueño) ---
     is_sector_empty = (not sector_buildings)
     is_my_sector = (current_sector_owner_id == player_id)
     
     if asset_id and used < total:
         if is_sector_empty:
-             # CASO 1: SECTOR NO RECLAMADO
-             # V9.0: Eliminado botón Debug "Construir Puesto de Avanzada".
-             # La construcción inicial debe ser vía mecánica de colonización o ingenieros (TODO).
-             if debug_mode:
-                 st.warning("🛠️ Debug: Construcción de Outpost deshabilitada en vista rápida.")
-             else:
-                 st.caption("🔒 Sector libre. Requiere unidad de ingeniería para establecer puesto.")
+             st.caption("🔒 Sector libre. Utiliza el comando 'Establecer Puesto de Avanzada' con una unidad para reclamarlo.")
 
         elif is_my_sector:
-             # CASO 2: MI SECTOR (Menú Completo)
              with st.expander("🏗️ Construir"):
                 available_types = list(BUILDING_TYPES.keys())
                 
@@ -391,5 +312,4 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                             st.error("Error en la construcción.")
 
         else:
-             # CASO 3: SECTOR AJENO
              st.warning("⛔ Sector controlado por otra facción.")
