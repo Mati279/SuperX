@@ -10,6 +10,7 @@ V11.2: Hidratación de nombres en miembros de unidad (Fix Schema Validation).
 V11.3: Soporte para local_moves_count (movimientos locales limitados).
 V13.0: Soporte para persistencia de transit_destination_ring (Navegación Estratificada).
 V14.0: Soporte para ship_count (Tamaño de Flota) en creación y actualización.
+V14.2: Fix disolución de unidades (persistencia personajes) y bloqueo de edición en tránsito.
 """
 
 from typing import Optional, List, Dict, Any
@@ -282,9 +283,17 @@ def rename_unit(unit_id: int, new_name: str, player_id: int) -> bool:
     """Renombra una unidad existente. Verifica propiedad."""
     db = get_supabase()
     try:
-        unit = db.table("units").select("player_id").eq("id", unit_id).single().execute()
+        # V14.2: Bloqueo por tránsito
+        unit = db.table("units").select("player_id, status").eq("id", unit_id).single().execute()
+        
         if not unit.data or unit.data.get("player_id") != player_id:
             return False
+            
+        # Verificar bloqueo de tránsito
+        if unit.data.get("status") == UnitStatus.TRANSIT.value:
+            print(f"Cannot rename unit {unit_id} while in TRANSIT")
+            return False
+            
         response = db.table("units").update({"name": new_name}).eq("id", unit_id).execute()
         return bool(response.data)
     except Exception as e:
@@ -296,7 +305,7 @@ def delete_unit(unit_id: int, player_id: int) -> bool:
     """
     Disuelve una unidad.
     V11.1 UPDATE: Antes de borrar, transfiere la ubicación de la unidad a las tropas miembros.
-    Esto previene que las tropas queden 'huérfanas' de ubicación en la DB.
+    V14.2 UPDATE: Ahora también transfiere ubicación a los miembros tipo CHARACTER y verifica TRANSIT.
     """
     db = get_supabase()
     try:
@@ -307,30 +316,56 @@ def delete_unit(unit_id: int, player_id: int) -> bool:
         
         unit = unit_resp.data
         
-        # 2. Obtener miembros tipo 'troop'
+        # V14.2: Verificar bloqueo de tránsito
+        if unit.get("status") == UnitStatus.TRANSIT.value:
+            print(f"Cannot delete unit {unit_id} while in TRANSIT")
+            return False
+        
+        # 2. Obtener TODOS los miembros (no solo tropas)
         members_resp = db.table("unit_members")\
             .select("*")\
             .eq("unit_id", unit_id)\
-            .eq("entity_type", "troop")\
             .execute()
         
-        troop_ids = [m["entity_id"] for m in members_resp.data] if members_resp.data else []
+        members = members_resp.data if members_resp.data else []
         
-        # 3. Si hay tropas, actualizar su ubicación a la de la unidad actual
+        # Separar por tipo
+        troop_ids = [m["entity_id"] for m in members if m["entity_type"] == "troop"]
+        character_ids = [m["entity_id"] for m in members if m["entity_type"] == "character"]
+        
+        # Preparar datos de ubicación actual de la unidad
+        location_update = {
+            "location_system_id": unit.get("location_system_id"),
+            "location_planet_id": unit.get("location_planet_id"),
+            "location_sector_id": unit.get("location_sector_id"),
+            # Para characters el campo 'ring' a veces no existe en esquema legacy, 
+            # pero location_ring es la norma V10. 
+            # Si characters no tiene columna ring, este update fallará si no se maneja.
+            # Asumimos que characters NO usa ring en la mayoría de esquemas legacy,
+            # pero 'troops' sí.
+        }
+        
+        # 3. Actualizar TROPAS (Usan ring)
         if troop_ids:
-            location_update = {
+            troop_loc = location_update.copy()
+            troop_loc["ring"] = unit.get("ring", 0)
+            db.table("troops").update(troop_loc).in_("id", troop_ids).execute()
+
+        # 4. Actualizar PERSONAJES (V14.2 Fix)
+        # Nota: Characters usualmente no tiene columna 'ring' expuesta directamente igual que troops,
+        # pero sí usa location_system/planet/sector.
+        if character_ids:
+            char_loc = {
                 "location_system_id": unit.get("location_system_id"),
                 "location_planet_id": unit.get("location_planet_id"),
-                "location_sector_id": unit.get("location_sector_id"),
-                "ring": unit.get("ring", 0)
+                "location_sector_id": unit.get("location_sector_id")
             }
-            # Bulk update de tropas
-            db.table("troops").update(location_update).in_("id", troop_ids).execute()
+            db.table("characters").update(char_loc).in_("id", character_ids).execute()
             
-        # 4. Eliminar miembros (romper vínculo)
+        # 5. Eliminar miembros (romper vínculo)
         db.table("unit_members").delete().eq("unit_id", unit_id).execute()
         
-        # 5. Eliminar unidad
+        # 6. Eliminar unidad
         response = db.table("units").delete().eq("id", unit_id).execute()
         return bool(response.data)
 
@@ -389,6 +424,12 @@ def add_unit_member(unit_id: int, entity_type: str, entity_id: int, slot_index: 
     """Asigna una entidad (character/troop) a una unidad."""
     db = get_supabase()
     try:
+        # V14.2: Verificar estado de tránsito antes de modificar
+        unit = db.table("units").select("status").eq("id", unit_id).single().execute()
+        if unit.data and unit.data.get("status") == UnitStatus.TRANSIT.value:
+            print(f"Cannot add member to unit {unit_id} while in TRANSIT")
+            return False
+
         data = {
             "unit_id": unit_id,
             "entity_type": entity_type,
@@ -405,6 +446,12 @@ def remove_unit_member(unit_id: int, slot_index: int) -> bool:
     """Remueve un miembro de un slot específico."""
     db = get_supabase()
     try:
+        # V14.2: Verificar estado de tránsito antes de modificar
+        unit = db.table("units").select("status").eq("id", unit_id).single().execute()
+        if unit.data and unit.data.get("status") == UnitStatus.TRANSIT.value:
+            print(f"Cannot remove member from unit {unit_id} while in TRANSIT")
+            return False
+
         response = db.table("unit_members")\
             .delete()\
             .match({"unit_id": unit_id, "slot_index": slot_index})\
