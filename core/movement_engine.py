@@ -16,6 +16,7 @@ Refactorizado V13.4: Persistencia total de anillo destino en Data Layer.
 Actualizado V13.5: Soporte para saltos Inter-Ring largos con costo de energía.
 Actualizado V14.0: Soporte para ship_count, Starlane Boost y límites de Warp.
 Actualizado V14.2: Restricción de movimientos locales para unidades en STEALTH_MODE.
+Actualizado V14.3: Eliminada restricción de movimiento para STEALTH_MODE (ahora usan MAX_LOCAL_MOVES_PER_TURN y pierden sigilo al moverse).
 """
 
 from typing import Optional, Dict, Any, Tuple, List
@@ -42,7 +43,7 @@ from core.movement_constants import (
     MOVEMENT_LOCK_ON_ORBIT_CHANGE,
     MAX_LOCAL_MOVES_PER_TURN
 )
-from core.detection_constants import DISORIENTED_MAX_LOCAL_MOVES
+# Eliminado DISORIENTED_MAX_LOCAL_MOVES ya que V14.3 unifica el límite
 from data.unit_repository import (
     get_unit_by_id,
     start_unit_transit,
@@ -290,6 +291,7 @@ def validate_movement_request(
     Valida que un movimiento sea posible.
     V14.0: Validación de distancia máxima de Warp (30.0).
     V14.2: Restricción de movimientos locales para unidades en Sigilo.
+    V14.3: Eliminada restricción de sigilo (ahora usan MAX_LOCAL_MOVES_PER_TURN estándar).
     """
     # Validar propiedad de la unidad
     if unit.player_id != player_id:
@@ -327,9 +329,8 @@ def validate_movement_request(
         allow_override = False
         
         # V14.2: Lógica de límite dinámica
+        # V14.3 Update: Las unidades en STEALTH ahora usan el límite normal (2).
         local_limit = MAX_LOCAL_MOVES_PER_TURN
-        if unit.status == UnitStatus.STEALTH_MODE:
-             local_limit = DISORIENTED_MAX_LOCAL_MOVES
         
         if is_local and unit.local_moves_count < local_limit:
             allow_override = True
@@ -339,8 +340,9 @@ def validate_movement_request(
 
     # Restricción 1: Límite de movimientos locales
     if is_local:
-        # V14.2: Si está en Stealth, solo 1 movimiento local. Si no, 2 (incluso si está desorientada, por regla explícita).
-        limit_count = DISORIENTED_MAX_LOCAL_MOVES if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
+        # V14.3 Update: Se eliminó la restricción de DISORIENTED_MAX_LOCAL_MOVES para Stealth.
+        # Ahora todas las unidades usan MAX_LOCAL_MOVES_PER_TURN.
+        limit_count = MAX_LOCAL_MOVES_PER_TURN
         
         if unit.local_moves_count >= limit_count:
             return False, f"Límite de movimientos locales alcanzado ({unit.local_moves_count}/{limit_count}). Espera al próximo tick."
@@ -441,6 +443,10 @@ def initiate_movement(
         if success:
             increment_unit_local_moves(unit_id)
             log_event(f"🚀 Unidad '{unit.name}' ha cambiado de posición (instantáneo)", player_id)
+            
+            # Nota: Si la unidad estaba en STEALTH_MODE, ahora estará en GROUND o SPACE
+            # debido a la lógica de _execute_instant_movement que recalcula el estado.
+            
             return MovementResult(
                 success=True,
                 movement_type=movement_type,
@@ -465,6 +471,8 @@ def initiate_movement(
             starlane_id=starlane_id,
             movement_type=movement_type.value
         )
+        
+        # Nota: start_unit_transit cambia el estado a TRANSIT, sobrescribiendo STEALTH_MODE.
 
         if success:
             log_event(f"🚀 Unidad '{unit.name}' iniciando tránsito ({ticks} ticks)", player_id)
@@ -486,7 +494,7 @@ def _execute_instant_movement(
     """
     Ejecuta un movimiento instantáneo (0 ticks).
     """
-    # Determinar nuevo status
+    # Determinar nuevo status (Esto asegura que se pierda el STEALTH_MODE si estaba activo)
     new_status = UnitStatus.GROUND if destination.sector_id is not None else UnitStatus.SPACE
 
     # Actualizar ubicación
