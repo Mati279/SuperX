@@ -1081,9 +1081,11 @@ def resolve_escape_attempt(
         difficulty=escape_difficulty,
         action_description=f"Escape Táctico: {escaping_member.name}",
         player_id=player_id,
+        skill_source="member.escape_skill vs unit.skill_exploracion",
         details={
             "escape_skill": escape_skill,
-            "hunt_skill": hunt_skill
+            "hunt_skill": hunt_skill,
+            "pursuer_unit_skill_exploracion": hunt_skill
         }
     )
 

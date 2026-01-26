@@ -70,11 +70,23 @@ def resolve_sector_exploration(
 
     # 2. Recálculo de Habilidades y Actualización de Objeto Unidad
     # Importante: Esto asegura que el skill_exploracion sea el correcto antes de tirar MRG
-    calculate_and_update_unit_skills(unit_id)
-    
+    skill_calc_result = calculate_and_update_unit_skills(unit_id)
+
     # Recargar datos frescos de la base de datos tras el cálculo
     unit_data = get_unit_by_id(unit_id)
     unit = UnitSchema.from_dict(unit_data)
+
+    # 2b. Extracción EXPLÍCITA de skill_exploracion desde la unidad (Prioridad)
+    # Este es el valor que se usará para la tirada MRG, NO el del líder solo
+    unit_skill_exploracion = unit.skill_exploracion if unit.skill_exploracion is not None else 0
+
+    # Log de diagnóstico si el skill parece no calculado
+    if unit_skill_exploracion == 0 and skill_calc_result.get("character_count", 0) > 0:
+        log_event(
+            f"⚠️ DEBUG: skill_exploracion=0 con {skill_calc_result.get('character_count')} personajes en unidad {unit.name}",
+            player_id,
+            event_type="SKILL_DEBUG"
+        )
 
     # Validación de Fatiga de Movimiento (con datos actualizados)
     move_limit = 1 if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
@@ -110,10 +122,11 @@ def resolve_sector_exploration(
         raise ValueError(f"La unidad debe estar en la superficie del planeta para explorar este sector.")
 
     # 4. Preparar Tirada MRG
-    # Usamos el skill actualizado
-    merit_points = unit.skill_exploracion
-    difficulty = DIFFICULTY_STANDARD # 50
-    
+    # IMPORTANTE: Usamos el skill_exploracion de la UNIDAD (calculado desde sus miembros)
+    # NO el stat individual del líder o personaje
+    merit_points = unit_skill_exploracion
+    difficulty = DIFFICULTY_STANDARD  # 50
+
     action_desc = f"Exploración de Sector {sector_id} por {unit.name}"
 
     mrg_result = resolve_action(
@@ -121,10 +134,13 @@ def resolve_sector_exploration(
         difficulty=difficulty,
         action_description=action_desc,
         player_id=player_id,
+        skill_source="unit.skill_exploracion",  # Trazabilidad del origen del bono
         details={
             "unit_id": unit.id,
+            "unit_name": unit.name,
             "sector_id": sector_id,
-            "sector_type": sector_data.get('sector_type')
+            "sector_type": sector_data.get('sector_type'),
+            "skill_exploracion_usado": unit_skill_exploracion  # Para debug en UI
         }
     )
 
@@ -160,9 +176,13 @@ def resolve_sector_exploration(
         
         # Efecto mecánico: Revelar sector
         grant_sector_knowledge(player_id, sector_id)
-        
-        # Log estandarizado idéntico a la narrativa
-        log_event(narrative, player_id)
+
+        # Log estandarizado con bono de unidad para debug visual
+        log_event(
+            f"{narrative} (Skill Exploración: {unit_skill_exploracion})",
+            player_id,
+            event_type="EXPLORATION_SUCCESS"
+        )
 
     else:
         # Penalización Condicional
@@ -170,18 +190,26 @@ def resolve_sector_exploration(
         
         if is_severe_failure:
             narrative = "❌ La unidad se ha perdido, pierde sus acciones por el resto del turno."
-            
+
             # Efecto mecánico: Bloqueo total
             updates = {
                 'movement_locked': True,
-                'local_moves_count': move_limit 
+                'local_moves_count': move_limit
             }
             get_supabase().table('units').update(updates).eq('id', unit.id).execute()
-            
-            log_event(f"{narrative} ({unit.name})", player_id)
+
+            log_event(
+                f"{narrative} ({unit.name}, Skill: {unit_skill_exploracion})",
+                player_id,
+                event_type="EXPLORATION_CRITICAL_FAIL"
+            )
         else:
             narrative = "Interferencia en los sensores. Datos no concluyentes."
-            log_event(f"⚠️ Exploración fallida: {unit.name} no pudo obtener datos. Acción consumida.", player_id)
+            log_event(
+                f"⚠️ Exploración fallida: {unit.name} no pudo obtener datos. (Skill: {unit_skill_exploracion})",
+                player_id,
+                event_type="EXPLORATION_FAIL"
+            )
 
     return ExplorationResult(
         success=success,

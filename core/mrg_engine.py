@@ -125,6 +125,7 @@ def resolve_action(
     difficulty: int,
     action_description: str = "",
     player_id: Optional[int] = None,
+    skill_source: Optional[str] = None,
     details: Optional[dict] = None
 ) -> MRGResult:
     """
@@ -145,13 +146,15 @@ def resolve_action(
 
     # 5. Auditoría (Logging)
     try:
+        # V17.4: Incluir skill_source para trazabilidad del origen del bono
+        source_info = f" [Fuente: {skill_source}]" if skill_source else ""
         log_msg = (
             f"🎲 MRG [{action_description}]: "
             f"2d50({roll.total}) + Bono({bonus}) - Dif({difficulty}) "
             f"= Margen({margin}) >> {result_type.name} "
-            f"(Puntos: {merit_points})"
+            f"(Puntos: {merit_points}){source_info}"
         )
-        
+
         log_event(
             message=log_msg,
             player_id=player_id,
