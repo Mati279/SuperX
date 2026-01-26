@@ -12,6 +12,7 @@ V13.0: Soporte para persistencia de transit_destination_ring (Navegación Estrat
 V14.0: Soporte para ship_count (Tamaño de Flota) en creación y actualización.
 V14.2: Fix disolución de unidades (persistencia personajes) y bloqueo de edición en tránsito.
 V15.1: Fix Crítico Disolución - Persistencia de 'ring' en Characters y Troops.
+V15.2: Fix "Problema del Anillo 0" en creación y limpieza de ubicación en disolución.
 """
 
 from typing import Optional, List, Dict, Any
@@ -191,17 +192,31 @@ def create_unit(
     """
     Crea una Unidad vacía.
     location_data debe contener: system_id, planet_id (opcional), sector_id (opcional).
+    
+    V15.2: Si hay planet_id pero no ring, consulta el anillo orbital automáticamente.
     """
     db = get_supabase()
     try:
+        final_ring = location_data.get("ring", 0)
+        planet_id = location_data.get("planet_id")
+        
+        # V15.2: Fix Problema Anillo 0 (Herencia automática de anillo)
+        if planet_id is not None and "ring" not in location_data:
+            try:
+                p_resp = db.table("planets").select("orbital_ring").eq("id", planet_id).single().execute()
+                if p_resp.data and p_resp.data.get("orbital_ring"):
+                     final_ring = p_resp.data.get("orbital_ring")
+            except Exception as ex:
+                print(f"Warning: Could not fetch orbital ring for planet {planet_id}: {ex}")
+
         data = {
             "player_id": player_id,
             "name": name,
             "status": UnitStatus.GROUND.value,
             "location_system_id": location_data.get("system_id"),
-            "location_planet_id": location_data.get("planet_id"),
+            "location_planet_id": planet_id,
             "location_sector_id": location_data.get("sector_id"),
-            "ring": location_data.get("ring", 0),
+            "ring": final_ring,
             "local_moves_count": 0,
             "ship_count": ship_count
         }
@@ -308,6 +323,7 @@ def delete_unit(unit_id: int, player_id: int) -> bool:
     V11.1 UPDATE: Antes de borrar, transfiere la ubicación de la unidad a las tropas miembros.
     V14.2 UPDATE: Ahora también transfiere ubicación a los miembros tipo CHARACTER y verifica TRANSIT.
     V15.1 FIX: Persistencia total de ubicación (incluyendo 'ring') para Characters y Troops.
+    V15.2 FIX: Limpieza explícita de planet_id/sector_id si está en espacio profundo o tránsito.
     """
     db = get_supabase()
     try:
@@ -336,11 +352,19 @@ def delete_unit(unit_id: int, player_id: int) -> bool:
         character_ids = [m["entity_id"] for m in members if m["entity_type"] == "character"]
         
         # Preparar datos de ubicación actual de la unidad
-        # V15.1: Se asume que 'characters' ya tiene columna 'ring'
+        # V15.2: Limpieza segura para espacio profundo
+        loc_planet = unit.get("location_planet_id")
+        loc_sector = unit.get("location_sector_id")
+        
+        # Si no hay planeta (espacio profundo), forzar limpieza explícita de sector y planeta
+        if loc_planet is None:
+            loc_planet = None
+            loc_sector = None
+
         location_update = {
             "location_system_id": unit.get("location_system_id"),
-            "location_planet_id": unit.get("location_planet_id"),
-            "location_sector_id": unit.get("location_sector_id"),
+            "location_planet_id": loc_planet,
+            "location_sector_id": loc_sector,
             "ring": unit.get("ring", 0)
         }
         

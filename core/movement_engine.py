@@ -19,6 +19,7 @@ Actualizado V14.2: Restricción de movimientos locales para unidades en STEALTH_
 Actualizado V14.3: Eliminada restricción de movimiento para STEALTH_MODE (ahora usan MAX_LOCAL_MOVES_PER_TURN y pierden sigilo al moverse).
 Refactorizado V14.4: Fix cálculo de ship_count dinámico (basado en miembros) y corrección de distancia Starlane por defecto (1.0).
 Refactorizado V14.5: Persistencia de STEALTH_MODE en movimientos y restricción estricta (1 movimiento local).
+Refactorizado V15.2: Refuerzo detección SURFACE_ORBIT para evitar falsos INTER_RING (Fix Anillo 0).
 """
 
 from typing import Optional, Dict, Any, Tuple, List
@@ -174,6 +175,7 @@ def determine_movement_type(
     """
     Determina el tipo de movimiento basado en origen y destino.
     Refactor V13.2: Prioridad a comprobaciones de mismo planeta/sector antes que comprobaciones de anillo.
+    Refactor V15.2: Refuerzo para detectar SURFACE_ORBIT aunque haya discrepancia de anillos (usando DB).
     """
     # Cambio de sistema = interestelar
     if origin_system != dest_system:
@@ -185,8 +187,6 @@ def determine_movement_type(
     # --- LÓGICA INTRA-SISTEMA ---
 
     # 1. Prioridad: Mismo planeta (Movimiento Superficie/Órbita)
-    # Esto debe chequearse ANTES de comparar anillos para evitar que una pequeña discrepancia
-    # de anillos (si la órbita y superficie tienen distinta definición de anillo) lo marque como INTER_RING.
     if origin_planet == dest_planet and origin_planet is not None:
         # Superficie <-> Órbita (sector NULL = órbita, sector NOT NULL = superficie)
         if (origin_sector is None and dest_sector is not None) or \
@@ -195,8 +195,29 @@ def determine_movement_type(
         # Sector a sector en superficie
         return MovementType.SECTOR_SURFACE
 
-    # 2. Prioridad: Mismo anillo, transición Órbita <-> Espacio (mismo planeta ya fue filtrado arriba).
-    # Se trata como SURFACE_ORBIT para que sea instantáneo (0 ticks).
+    # 2. Refuerzo V15.2: SURFACE_ORBIT (Entrada/Salida de órbita al anillo correspondiente)
+    # Check si es movimiento entre Planeta(Órbita) y Espacio(Sin planeta) en el mismo anillo
+    # Esto soluciona bug si origin_ring viene corrupto (0) pero estamos saliendo de un planeta que está en Ring 4.
+    
+    # Caso A: Salida de Órbita -> Espacio
+    if origin_planet is not None and dest_planet is None:
+        try:
+            planet = get_planet_by_id(origin_planet)
+            if planet and planet.get("orbital_ring") == dest_ring:
+                return MovementType.SURFACE_ORBIT
+        except Exception:
+            pass # Fallback a lógica estándar
+
+    # Caso B: Entrada Espacio -> Órbita
+    if origin_planet is None and dest_planet is not None:
+        try:
+            planet = get_planet_by_id(dest_planet)
+            if planet and planet.get("orbital_ring") == origin_ring:
+                return MovementType.SURFACE_ORBIT
+        except Exception:
+            pass
+
+    # 3. Prioridad: Mismo anillo (si no fue capturado por lógica arriba)
     if origin_ring == dest_ring:
         is_origin_orbit = origin_planet is not None
         is_dest_orbit = dest_planet is not None
@@ -205,12 +226,12 @@ def determine_movement_type(
         if is_origin_orbit != is_dest_orbit:
             return MovementType.SURFACE_ORBIT
 
-    # 3. Diferente anillo = inter-ring
+    # 4. Diferente anillo = inter-ring
     # Ahora es seguro retornar esto porque ya filtramos los casos de mismo planeta.
     if origin_ring != dest_ring:
         return MovementType.INTER_RING
 
-    # 4. Mismo sistema, mismo anillo, diferente planeta
+    # 5. Mismo sistema, mismo anillo, diferente planeta
     if origin_planet != dest_planet:
          return MovementType.INTER_RING
          

@@ -18,6 +18,7 @@ Actualizado V14.0: Unidades - Campo ship_count para tamaño de flota.
 Actualizado V14.1: Sistema de Detección - Estados STEALTH_MODE, HIDDEN y flag disoriented.
 Actualizado V15.1: Soporte para 'ring' en CommanderData y CharacterLocation.
 Actualizado V15.2: Fix Validación CommanderData (Ring Nullable).
+Actualizado V15.3: Fix Resolución Nombres Ubicación Espacial (Fix entidades desaparecidas).
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -451,6 +452,15 @@ class CommanderData(BaseModel):
             # Si el personaje está en tránsito, esa información prevalece
             if self.estado_id == 6: # En Tránsito
                 resolved_loc_name = "En Tránsito"
+            
+            # V15.3: Manejo explícito de ubicaciones espaciales sin planeta
+            elif self.location_planet_id is None:
+                if self.ring > 0:
+                     resolved_loc_name = f"Espacio (Anillo {self.ring})"
+                else:
+                    # Ring 0 y sin planeta = Sector Estelar
+                    resolved_loc_name = "Sector Estelar"
+
             elif self.planets:
                 # Prioridad 2: Nombre del planeta
                 planet_name = self.planets.get("name", "Planeta Desconocido")
