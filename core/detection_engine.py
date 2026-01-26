@@ -93,28 +93,6 @@ class InterdictionResult:
     error_message: str = ""
 
 
-# --- FUNCIONES DE CÁLCULO DE MÉRITO ---
-
-def calculate_detection_merit(unit: UnitSchema) -> int:
-    """
-    Calcula los puntos de mérito de detección de una unidad.
-    Basado en sensores, tripulación con habilidades de vigilancia, etc.
-    """
-    merit = 30  # Base de detección
-
-    # TODO: Añadir bonos por módulos de sensores cuando se implementen
-    # Por ahora, usar composición de la unidad como proxy
-
-    # Bonus por número de miembros (más ojos = más detección)
-    merit += len(unit.members) * 3
-
-    # Si la unidad está en órbita/espacio, mejor detección
-    if unit.status == UnitStatus.SPACE:
-        merit += SENSOR_BONUS_ORBITAL
-
-    return merit
-
-
 def calculate_stealth_difficulty(unit: UnitSchema) -> int:
     """
     Calcula la dificultad de detectar a una unidad (su sigilo).
@@ -174,6 +152,8 @@ def check_detection(
     """
     Realiza un chequeo de detección entre dos unidades.
 
+    V17.1: Usa skill_deteccion de la unidad directamente en lugar de calcular.
+
     Args:
         detector_unit: Unidad que intenta detectar
         target_unit: Unidad objetivo
@@ -182,8 +162,8 @@ def check_detection(
     Returns:
         DetectionResult con el outcome
     """
-    # Calcular merit points del detector
-    detector_merit = calculate_detection_merit(detector_unit)
+    # V17.1: Usar skill_deteccion directamente de la unidad
+    detector_merit = detector_unit.skill_deteccion
 
     # Calcular dificultad basada en el objetivo
     target_difficulty = calculate_stealth_difficulty(target_unit)
@@ -673,36 +653,6 @@ def _get_troop_skill_value(troop_type: str, skill_name: str) -> int:
     return type_skills.get(skill_name, 25)
 
 
-def calculate_group_average_skill(
-    unit: UnitSchema,
-    skill_name: str
-) -> Tuple[int, List[Tuple[int, str, int]]]:
-    """
-    Calcula el promedio de una habilidad para todos los miembros de una unidad.
-
-    Returns:
-        Tuple de (promedio, lista de (entity_id, entity_type, skill_value))
-    """
-    if not unit.members:
-        return 0, []
-
-    skill_values: List[Tuple[int, str, int]] = []
-
-    for member in unit.members:
-        if member.entity_type == 'character':
-            skill_val = _get_member_skill(member, skill_name)
-        else:  # troop
-            troop_type = member.details.get('type', 'INFANTRY') if member.details else 'INFANTRY'
-            skill_val = _get_troop_skill_value(troop_type, skill_name)
-
-        skill_values.append((member.entity_id, member.entity_type, skill_val))
-
-    total = sum(sv[2] for sv in skill_values)
-    avg = total // len(skill_values) if skill_values else 0
-
-    return avg, skill_values
-
-
 def determine_detection_environment(unit: UnitSchema) -> str:
     """
     Determina si la unidad está en ambiente terrestre o espacial.
@@ -712,16 +662,40 @@ def determine_detection_environment(unit: UnitSchema) -> str:
     return DetectionEnvironment.SPACE
 
 
-def get_defense_skill_for_environment(environment: str) -> str:
+def _get_individual_defense_scores(
+    unit: UnitSchema,
+    skill_name: str
+) -> List[Tuple[int, str, int]]:
     """
-    Retorna la habilidad de defensa apropiada según el ambiente.
+    V17.1: Obtiene los scores individuales de defensa de cada miembro.
+
+    Se usa para determinar qué entidades son reveladas (las de peor score primero).
+
+    Args:
+        unit: Unidad defensora
+        skill_name: Nombre de la habilidad defensiva a usar
+
+    Returns:
+        Lista de (entity_id, entity_type, skill_value)
     """
-    if environment == DetectionEnvironment.GROUND:
-        return SKILL_STEALTH_GROUND
-    return SKILL_SENSOR_EVASION
+    if not unit.members:
+        return []
+
+    scores: List[Tuple[int, str, int]] = []
+
+    for member in unit.members:
+        if member.entity_type == 'character':
+            skill_val = _get_member_skill(member, skill_name)
+        else:  # troop
+            troop_type = member.details.get('type', 'INFANTRY') if member.details else 'INFANTRY'
+            skill_val = _get_troop_skill_value(troop_type, skill_name)
+
+        scores.append((member.entity_id, member.entity_type, skill_val))
+
+    return scores
 
 
-# --- FUNCIONES PRINCIPALES V14.1 ---
+# --- FUNCIONES PRINCIPALES V17.1 ---
 
 def resolve_detection_round(
     attacker: UnitSchema,
@@ -731,9 +705,9 @@ def resolve_detection_round(
     """
     Ejecuta una ronda de detección competida donde el atacante intenta detectar al defensor.
 
-    Mecánica V14.1:
-    1. Calcula promedio de Detección del atacante
-    2. Calcula promedio de Sigilo (tierra) o Evasión de Sensores (espacio) del defensor
+    Mecánica V17.1:
+    1. Usa skill_deteccion del atacante (Habilidad Colectiva de Unidad)
+    2. Usa skill_sigilo (tierra) o skill_evasion_sensores (espacio) del defensor
     3. Aplica penalizador de grupo: -2 a defensa por cada entidad >1 en el bando defensor
     4. Aplica bono de sigilo: +15 a defensa si STEALTH_MODE activo
     5. Tirada competida: Detección vs (Dificultad Base + Defensa + Modificadores)
@@ -746,11 +720,20 @@ def resolve_detection_round(
     """
     # 1. Determinar ambiente
     environment = determine_detection_environment(defender)
-    defense_skill = get_defense_skill_for_environment(environment)
 
-    # 2. Calcular promedios
-    attack_avg, _ = calculate_group_average_skill(attacker, SKILL_DETECTION)
-    defense_avg, defense_scores = calculate_group_average_skill(defender, defense_skill)
+    # 2. Obtener habilidades directamente de los campos de la unidad (V17.1)
+    attack_avg = attacker.skill_deteccion
+
+    # Seleccionar habilidad defensiva según ambiente
+    if environment == DetectionEnvironment.GROUND:
+        defense_avg = defender.skill_sigilo
+        defense_skill_name = SKILL_STEALTH_GROUND
+    else:
+        defense_avg = defender.skill_evasion_sensores
+        defense_skill_name = SKILL_SENSOR_EVASION
+
+    # Generar lista de scores individuales para revelación de entidades
+    defense_scores = _get_individual_defense_scores(defender, defense_skill_name)
 
     # 3. Penalizador de grupo: -2 por cada entidad mayor a 1
     defender_count = len(defender.members)
@@ -1012,9 +995,11 @@ def resolve_escape_attempt(
     """
     Resuelve un intento de escape de una entidad individual.
 
-    Mecánica V14.1:
+    Mecánica V17.1:
     - Huida Garantizada: Si la entidad está HIDDEN -> Escape automático
-    - Escape Táctico: Entidades detectadas tiran Escape Táctico vs Promedio Caza
+    - Escape Táctico: Entidades detectadas tiran Escape Táctico vs skill_exploracion
+
+    V17.1: Usa skill_exploracion de la unidad perseguidora como proxy de rastreo/caza.
 
     Consecuencias:
     - Escape exitoso: La entidad puede formar nueva unidad, recibe mov gratis
@@ -1038,10 +1023,11 @@ def resolve_escape_attempt(
 
     # Escape táctico para entidades detectadas
     escape_skill = _get_member_skill(escaping_member, SKILL_TACTICAL_ESCAPE)
-    hunt_avg, _ = calculate_group_average_skill(pursuer_unit, SKILL_HUNT)
+    # V17.1: Usar skill_exploracion de la unidad como proxy de rastreo/caza
+    hunt_skill = pursuer_unit.skill_exploracion
 
-    # Dificultad = Base + Promedio de Caza de perseguidores
-    escape_difficulty = DETECTION_BASE_DIFFICULTY + hunt_avg
+    # Dificultad = Base + Habilidad de exploración/caza del perseguidor
+    escape_difficulty = DETECTION_BASE_DIFFICULTY + hunt_skill
 
     mrg_result = resolve_action(
         merit_points=escape_skill,
@@ -1050,7 +1036,7 @@ def resolve_escape_attempt(
         player_id=player_id,
         details={
             "escape_skill": escape_skill,
-            "hunt_avg": hunt_avg
+            "hunt_skill": hunt_skill
         }
     )
 
@@ -1060,7 +1046,7 @@ def resolve_escape_attempt(
         message=(
             f"🏃 ESCAPE TÁCTICO [{escaping_member.name}]: "
             f"{'Exitoso' if escaped else 'Fallido'} (Margen {mrg_result.margin}) - "
-            f"Escape {escape_skill} vs Caza {hunt_avg}"
+            f"Escape {escape_skill} vs Caza {hunt_skill}"
         ),
         player_id=player_id,
         event_type="DETECTION_AUDIT"

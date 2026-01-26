@@ -408,19 +408,17 @@ LEADER_WEIGHT = 4
 
 def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
     """
-    V17.0: Calcula y actualiza las habilidades colectivas de una unidad.
+    V17.1: Calcula y actualiza las habilidades colectivas de una unidad.
 
-    Las habilidades se calculan como promedio ponderado de los atributos
-    de los personajes miembros, donde el líder tiene peso 4.
+    Las habilidades se calculan como promedio ponderado de las habilidades
+    ya calculadas de los personajes miembros (desde member['details']['habilidades']).
+    El líder tiene peso 4 en el promedio.
 
-    Fórmulas base (atributos de CharacterAttributes):
-    - Detección: intelecto + voluntad
-    - Radares: intelecto + voluntad
-    - Exploración: intelecto + agilidad
-    - Sigilo: agilidad + voluntad
-    - Evasión de sensores: tecnica + intelecto
+    IMPORTANTE: Usa las habilidades del JSON del personaje que ya tienen
+    aplicado el multiplicador *2 de rules.py. Esto asegura que los valores
+    mostrados en pantalla coincidan con los usados en combates/detecciones.
 
-    Algoritmo: (Valor_Líder * 4 + Suma_Otros) / (4 + Cantidad_Otros)
+    Algoritmo: (Habilidad_Líder * 4 + Suma_Otros) / (4 + Cantidad_Otros)
 
     Args:
         unit_id: ID de la unidad a actualizar
@@ -481,43 +479,43 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
         leader = characters[0]
         others = characters[1:]
 
-    # 5. Extraer atributos del líder
-    leader_attrs = _extract_character_attributes(leader)
+    # 5. Extraer habilidades ya calculadas del líder (con multiplicador *2 de rules.py)
+    leader_skills = _extract_character_skills(leader)
 
-    # 6. Extraer atributos de los otros personajes
-    others_attrs = [_extract_character_attributes(c) for c in others]
+    # 6. Extraer habilidades de los otros personajes
+    others_skills = [_extract_character_skills(c) for c in others]
 
     # 7. Calcular cada habilidad con promedio ponderado
     skills = {}
 
-    # Detección: INT + VOL
+    # Detección: usa habilidad 'deteccion' ya calculada
     skills["skill_deteccion"] = _calculate_weighted_skill(
-        leader_attrs["intelecto"] + leader_attrs["voluntad"],
-        [a["intelecto"] + a["voluntad"] for a in others_attrs]
+        leader_skills["deteccion"],
+        [s["deteccion"] for s in others_skills]
     )
 
-    # Radares: INT + VOL (misma fórmula que Detección)
+    # Radares: usa habilidad 'radares' ya calculada
     skills["skill_radares"] = _calculate_weighted_skill(
-        leader_attrs["intelecto"] + leader_attrs["voluntad"],
-        [a["intelecto"] + a["voluntad"] for a in others_attrs]
+        leader_skills["radares"],
+        [s["radares"] for s in others_skills]
     )
 
-    # Exploración: INT + AGI
+    # Exploración: usa habilidad 'exploracion' ya calculada
     skills["skill_exploracion"] = _calculate_weighted_skill(
-        leader_attrs["intelecto"] + leader_attrs["agilidad"],
-        [a["intelecto"] + a["agilidad"] for a in others_attrs]
+        leader_skills["exploracion"],
+        [s["exploracion"] for s in others_skills]
     )
 
-    # Sigilo: AGI + VOL
+    # Sigilo: usa habilidad 'sigilo' ya calculada
     skills["skill_sigilo"] = _calculate_weighted_skill(
-        leader_attrs["agilidad"] + leader_attrs["voluntad"],
-        [a["agilidad"] + a["voluntad"] for a in others_attrs]
+        leader_skills["sigilo"],
+        [s["sigilo"] for s in others_skills]
     )
 
-    # Evasión de sensores: TEC + INT
+    # Evasión de sensores: usa habilidad 'evasion_sensores' ya calculada
     skills["skill_evasion_sensores"] = _calculate_weighted_skill(
-        leader_attrs["tecnica"] + leader_attrs["intelecto"],
-        [a["tecnica"] + a["intelecto"] for a in others_attrs]
+        leader_skills["evasion_sensores"],
+        [s["evasion_sensores"] for s in others_skills]
     )
 
     # 8. Persistir en base de datos
@@ -531,45 +529,43 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
     return result
 
 
-def _extract_character_attributes(member: Dict[str, Any]) -> Dict[str, int]:
+def _extract_character_skills(member: Dict[str, Any]) -> Dict[str, int]:
     """
-    V17.0: Extrae los atributos de un miembro tipo character.
+    V17.1: Extrae las habilidades ya calculadas de un miembro tipo character.
 
-    Los atributos vienen en member['details']['habilidades'] pero necesitamos
-    acceder a los atributos base. Como _hydrate_member_names ya carga stats_json,
-    extraemos desde ahí.
+    Las habilidades vienen en member['details']['habilidades'] y ya tienen
+    aplicado el multiplicador *2 de rules.py. Usar estos valores directamente
+    asegura consistencia con lo mostrado en pantalla.
 
     Args:
         member: Dict del miembro con estructura de UnitMemberSchema
 
     Returns:
-        Dict con los 6 atributos primarios (default 5 si no existen)
+        Dict con las 5 habilidades de unidad (default 20 si no existen)
     """
+    # Defaults basados en atributos 5+5 * 2 = 20
     defaults = {
-        "fuerza": 5,
-        "agilidad": 5,
-        "tecnica": 5,
-        "intelecto": 5,
-        "voluntad": 5,
-        "presencia": 5
+        "deteccion": 20,
+        "radares": 20,
+        "exploracion": 20,
+        "sigilo": 20,
+        "evasion_sensores": 20
     }
 
     details = member.get("details", {})
     if not details:
         return defaults
 
-    # Los atributos pueden venir en diferentes estructuras según la hidratación
-    # Intentamos extraer desde 'atributos' directamente o desde 'habilidades'
-    attrs = details.get("atributos", {})
+    # Extraer habilidades ya calculadas del JSON del personaje
+    habilidades = details.get("habilidades", {})
 
-    if attrs:
+    if habilidades:
         return {
-            "fuerza": attrs.get("fuerza", 5),
-            "agilidad": attrs.get("agilidad", 5),
-            "tecnica": attrs.get("tecnica", 5),
-            "intelecto": attrs.get("intelecto", 5),
-            "voluntad": attrs.get("voluntad", 5),
-            "presencia": attrs.get("presencia", 5)
+            "deteccion": habilidades.get("deteccion", 20),
+            "radares": habilidades.get("radares", 20),
+            "exploracion": habilidades.get("exploracion", 20),
+            "sigilo": habilidades.get("sigilo", 20),
+            "evasion_sensores": habilidades.get("evasion_sensores", 20)
         }
 
     return defaults
