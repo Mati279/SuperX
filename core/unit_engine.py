@@ -7,6 +7,7 @@ Gestiona:
 3. Gestión de miembros de unidad.
 4. V16.0: Liderazgo dinámico y supervivencia de tropas.
 V17.2: Refactorización de cálculo de habilidades para aislamiento estricto de datos.
+V17.3: Fix Crítico Mapeo de Habilidades (Mapping explícito Unit -> Character Keys).
 """
 
 from typing import Optional, Dict, Any, List
@@ -417,12 +418,6 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
     ya calculadas de los personajes miembros (desde member['details']['habilidades']).
     El líder tiene peso 4 en el promedio.
 
-    IMPORTANTE: Usa las habilidades del JSON del personaje que ya tienen
-    aplicado el multiplicador *2 de rules.py. Esto asegura que los valores
-    mostrados en pantalla coincidan con los usados en combates/detecciones.
-
-    Algoritmo: (Habilidad_Líder * 4 + Suma_Otros) / (4 + Cantidad_Otros)
-
     Args:
         unit_id: ID de la unidad a actualizar
 
@@ -447,11 +442,9 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
     }
 
     # 1. Obtener datos de la unidad con miembros hidratados
-    # Al usar get_unit_by_id con el repositorio refactorizado, obtenemos una COPIA limpia de datos.
     unit_data = get_unit_by_id(unit_id)
     if not unit_data:
         result["message"] = f"Unit {unit_id} not found"
-        # Aún así intentamos resetear las habilidades a 0 para consistencia
         update_unit_skills(unit_id, result["skills"])
         return result
 
@@ -484,7 +477,7 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
         leader = characters[0]
         others = characters[1:]
 
-    # 5. Extraer habilidades saneadas del líder
+    # 5. Extraer habilidades saneadas del líder (aplica mapping explícito)
     leader_skills = _extract_character_skills(leader)
 
     # 6. Extraer habilidades saneadas de los otros personajes
@@ -497,7 +490,7 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
 
     for key in skill_keys:
         # Calcular promedio ponderado
-        # Construimos la lista de valores de 'otros' para esa key específica
+        # Construimos la lista de valores de 'otros' para esa key específica (ya mapeada)
         others_values_for_key = [s.get(key, 0) for s in others_skills]
         
         # Mapeamos la key interna a la key de base de datos (skill_*)
@@ -520,16 +513,24 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
 
 def _extract_character_skills(member: Dict[str, Any]) -> Dict[str, int]:
     """
-    V17.2: Extrae las habilidades de un miembro tipo character de forma defensiva.
-    Retorna SIEMPRE un nuevo diccionario con valores enteros garantizados.
+    V17.3 FIX: Extrae las habilidades y realiza el MAPEO EXPLÍCITO entre
+    las claves de la Unidad y las claves Descriptivas del Personaje.
+
+    Mapeo requerido:
+    - deteccion -> "Detección"
+    - radares -> "Detección"
+    - exploracion -> "Orientación y exploración"
+    - sigilo -> "Sigilo físico"
+    - evasion_sensores -> "Evasión de sensores"
     
     Args:
         member: Dict del miembro
 
     Returns:
-        Dict con las 5 habilidades de unidad saneadas.
+        Dict con las keys de unidad ("deteccion", etc) y valores enteros.
     """
     # Defaults de seguridad
+    # Usamos las keys internas que espera el UnitEngine para calcular
     defaults = {
         "deteccion": 20,
         "radares": 20,
@@ -545,20 +546,32 @@ def _extract_character_skills(member: Dict[str, Any]) -> Dict[str, int]:
     if not isinstance(details, dict):
         return defaults.copy()
 
-    # Extraer habilidades
-    habilidades = details.get("habilidades")
-    if not isinstance(habilidades, dict):
+    # Extraer diccionario de habilidades del personaje (que usa claves descriptivas)
+    habilidades_char = details.get("habilidades")
+    if not isinstance(habilidades_char, dict):
         return defaults.copy()
 
-    # Construir nuevo diccionario validando tipos
+    # Mapeo explícito: Unit Key -> Character JSON Key
+    # Referencia: core/constants.py SKILL_MAPPING
+    mapping = {
+        "deteccion": "Detección",
+        "radares": "Detección",  # Reutiliza Detección (INT+VOL)
+        "exploracion": "Orientación y exploración",
+        "sigilo": "Sigilo físico",
+        "evasion_sensores": "Evasión de sensores"
+    }
+
     sanitized_skills = {}
-    for key, default_val in defaults.items():
-        val = habilidades.get(key, default_val)
-        # Asegurar que sea entero (maneja float o strings numéricos por si acaso)
+    
+    for unit_key, char_key in mapping.items():
+        # Obtener valor usando la clave descriptiva, default 20
+        raw_val = habilidades_char.get(char_key, defaults[unit_key])
+        
+        # Asegurar entero
         try:
-            sanitized_skills[key] = int(val)
+            sanitized_skills[unit_key] = int(raw_val)
         except (ValueError, TypeError):
-            sanitized_skills[key] = default_val
+            sanitized_skills[unit_key] = defaults[unit_key]
 
     return sanitized_skills
 

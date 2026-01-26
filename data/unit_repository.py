@@ -14,6 +14,7 @@ V14.2: Fix disolución de unidades (persistencia personajes) y bloqueo de edici�
 V15.1: Fix Crítico Disolución - Persistencia de 'ring' en Characters y Troops.
 V15.2: Fix "Problema del Anillo 0" en creación y limpieza de ubicación en disolución.
 V17.2: Fix Crítico Hydration - Aislamiento estricto de datos de miembros y validación de tipos.
+V17.3: Update Hydration Validation - Uso de keys descriptivas para verificar habilidades.
 """
 
 from typing import Optional, List, Dict, Any
@@ -28,8 +29,7 @@ def _hydrate_member_names(members: List[Dict[str, Any]]) -> None:
     Hidrata una lista de miembros de unidad con el nombre de la entidad.
     V16.0: También incluye habilidades en 'details' para cálculo de capacidad.
     V17.0: Incluye atributos en 'details' para cálculo de habilidades colectivas.
-    V17.2: Refactorización defensiva para evitar cruce de datos entre unidades.
-           Usa copias profundas y validación estricta de IDs.
+    V17.3 FIX: Valida contra las claves descriptivas (ej. "Detección") del JSON de personaje.
     Realiza consultas en lote para optimizar rendimiento.
     Modifica la lista in-place agregando los campos 'name' y 'details'.
     """
@@ -80,13 +80,21 @@ def _hydrate_member_names(members: List[Dict[str, Any]]) -> None:
                     else:
                         current_attrs = current_attrs.copy()
 
-                    # V17.1: Si las habilidades están vacías o incompletas, calcularlas
-                    required_skills = ["deteccion", "radares", "exploracion", "sigilo", "evasion_sensores"]
-                    is_missing_skills = not current_skills or not all(k in current_skills for k in required_skills)
+                    # V17.3 FIX: Lista de habilidades descriptivas requeridas por Unit Engine
+                    # Referencia: core/constants.py SKILL_MAPPING y core/unit_engine.py mapping
+                    # Nota: "Radares" usa "Detección" internamente
+                    required_char_skills = [
+                        "Detección",
+                        "Orientación y exploración",
+                        "Sigilo físico",
+                        "Evasión de sensores"
+                    ]
+                    
+                    is_missing_skills = not current_skills or not all(k in current_skills for k in required_char_skills)
 
                     if is_missing_skills and current_attrs:
                         # Calcular habilidades desde atributos (aplica *2 de rules.py)
-                        # calculate_skills debe ser pura y retornar nuevo dict
+                        # calculate_skills retorna un dict con las claves descriptivas ("Detección", etc.)
                         calculated = calculate_skills(current_attrs)
                         if isinstance(calculated, dict):
                             current_skills = calculated
