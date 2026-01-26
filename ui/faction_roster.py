@@ -12,6 +12,7 @@ V13.0: Restricción de reclutamiento orbital (solo personal local).
 V13.5: Fix Agrupación - Tránsito intra-sistema (SCO) se muestra en el sistema, no en Starlanes.
 V14.1: Integración del Centro de Alertas Tácticas y Panel de Simulación de Detección.
 Refactor V15.0: Compatibilidad Híbrida Pydantic V2/Dict para Unidades y Miembros.
+V15.1: Bloqueo de seguridad en gestión de unidades durante Tránsito Interestelar.
 """
 
 import streamlit as st
@@ -263,15 +264,22 @@ def manage_unit_dialog(
     current_name = get_prop(unit, "name", "Unidad")
     members = get_prop(unit, "members", [])
     current_count = len(members)
+    status = get_prop(unit, "status")
     
     # Check locks
+    # V15.1: Se considera bloqueado si hay movimientos o si está en tránsito
     local_moves = get_prop(unit, "local_moves_count", 0)
-    is_locked = local_moves > 0
-    lock_msg = "Acciones restringidas: Unidad ya ha realizado movimientos este tick." if is_locked else ""
+    is_transit = status == UnitStatus.TRANSIT.value or status == "TRANSIT"
+    
+    is_locked = (local_moves > 0) or is_transit
 
     st.subheader(f"Gestionar: {current_name}")
-    if is_locked:
-        st.warning(lock_msg)
+    
+    # V15.1: Mensajes de advertencia diferenciados
+    if is_transit:
+        st.warning("Acciones restringidas: Unidad en tránsito interestelar.")
+    elif local_moves > 0:
+        st.warning("Acciones restringidas: Unidad ya ha realizado movimientos este tick.")
 
     # --- TAB 1: MIEMBROS ---
     tab_members, tab_rename, tab_dissolve = st.tabs(["Miembros", "Renombrar", "Disolver"])
@@ -383,11 +391,11 @@ def manage_unit_dialog(
                     st.rerun()
 
     with tab_rename:
-        new_name = st.text_input("Nuevo nombre", value=current_name, key=f"rename_{unit_id}")
+        new_name = st.text_input("Nuevo nombre", value=current_name, key=f"rename_{unit_id}", disabled=is_locked)
         if st.button(
             "Renombrar",
             use_container_width=True,
-            disabled=not new_name.strip() or new_name == current_name,
+            disabled=is_locked or not new_name.strip() or new_name == current_name,
             key=f"btn_rename_{unit_id}"
         ):
             if rename_unit(unit_id, new_name.strip(), player_id):

@@ -16,6 +16,7 @@ Actualizado V11.1: Persistencia de ubicación en TroopSchema.
 Actualizado V11.2: Unidades - Campo local_moves_count para límite de movimientos diarios.
 Actualizado V14.0: Unidades - Campo ship_count para tamaño de flota.
 Actualizado V14.1: Sistema de Detección - Estados STEALTH_MODE, HIDDEN y flag disoriented.
+Actualizado V15.1: Soporte para 'ring' en CommanderData y CharacterLocation.
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -191,6 +192,7 @@ class CharacterLocation(BaseModel):
     system_id: Optional[int] = None
     planet_id: Optional[int] = None
     sector_id: Optional[int] = None
+    ring: int = 0 # V15.1: Added ring support
     
     # Textos descriptivos (Legacy/UI)
     sistema_actual: str = "Desconocido"
@@ -373,6 +375,7 @@ class CommanderData(BaseModel):
     location_system_id: Optional[int] = None
     location_planet_id: Optional[int] = None
     location_sector_id: Optional[int] = None
+    ring: int = 0 # V15.1: Added ring persistence
     
     # Datos unidos (Joined Data) - Refactor V11.0
     planets: Optional[Dict[str, Any]] = None 
@@ -456,6 +459,7 @@ class CommanderData(BaseModel):
                 "system_id": self.location_system_id,
                 "planet_id": self.location_planet_id,
                 "sector_id": self.location_sector_id,
+                "ring": self.ring, # V15.1
                 "ubicacion_local": resolved_loc_name 
             }
 

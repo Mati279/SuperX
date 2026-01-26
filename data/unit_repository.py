@@ -11,6 +11,7 @@ V11.3: Soporte para local_moves_count (movimientos locales limitados).
 V13.0: Soporte para persistencia de transit_destination_ring (Navegación Estratificada).
 V14.0: Soporte para ship_count (Tamaño de Flota) en creación y actualización.
 V14.2: Fix disolución de unidades (persistencia personajes) y bloqueo de edición en tránsito.
+V15.1: Fix Crítico Disolución - Persistencia de 'ring' en Characters y Troops.
 """
 
 from typing import Optional, List, Dict, Any
@@ -306,6 +307,7 @@ def delete_unit(unit_id: int, player_id: int) -> bool:
     Disuelve una unidad.
     V11.1 UPDATE: Antes de borrar, transfiere la ubicación de la unidad a las tropas miembros.
     V14.2 UPDATE: Ahora también transfiere ubicación a los miembros tipo CHARACTER y verifica TRANSIT.
+    V15.1 FIX: Persistencia total de ubicación (incluyendo 'ring') para Characters y Troops.
     """
     db = get_supabase()
     try:
@@ -334,33 +336,21 @@ def delete_unit(unit_id: int, player_id: int) -> bool:
         character_ids = [m["entity_id"] for m in members if m["entity_type"] == "character"]
         
         # Preparar datos de ubicación actual de la unidad
+        # V15.1: Se asume que 'characters' ya tiene columna 'ring'
         location_update = {
             "location_system_id": unit.get("location_system_id"),
             "location_planet_id": unit.get("location_planet_id"),
             "location_sector_id": unit.get("location_sector_id"),
-            # Para characters el campo 'ring' a veces no existe en esquema legacy, 
-            # pero location_ring es la norma V10. 
-            # Si characters no tiene columna ring, este update fallará si no se maneja.
-            # Asumimos que characters NO usa ring en la mayoría de esquemas legacy,
-            # pero 'troops' sí.
+            "ring": unit.get("ring", 0)
         }
         
         # 3. Actualizar TROPAS (Usan ring)
         if troop_ids:
-            troop_loc = location_update.copy()
-            troop_loc["ring"] = unit.get("ring", 0)
-            db.table("troops").update(troop_loc).in_("id", troop_ids).execute()
+            db.table("troops").update(location_update).in_("id", troop_ids).execute()
 
-        # 4. Actualizar PERSONAJES (V14.2 Fix)
-        # Nota: Characters usualmente no tiene columna 'ring' expuesta directamente igual que troops,
-        # pero sí usa location_system/planet/sector.
+        # 4. Actualizar PERSONAJES (V15.1 Fix: Incluye ring)
         if character_ids:
-            char_loc = {
-                "location_system_id": unit.get("location_system_id"),
-                "location_planet_id": unit.get("location_planet_id"),
-                "location_sector_id": unit.get("location_sector_id")
-            }
-            db.table("characters").update(char_loc).in_("id", character_ids).execute()
+            db.table("characters").update(location_update).in_("id", character_ids).execute()
             
         # 5. Eliminar miembros (romper vínculo)
         db.table("unit_members").delete().eq("unit_id", unit_id).execute()
