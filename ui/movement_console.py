@@ -984,10 +984,10 @@ def render_movement_console():
                     try:
                         result = resolve_sector_exploration(unit_id, unit.location_sector_id, player_id)
                         if result.success:
-                            st.toast(f"✅ Exploración exitosa: {result.message}")
+                            st.toast(f"✅ Exploración exitosa: {result.narrative}")
                             st.rerun()
                         else:
-                            st.toast(f"❌ Fallo de exploración: {result.message}")
+                            st.toast(f"❌ Fallo de exploración: {result.narrative}")
                     except Exception as e:
                         st.error(f"Error crítico en exploración: {e}")
 
