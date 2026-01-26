@@ -18,6 +18,7 @@ V15.0: Integración de Exploración Táctica de Sectores.
 V15.1: Feedback persistente de exploración y gestión de fatiga.
 V15.2: Integración de @st.fragment y widget MRG. Feedback simplificado.
 V15.3: Fix coordenadas Warp (Cálculo 2D local y eliminación de referencia a 'z').
+V15.4: Desacople de visualización MRG a Modal (Exploration Dialog).
 """
 
 import streamlit as st
@@ -52,7 +53,8 @@ from data.world_repository import get_world_state
 from services.unit_service import toggle_stealth_mode
 from core.exploration_engine import resolve_sector_exploration, ExplorationResult
 from core.mrg_engine import ResultType
-from ui.mrg_resolution_widget import render_full_mrg_resolution
+# Importamos el diálogo desde roster_dialogs (ahora seguro gracias a la refactorización de importación local en dialogs)
+from ui.dialogs.roster_dialogs import exploration_result_dialog
 
 
 def _inject_movement_css():
@@ -835,6 +837,11 @@ def _render_transit_info(unit: UnitSchema):
 def render_movement_console():
     """Punto de entrada principal - Página de Control de Movimiento."""
     from .state import get_player
+    
+    # Detectar si hay un resultado de exploración pendiente para mostrar en modal
+    # Se hace check al inicio del fragmento para disparar el diálogo
+    if 'last_exploration_result' in st.session_state:
+        exploration_result_dialog(st.session_state.last_exploration_result)
 
     _inject_movement_css()
     
@@ -888,29 +895,6 @@ def render_movement_console():
         
         if is_stealth:
             st.caption("🔒 En modo sigilo, los movimientos locales están restringidos a 1 por tick.")
-
-    # --- V15.2: Feedback Visual Persistente (Exploración) ---
-    if 'last_exploration_result' in st.session_state:
-        res = st.session_state.last_exploration_result
-        if res.unit_id == unit.id: # Solo mostrar si corresponde a la unidad actual
-            if res.success:
-                # Éxito: Mostrar detalles de recursos
-                sec_name = res.details.get('name', f"Sector {res.sector_id}")
-                res_cat = res.details.get('resource_category', 'Desconocido')
-                lux_res = res.details.get('luxury_resource', 'Desconocido')
-                
-                st.success(f"📍 **Exploración Exitosa**\n\nSector {sec_name} cartografiado. Recursos: {res_cat}, {lux_res}")
-            else:
-                # Fallo: Diferenciar crítico de normal
-                is_critical = res.mrg_result.result_type in [ResultType.CRITICAL_FAILURE, ResultType.TOTAL_FAILURE]
-                
-                if is_critical:
-                    st.error("❌ **FALLO CRÍTICO**: La unidad se ha perdido, pierde sus acciones por el resto del turno.")
-                else:
-                    st.error("⚠️ **Exploración fallida**: Datos no concluyentes.")
-            
-            # Widget de resolución MRG en el fragmento
-            render_full_mrg_resolution(res.mrg_result)
 
     # --- V14.6: Lógica de Límites de Movimiento (Visualización Estricta) ---
     if unit.status == UnitStatus.STEALTH_MODE:
@@ -1023,7 +1007,7 @@ def render_movement_console():
             if should_close:
                 st.session_state.selected_unit_movement = None
             
-            # Limpiar resultado de exploración anterior al moverse
+            # Limpiar resultado de exploración anterior al moverse para evitar popups viejos
             if 'last_exploration_result' in st.session_state:
                 del st.session_state.last_exploration_result
                 

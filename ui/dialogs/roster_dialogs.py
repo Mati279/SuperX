@@ -1,7 +1,7 @@
 # ui/dialogs/roster_dialogs.py
 """
 Diálogos modales para el Roster de Facción.
-Contiene: view_character_dialog, movement_dialog, create_unit_dialog, manage_unit_dialog.
+Contiene: view_character_dialog, movement_dialog, create_unit_dialog, manage_unit_dialog, exploration_result_dialog.
 Extraído de ui/faction_roster.py V17.0.
 """
 
@@ -17,7 +17,7 @@ from data.unit_repository import (
 )
 from core.models import UnitStatus
 from ui.character_sheet import render_character_sheet
-from ui.movement_console import render_movement_console
+# from ui.movement_console import render_movement_console  <-- MOVIDO A IMPORTACIÓN LOCAL
 from ui.logic.roster_logic import (
     get_prop,
     set_prop,
@@ -27,6 +27,8 @@ from ui.logic.roster_logic import (
     BASE_CAPACITY,
     MAX_CAPACITY,
 )
+from core.exploration_engine import ExplorationResult
+from ui.mrg_resolution_widget import render_full_mrg_resolution
 
 
 # --- DIALOGS ---
@@ -42,7 +44,37 @@ def view_character_dialog(char: Any, player_id: int):
 @st.dialog("Control de Movimiento", width="large")
 def movement_dialog():
     """Modal para control de movimiento."""
+    # Importación local para evitar dependencia circular con movement_console -> roster_dialogs
+    from ui.movement_console import render_movement_console
     render_movement_console()
+
+
+@st.dialog("Resultado de Exploración", width="small")
+def exploration_result_dialog(result: ExplorationResult):
+    """Modal para mostrar el resultado de una exploración."""
+    
+    # Mostrar narrativa del resultado
+    if result.success:
+        st.success(result.narrative)
+    else:
+        # Detectar si es fallo crítico por el texto o tipo (simplificado visualmente)
+        if "❌" in result.narrative:
+             st.error(result.narrative)
+        else:
+             st.warning(result.narrative)
+
+    st.divider()
+
+    # Widget de resolución de dados
+    render_full_mrg_resolution(result.mrg_result)
+
+    st.divider()
+
+    # Botón de cierre explícito para limpiar estado
+    if st.button("Cerrar", type="primary", use_container_width=True):
+        if 'last_exploration_result' in st.session_state:
+            del st.session_state.last_exploration_result
+        st.rerun()
 
 
 @st.dialog("Crear Unidad", width="large")
@@ -339,7 +371,7 @@ def manage_unit_dialog(
             add_troops: List[int] = st.multiselect(
                 "Añadir Tropas",
                 options=list(troop_opts.keys()),
-                format_func=lambda x: troop_opts.get(x, str(x)),
+                format_func=lambda x: troop_options.get(x, str(x)),
                 max_selections=max(0, remaining),
                 disabled=remaining <= 0 or is_locked,
                 key=f"add_troops_{unit_id}"
