@@ -11,6 +11,7 @@ V13.5: Persistencia del diálogo tras movimiento local.
 V13.6: Soporte UI para saltos largos con costo de energía.
 V14.0: Soporte UI para Sobrecarga de Motores (Boost), filtrado de Warp > 30 y visualización de costos de flota.
 V14.2: Panel de Modos de Unidad (Sigilo) y restricciones visuales.
+V14.5: Visualización estricta de límites de movimiento para Stealth (1/1).
 """
 
 import streamlit as st
@@ -927,8 +928,11 @@ def render_movement_console():
             st.caption("🔒 En modo sigilo, los movimientos locales están restringidos a 1 por tick.")
 
     if unit.movement_locked:
-        # V14.2: Lógica de visualización para límite dinámico
-        limit_count = DISORIENTED_MAX_LOCAL_MOVES if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
+        # V14.5: Lógica de visualización para límite dinámico con STEALTH estricto (1/1)
+        if unit.status == UnitStatus.STEALTH_MODE:
+            limit_count = 1
+        else:
+            limit_count = MAX_LOCAL_MOVES_PER_TURN
         
         if unit.local_moves_count < limit_count:
              st.info(f"⚠️ Unidad parcialmente fatigada. Queda **{limit_count - unit.local_moves_count}** movimiento local disponible este tick.")
@@ -990,8 +994,11 @@ def render_movement_console():
                 updated_unit_data = get_unit_by_id(unit_id)
                 if updated_unit_data:
                     updated_unit = UnitSchema.from_dict(updated_unit_data)
-                    # V14.2: Usar límite dinámico para decidir si cerrar
-                    limit_count = DISORIENTED_MAX_LOCAL_MOVES if updated_unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
+                    # V14.5: Usar límite dinámico estricto para decidir si cerrar
+                    if updated_unit.status == UnitStatus.STEALTH_MODE:
+                        limit_count = 1
+                    else:
+                        limit_count = MAX_LOCAL_MOVES_PER_TURN
                     
                     if updated_unit.local_moves_count < limit_count:
                         should_close = False

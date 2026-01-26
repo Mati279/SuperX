@@ -18,6 +18,7 @@ Actualizado V14.0: Soporte para ship_count, Starlane Boost y límites de Warp.
 Actualizado V14.2: Restricción de movimientos locales para unidades en STEALTH_MODE.
 Actualizado V14.3: Eliminada restricción de movimiento para STEALTH_MODE (ahora usan MAX_LOCAL_MOVES_PER_TURN y pierden sigilo al moverse).
 Refactorizado V14.4: Fix cálculo de ship_count dinámico (basado en miembros) y corrección de distancia Starlane por defecto (1.0).
+Refactorizado V14.5: Persistencia de STEALTH_MODE en movimientos y restricción estricta (1 movimiento local).
 """
 
 from typing import Optional, Dict, Any, Tuple, List
@@ -309,6 +310,7 @@ def validate_movement_request(
     V14.0: Validación de distancia máxima de Warp (30.0).
     V14.2: Restricción de movimientos locales para unidades en Sigilo.
     V14.3: Eliminada restricción de sigilo (ahora usan MAX_LOCAL_MOVES_PER_TURN estándar).
+    V14.5: Re-implementada restricción estricta (1 movimiento) para STEALTH_MODE.
     """
     # Validar propiedad de la unidad
     if unit.player_id != player_id:
@@ -345,9 +347,12 @@ def validate_movement_request(
     if unit.movement_locked:
         allow_override = False
         
-        # V14.2: Lógica de límite dinámica
-        # V14.3 Update: Las unidades en STEALTH ahora usan el límite normal (2).
-        local_limit = MAX_LOCAL_MOVES_PER_TURN
+        # V14.5: Lógica de límite dinámica estricta para STEALTH
+        # Unidades en STEALTH solo tienen 1 movimiento antes del bloqueo.
+        if unit.status == UnitStatus.STEALTH_MODE:
+            local_limit = 1
+        else:
+            local_limit = MAX_LOCAL_MOVES_PER_TURN
         
         if is_local and unit.local_moves_count < local_limit:
             allow_override = True
@@ -357,9 +362,11 @@ def validate_movement_request(
 
     # Restricción 1: Límite de movimientos locales
     if is_local:
-        # V14.3 Update: Se eliminó la restricción de DISORIENTED_MAX_LOCAL_MOVES para Stealth.
-        # Ahora todas las unidades usan MAX_LOCAL_MOVES_PER_TURN.
-        limit_count = MAX_LOCAL_MOVES_PER_TURN
+        # V14.5: Restricción estricta para Stealth (1 movimiento) vs Normal (2 movimientos)
+        if unit.status == UnitStatus.STEALTH_MODE:
+            limit_count = 1
+        else:
+            limit_count = MAX_LOCAL_MOVES_PER_TURN
         
         if unit.local_moves_count >= limit_count:
             return False, f"Límite de movimientos locales alcanzado ({unit.local_moves_count}/{limit_count}). Espera al próximo tick."
@@ -401,6 +408,7 @@ def initiate_movement(
     """
     Inicia el movimiento de una unidad hacia un destino.
     V14.0: Soporta use_boost para Starlanes.
+    V14.5: Pasa el estado actual para persistir el sigilo en movimientos instantáneos.
     """
     # Obtener unidad
     unit_data = get_unit_by_id(unit_id)
@@ -454,15 +462,13 @@ def initiate_movement(
             unit_id, 
             destination, 
             movement_type, 
-            current_local_moves=unit.local_moves_count
+            current_local_moves=unit.local_moves_count,
+            current_status=unit.status # V14.5: Pasar estado para persistencia
         )
         
         if success:
             increment_unit_local_moves(unit_id)
             log_event(f"🚀 Unidad '{unit.name}' ha cambiado de posición (instantáneo)", player_id)
-            
-            # Nota: Si la unidad estaba en STEALTH_MODE, ahora estará en GROUND o SPACE
-            # debido a la lógica de _execute_instant_movement que recalcula el estado.
             
             return MovementResult(
                 success=True,
@@ -506,13 +512,19 @@ def _execute_instant_movement(
     unit_id: int,
     destination: DestinationData,
     movement_type: MovementType,
-    current_local_moves: int = 0
+    current_local_moves: int = 0,
+    current_status: UnitStatus = UnitStatus.SPACE
 ) -> Tuple[bool, bool]:
     """
     Ejecuta un movimiento instantáneo (0 ticks).
+    V14.5: Soporta persistencia de STEALTH_MODE.
     """
-    # Determinar nuevo status (Esto asegura que se pierda el STEALTH_MODE si estaba activo)
-    new_status = UnitStatus.GROUND if destination.sector_id is not None else UnitStatus.SPACE
+    # Determinar nuevo status
+    # V14.5: Si estaba en STEALTH, se mantiene en STEALTH.
+    if current_status == UnitStatus.STEALTH_MODE:
+        new_status = UnitStatus.STEALTH_MODE
+    else:
+        new_status = UnitStatus.GROUND if destination.sector_id is not None else UnitStatus.SPACE
 
     # Actualizar ubicación
     success = update_unit_location_advanced(
@@ -540,6 +552,7 @@ def _execute_instant_movement(
 def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
     """
     Procesa las llegadas de unidades en tránsito.
+    V14.5: Intenta preservar STEALTH_MODE si la unidad lo tiene activo.
     """
     arrivals = []
     arriving_units = get_units_in_transit_arriving_at_tick(current_tick)
@@ -549,6 +562,9 @@ def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
         unit_name = unit_data.get('name', f'Unit {unit_id}')
         player_id = unit_data.get('player_id')
         dest_system = unit_data.get('transit_destination_system_id')
+        
+        # Recuperar status actual para persistencia (V14.5)
+        current_status_str = unit_data.get('status')
         
         # Recuperar valores específicos (V13.3 / V13.4)
         dest_json = unit_data.get('transit_destination_data')
@@ -566,7 +582,12 @@ def process_transit_arrivals(current_tick: int) -> List[Dict[str, Any]]:
         target_sector = dest_data.get('sector_id')
         
         final_system_id = dest_system if dest_system else unit_data.get('location_system_id')
-        new_status = UnitStatus.GROUND if target_sector is not None else UnitStatus.SPACE
+        
+        # Determinar nuevo status (V14.5: Persistencia de Stealth)
+        if current_status_str == UnitStatus.STEALTH_MODE.value:
+            new_status = UnitStatus.STEALTH_MODE
+        else:
+            new_status = UnitStatus.GROUND if target_sector is not None else UnitStatus.SPACE
 
         update_success = update_unit_location_advanced(
             unit_id=unit_id,
