@@ -1,9 +1,10 @@
 # core/exploration_engine.py (Completo)
 """
-Motor de Exploración de Sectores V1.0.
+Motor de Exploración de Sectores V1.2.
 Transforma la exploración de una acción de UI a una orden operativa basada en habilidades.
 Gestiona la resolución MRG, la validación de ubicación y la narrativa técnica.
 Actualizado V1.1: Dificultad Estándar (50) y penalización condicional (Solo Críticos).
+Actualizado V1.2: Integración con sistema de fatiga de movimiento (local_moves_count).
 """
 
 from typing import Optional, Dict, Any
@@ -12,7 +13,12 @@ from dataclasses import dataclass
 from core.mrg_engine import resolve_action, MRGResult, ResultType
 from core.models import UnitSchema, UnitStatus
 from core.mrg_constants import DIFFICULTY_STANDARD
-from data.unit_repository import get_unit_by_id, update_unit_status
+from core.movement_constants import MAX_LOCAL_MOVES_PER_TURN
+from data.unit_repository import (
+    get_unit_by_id, 
+    update_unit_status, 
+    increment_unit_local_moves
+)
 from data.planet_repository import grant_sector_knowledge, get_sector_by_id
 from data.database import get_supabase, get_service_container
 from data.log_repository import log_event
@@ -82,13 +88,14 @@ def resolve_sector_exploration(
     """
     Ejecuta una operación de exploración sobre un sector.
     
-    Reglas V1.1:
+    Reglas V1.2:
     1. La unidad debe estar en el mismo planeta/ubicación que el sector.
     2. MRG: skill_exploracion vs Dificultad 50 (STANDARD).
-    3. Éxito: Revela el sector (grant_sector_knowledge).
-    4. Fallo:
-       - Fallo Normal: No pasa nada (solo gasto de acción/tiempo).
-       - Fallo Crítico/Total: Bloquea movimiento (fatiga de sensores).
+    3. Consume 1 Movimiento Local (Fatiga).
+    4. Éxito: Revela el sector (grant_sector_knowledge).
+    5. Fallo:
+       - Fallo Normal: Consume acción pero no bloquea totalmente.
+       - Fallo Crítico/Total: Bloquea movimiento (fatiga de sensores) y quema todos los movimientos restantes del turno.
     """
     
     # 1. Obtener y Validar Unidad
@@ -103,6 +110,15 @@ def resolve_sector_exploration(
         
     if unit.status == UnitStatus.TRANSIT:
         raise ValueError("La unidad está en tránsito y no puede realizar exploraciones.")
+
+    # V1.2 Validación de Fatiga de Movimiento
+    move_limit = 1 if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
+    
+    if unit.local_moves_count >= move_limit:
+        raise ValueError(f"La unidad no tiene acciones suficientes para explorar. ({unit.local_moves_count}/{move_limit})")
+
+    if unit.movement_locked:
+        raise ValueError("La unidad tiene sus sistemas de navegación bloqueados.")
 
     # 2. Obtener y Validar Sector
     # Necesitamos saber en qué planeta está el sector para comparar con la unidad
@@ -148,21 +164,31 @@ def resolve_sector_exploration(
     # 4. Procesar Consecuencias
     success = mrg_result.success
     narrative = _generate_exploration_narrative(sector_data, unit.name, success, mrg_result.margin)
+    
+    # V1.2: Consumir Acción (Siempre incrementa fatiga al explorar)
+    increment_unit_local_moves(unit_id)
 
     if success:
         # Revelar sector
         grant_sector_knowledge(player_id, sector_id)
         log_event(f"🗺️ Exploración exitosa: {unit.name} ha cartografiado un nuevo sector. {narrative}", player_id)
     else:
-        # Penalización Condicional (V1.1)
+        # Penalización Condicional (V1.1 y V1.2)
         # Solo bloqueamos movimiento si es un fallo grave (CRITICAL o TOTAL)
         is_severe_failure = mrg_result.result_type in [ResultType.CRITICAL_FAILURE, ResultType.TOTAL_FAILURE]
         
         if is_severe_failure:
-            get_supabase().table('units').update({'movement_locked': True}).eq('id', unit.id).execute()
-            log_event(f"❌ FALLO CRÍTICO DE SENSORES: {unit.name} requiere recalibración de emergencia. Movimiento bloqueado. {narrative}", player_id)
+            # V1.2: Quemar turno completo (Simular que gastó todas las acciones tratando de recuperarse)
+            # Forzamos local_moves_count al límite y bloqueamos
+            updates = {
+                'movement_locked': True,
+                'local_moves_count': move_limit 
+            }
+            get_supabase().table('units').update(updates).eq('id', unit.id).execute()
+            
+            log_event(f"❌ FALLO CRÍTICO DE SENSORES: {unit.name} pierde el resto del turno. Movimiento bloqueado. {narrative}", player_id)
         else:
-            log_event(f"⚠️ Exploración fallida: {unit.name} no pudo obtener datos concluyentes, pero los sistemas permanecen operativos. {narrative}", player_id)
+            log_event(f"⚠️ Exploración fallida: {unit.name} no pudo obtener datos concluyentes. Acción consumida. {narrative}", player_id)
 
     return ExplorationResult(
         success=success,

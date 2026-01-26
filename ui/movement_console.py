@@ -15,6 +15,7 @@ V14.5: Visualización estricta de límites de movimiento para Stealth (1/1).
 V14.6: Corrección de cálculo de costos (basa en miembros reales) y marcador visual Movs X/Y.
 V14.7: Sincronización dinámica de ticks de viaje (Real-time calculation vs World Tick).
 V15.0: Integración de Exploración Táctica de Sectores.
+V15.1: Feedback persistente de exploración y gestión de fatiga.
 """
 
 import streamlit as st
@@ -46,8 +47,8 @@ from core.movement_constants import (
 from core.detection_constants import DISORIENTED_MAX_LOCAL_MOVES
 from data.world_repository import get_world_state
 from services.unit_service import toggle_stealth_mode
-# Nueva importación para exploración
-from core.exploration_engine import resolve_sector_exploration
+from core.exploration_engine import resolve_sector_exploration, ExplorationResult
+from core.mrg_engine import ResultType
 
 
 def _inject_movement_css():
@@ -94,6 +95,14 @@ def _inject_movement_css():
     .loc-space { background: rgba(69,183,209,0.2); color: #45b7d1; }
     .loc-transit { background: rgba(241,196,15,0.2); color: #f1c40f; }
     .loc-stealth { background: rgba(50, 50, 50, 0.8); color: #bdc3c7; border: 1px solid #7f8c8d; }
+    .resource-tag {
+        background-color: rgba(255, 255, 255, 0.1);
+        padding: 2px 8px;
+        border-radius: 4px;
+        margin-right: 5px;
+        font-size: 0.85em;
+        color: #e0e0e0;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -970,26 +979,41 @@ def render_movement_console():
         if is_stealth:
             st.caption("🔒 En modo sigilo, los movimientos locales están restringidos a 1 por tick.")
 
-    # --- V15.0: SECCIÓN DE ACCIONES TÁCTICAS (Exploración) ---
-    if unit.status != UnitStatus.TRANSIT and unit.location_sector_id and unit.location_planet_id:
-        sectors = get_planet_sectors_status(unit.location_planet_id, player_id)
-        current_sector = next((s for s in sectors if s['id'] == unit.location_sector_id), None)
-
-        if current_sector and not current_sector.get('is_discovered', False):
-            st.markdown("### 🔭 Acciones Tácticas")
-            st.info("Este sector no ha sido cartografiado. Realiza una exploración para revelar recursos y amenazas.")
-            
-            if st.button("📡 Explorar Sector Actual", type="primary", use_container_width=True):
-                with st.spinner("Escaneando terreno..."):
-                    try:
-                        result = resolve_sector_exploration(unit_id, unit.location_sector_id, player_id)
-                        if result.success:
-                            st.toast(f"✅ Exploración exitosa: {result.narrative}")
-                            st.rerun()
-                        else:
-                            st.toast(f"❌ Fallo de exploración: {result.narrative}")
-                    except Exception as e:
-                        st.error(f"Error crítico en exploración: {e}")
+    # --- V15.1: Feedback Visual Persistente (Exploración) ---
+    if 'last_exploration_result' in st.session_state:
+        res = st.session_state.last_exploration_result
+        if res.unit_id == unit.id: # Solo mostrar si corresponde a la unidad actual
+            if res.success:
+                # Extraer recursos del diccionario details
+                details = res.details
+                resource_html = ""
+                # Lista de posibles claves de recursos en la DB
+                possible_resources = {
+                    'material_yield': 'Materiales',
+                    'fuel_yield': 'Combustible', 
+                    'organic_yield': 'Orgánicos',
+                    'energy_yield': 'Energía',
+                    'scientific_yield': 'Datos Científicos'
+                }
+                
+                found_resources = []
+                for key, label in possible_resources.items():
+                    val = details.get(key)
+                    if val and isinstance(val, (int, float)) and val > 0:
+                        found_resources.append(f"{label}: {val}")
+                
+                res_txt = " | ".join(found_resources) if found_resources else "Sin recursos significativos detectados."
+                
+                st.success(f"📍 **Exploración Exitosa**\n\n{res.narrative}")
+                st.markdown(f"**Recursos Identificados:** {res_txt}")
+            else:
+                # Feedback de error con diferenciación crítica
+                is_critical = res.mrg_result.result_type in [ResultType.CRITICAL_FAILURE, ResultType.TOTAL_FAILURE]
+                
+                error_prefix = "⚠️ **FALLO CRÍTICO DE SENSORES**" if is_critical else "⚠️ **Exploración Fallida**"
+                burn_msg = "\n\n**🛑 La unidad ha perdido el resto de sus acciones este turno.**" if is_critical else ""
+                
+                st.error(f"{error_prefix}\n\n{res.narrative}{burn_msg}")
 
     # --- V14.6: Lógica de Límites de Movimiento (Visualización Estricta) ---
     if unit.status == UnitStatus.STEALTH_MODE:
@@ -998,18 +1022,43 @@ def render_movement_console():
         limit_count = MAX_LOCAL_MOVES_PER_TURN
     
     # Texto para mostrar en la UI
-    limit_txt = f"Movs: {unit.local_moves_count}/{limit_count}"
+    limit_txt = f"Acciones: {unit.local_moves_count}/{limit_count}"
 
     if unit.movement_locked:
-        st.warning(f"🔒 Movimiento Bloqueado ({limit_txt}). Espera al siguiente tick.")
+        st.warning(f"🔒 Movimiento/Acciones Bloqueadas ({limit_txt}). Espera al siguiente tick.")
         if unit.local_moves_count > 0:
-             st.caption(f"Movimientos locales realizados: {unit.local_moves_count}/{limit_count}")
+             st.caption(f"Acciones realizadas: {unit.local_moves_count}/{limit_count}")
         return
 
     # Visualización de fatiga/estado antes de las opciones
     if unit.local_moves_count > 0:
          remaining = limit_count - unit.local_moves_count
          st.info(f"⚠️ Unidad parcialmente fatigada. {limit_txt} (Restantes: {remaining})")
+
+    # --- V15.0: SECCIÓN DE ACCIONES TÁCTICAS (Exploración) ---
+    if unit.status != UnitStatus.TRANSIT and unit.location_sector_id and unit.location_planet_id:
+        sectors = get_planet_sectors_status(unit.location_planet_id, player_id)
+        current_sector = next((s for s in sectors if s['id'] == unit.location_sector_id), None)
+
+        if current_sector and not current_sector.get('is_discovered', False):
+            st.markdown("### 🔭 Acciones Tácticas")
+            
+            # V15.1: Deshabilitar si no hay acciones
+            can_explore = unit.local_moves_count < limit_count
+            
+            if can_explore:
+                st.info(f"Este sector no ha sido cartografiado. Realiza una exploración para revelar recursos y amenazas. (Consume 1 Acción)")
+                if st.button("📡 Explorar Sector Actual", type="primary", use_container_width=True):
+                    with st.spinner("Escaneando terreno..."):
+                        try:
+                            result = resolve_sector_exploration(unit_id, unit.location_sector_id, player_id)
+                            # Guardar resultado en sesión para persistencia visual
+                            st.session_state.last_exploration_result = result
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error crítico en exploración: {e}")
+            else:
+                st.warning(f"🚫 Acciones agotadas ({unit.local_moves_count}/{limit_count}). No se puede explorar este turno.")
 
     movement_result: Optional[Tuple[DestinationData, MovementType, bool]] = None
 
@@ -1072,11 +1121,15 @@ def render_movement_console():
                     if updated_unit.local_moves_count < limit_count:
                         should_close = False
                         remaining = limit_count - updated_unit.local_moves_count
-                        st.toast(f"✅ Posición actualizada. Movimientos restantes: {remaining}")
+                        st.toast(f"✅ Posición actualizada. Acciones restantes: {remaining}")
 
             if should_close:
                 st.session_state.selected_unit_movement = None
             
+            # Limpiar resultado de exploración anterior al moverse
+            if 'last_exploration_result' in st.session_state:
+                del st.session_state.last_exploration_result
+                
             st.rerun()
         else:
             st.error(f"Error: {result.error_message}")
