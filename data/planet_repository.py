@@ -41,6 +41,7 @@ Actualizado v8.3.0: Business Logic para HQ Único (Reemplazo de Constraint DB).
 Actualizado v9.1.0: Implementación de Seguridad de Sistema (Recálculo automático en cascada).
 Actualizado v9.2.0: Reglas de Soberanía Conflictiva y Excepción de Construcción Orbital (Bypass de Flota).
 Actualizado v10.0: Helper get_player_base_coordinates para Ubicación SQL.
+Actualizado v10.3: Helper get_sector_by_id para exploración táctica.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -559,6 +560,23 @@ def get_planet_sectors_status(planet_id: int, player_id: Optional[int] = None) -
         return sectors
     except Exception:
         return []
+
+
+def get_sector_by_id(sector_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene los datos de un sector por ID. 
+    Incluye join con planets para obtener el nombre del planeta (necesario para exploración).
+    """
+    try:
+        response = _get_db().table("sectors")\
+            .select("*, planets(name)")\
+            .eq("id", sector_id)\
+            .maybe_single()\
+            .execute()
+        return response.data if response and response.data else None
+    except Exception as e:
+        log_event(f"Error obteniendo sector {sector_id}: {e}", is_error=True)
+        return None
 
 
 def get_sector_details(sector_id: int) -> Optional[Dict[str, Any]]:

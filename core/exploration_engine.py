@@ -110,7 +110,8 @@ def resolve_sector_exploration(
     if not sector_data:
         # Fallback manual si no existe el helper
         db = get_supabase()
-        resp = db.table('map_sectors').select('*, planets(name)').eq('id', sector_id).single().execute()
+        # V1.2 Fix: Corrección de nombre de tabla 'map_sectors' a 'sectors'
+        resp = db.table('sectors').select('*, planets(name)').eq('id', sector_id).single().execute()
         if not resp.data:
             raise ValueError(f"Sector {sector_id} no encontrado.")
         sector_data = resp.data
