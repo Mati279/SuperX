@@ -13,6 +13,7 @@ V13.5: Fix Agrupación - Tránsito intra-sistema (SCO) se muestra en el sistema,
 V14.1: Integración del Centro de Alertas Tácticas y Panel de Simulación de Detección.
 Refactor V15.0: Compatibilidad Híbrida Pydantic V2/Dict para Unidades y Miembros.
 V15.1: Bloqueo de seguridad en gestión de unidades durante Tránsito Interestelar.
+V15.2: Fix Visualización - Soporte para personajes sueltos en espacio profundo (Anillos).
 """
 
 import streamlit as st
@@ -514,20 +515,34 @@ def _build_location_index(
     - 'units_by_sector': {sector_id: [units]}
     - 'units_by_system_ring': {(system_id, ring): [units]}
     - 'units_in_transit': [units]
+    - 'chars_by_system_ring': {(system_id, ring): [chars]} (V15.2 Fix)
     """
     chars_by_sector: Dict[int, List[Any]] = {}
     units_by_sector: Dict[int, List[Any]] = {}
     units_by_system_ring: Dict[Tuple[int, int], List[Any]] = {}
     units_in_transit: List[Any] = []
+    
+    # NEW V15.2: Soporte para chars sueltos en espacio
+    chars_by_system_ring: Dict[Tuple[int, int], List[Any]] = {}
 
-    # Personajes sueltos por sector
+    # Personajes sueltos
     for char in characters:
         cid = get_prop(char, "id")
         if cid in assigned_char_ids:
             continue
+            
         sector_id = get_prop(char, "location_sector_id")
         if sector_id:
             chars_by_sector.setdefault(sector_id, []).append(char)
+        else:
+            # Check si está en espacio (System + Ring sin sector)
+            system_id = get_prop(char, "location_system_id")
+            if system_id:
+                ring = get_prop(char, "ring", 0)
+                # Ensure value is int
+                if isinstance(ring, LocationRing):
+                    ring = ring.value
+                chars_by_system_ring.setdefault((system_id, ring), []).append(char)
 
     # Unidades por ubicación
     for unit in units:
@@ -571,6 +586,7 @@ def _build_location_index(
         "units_by_sector": units_by_sector,
         "units_by_system_ring": units_by_system_ring,
         "units_in_transit": units_in_transit,
+        "chars_by_system_ring": chars_by_system_ring, # Added V15.2
     }
 
 
@@ -903,11 +919,16 @@ def _render_system_node(
     sys_space_count = 0
     sys_surf_count = 0
 
-    # 1. Unidades en espacio (Estrella + Anillos)
+    # 1. Unidades y Personajes en espacio (Estrella + Anillos)
+    chars_by_ring = location_index.get("chars_by_system_ring", {})
+    
     for r in range(7):
         key = (system_id, r)
         units = location_index["units_by_system_ring"].get(key, [])
+        chars = chars_by_ring.get(key, [])
+        
         sys_u_count += len(units)
+        sys_space_count += len(chars) # Sumar personajes sueltos en espacio
 
     # 2. Contenido de Planetas
     for planet in planets:
@@ -936,25 +957,38 @@ def _render_system_node(
             # Sector Estelar (Ring 0)
             stellar_key = (system_id, 0)
             stellar_units = location_index["units_by_system_ring"].get(stellar_key, [])
-            if stellar_units:
+            stellar_chars = location_index.get("chars_by_system_ring", {}).get(stellar_key, [])
+            
+            if stellar_units or stellar_chars:
                 st.markdown('<div class="comando-section-header">🌌 Sector Estelar</div>', unsafe_allow_html=True)
                 available_chars_space: List[dict] = []
                 available_troops_space = [t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids]
+                
+                # Render Units
                 for unit in stellar_units:
                     _render_unit_row(unit, player_id, is_space=True,
                                     available_chars=available_chars_space,
                                     available_troops=available_troops_space)
+                # Render Chars
+                for char in stellar_chars:
+                    _render_character_row(char, player_id, is_space=True)
 
             # Anillos 1-6
             for ring in range(1, 7):
                 ring_key = (system_id, ring)
                 ring_units = location_index["units_by_system_ring"].get(ring_key, [])
-                if ring_units:
+                ring_chars = location_index.get("chars_by_system_ring", {}).get(ring_key, [])
+                
+                if ring_units or ring_chars:
                     st.markdown(f'<div class="comando-section-header">🌌 Anillo {ring}</div>', unsafe_allow_html=True)
+                    # Render Units
                     for unit in ring_units:
                         _render_unit_row(unit, player_id, is_space=True,
                                         available_chars=[],
                                         available_troops=[t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids])
+                    # Render Chars
+                    for char in ring_chars:
+                        _render_character_row(char, player_id, is_space=True)
 
             # Planetas ordenados
             planets_sorted = sorted(planets, key=lambda p: p.get("orbital_ring", 1))
