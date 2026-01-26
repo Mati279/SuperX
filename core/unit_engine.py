@@ -1,11 +1,12 @@
-# core/unit_engine.py
+# core/unit_engine.py (Completo)
 """
-Motor de Lógica de Unidades y Tropas (V9.0, V16.0).
+Motor de Lógica de Unidades y Tropas (V9.0, V16.0, V17.0).
 Gestiona:
 1. Registro de combates y nivelación (Level Up).
 2. Promoción de Tropas a Héroes (Hero Spawn).
 3. Gestión de miembros de unidad.
 4. V16.0: Liderazgo dinámico y supervivencia de tropas.
+5. V17.0: Cálculo de Habilidades Colectivas (Refactorizado).
 """
 
 from typing import Optional, Dict, Any, List
@@ -410,17 +411,18 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
     """
     V17.0: Calcula y actualiza las habilidades colectivas de una unidad.
 
-    Las habilidades se calculan como promedio ponderado de los atributos
-    de los personajes miembros, donde el líder tiene peso 4.
+    REFACTORIZADO: Ahora utiliza las habilidades reales calculadas en el snapshot
+    (details -> habilidades) en lugar de atributos base manuales.
+    
+    Las habilidades se calculan como promedio ponderado:
+    (Valor_Líder * 4 + Suma_Otros) / (4 + Cantidad_Otros)
 
-    Fórmulas base (atributos de CharacterAttributes):
-    - Detección: intelecto + voluntad
-    - Radares: intelecto + voluntad
-    - Exploración: intelecto + agilidad
-    - Sigilo: agilidad + voluntad
-    - Evasión de sensores: tecnica + intelecto
-
-    Algoritmo: (Valor_Líder * 4 + Suma_Otros) / (4 + Cantidad_Otros)
+    Mapeo de habilidades:
+    - "Detección" -> skill_deteccion
+    - "Radares" -> skill_radares
+    - "Exploración" -> skill_exploracion
+    - "Sigilo" -> skill_sigilo
+    - "Evasión de Sensores" -> skill_evasion_sensores
 
     Args:
         unit_id: ID de la unidad a actualizar
@@ -430,7 +432,7 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
         - success: bool
         - skills: Dict con las 5 habilidades calculadas
         - character_count: int
-        - message: str (en caso de error)
+        - message: str
     """
     result = {
         "success": False,
@@ -449,7 +451,6 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
     unit_data = get_unit_by_id(unit_id)
     if not unit_data:
         result["message"] = f"Unit {unit_id} not found"
-        # Aún así intentamos resetear las habilidades a 0
         update_unit_skills(unit_id, result["skills"])
         return result
 
@@ -476,51 +477,45 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
         else:
             others.append(char)
 
-    # Si no hay líder explícito, el primer personaje asume el rol
+    # Si no hay líder explícito, el primer personaje asume el rol (fallback)
     if leader is None:
         leader = characters[0]
         others = characters[1:]
 
-    # 5. Extraer atributos del líder
-    leader_attrs = _extract_character_attributes(leader)
-
-    # 6. Extraer atributos de los otros personajes
-    others_attrs = [_extract_character_attributes(c) for c in others]
-
-    # 7. Calcular cada habilidad con promedio ponderado
+    # 5. Calcular habilidades usando los valores procesados en 'details'
     skills = {}
 
-    # Detección: INT + VOL
+    # Detección
     skills["skill_deteccion"] = _calculate_weighted_skill(
-        leader_attrs["intelecto"] + leader_attrs["voluntad"],
-        [a["intelecto"] + a["voluntad"] for a in others_attrs]
+        _get_member_skill(leader, "Detección"),
+        [_get_member_skill(m, "Detección") for m in others]
     )
 
-    # Radares: INT + VOL (misma fórmula que Detección)
+    # Radares
     skills["skill_radares"] = _calculate_weighted_skill(
-        leader_attrs["intelecto"] + leader_attrs["voluntad"],
-        [a["intelecto"] + a["voluntad"] for a in others_attrs]
+        _get_member_skill(leader, "Radares"),
+        [_get_member_skill(m, "Radares") for m in others]
     )
 
-    # Exploración: INT + AGI
+    # Exploración
     skills["skill_exploracion"] = _calculate_weighted_skill(
-        leader_attrs["intelecto"] + leader_attrs["agilidad"],
-        [a["intelecto"] + a["agilidad"] for a in others_attrs]
+        _get_member_skill(leader, "Exploración"),
+        [_get_member_skill(m, "Exploración") for m in others]
     )
 
-    # Sigilo: AGI + VOL
+    # Sigilo
     skills["skill_sigilo"] = _calculate_weighted_skill(
-        leader_attrs["agilidad"] + leader_attrs["voluntad"],
-        [a["agilidad"] + a["voluntad"] for a in others_attrs]
+        _get_member_skill(leader, "Sigilo"),
+        [_get_member_skill(m, "Sigilo") for m in others]
     )
 
-    # Evasión de sensores: TEC + INT
+    # Evasión de Sensores
     skills["skill_evasion_sensores"] = _calculate_weighted_skill(
-        leader_attrs["tecnica"] + leader_attrs["intelecto"],
-        [a["tecnica"] + a["intelecto"] for a in others_attrs]
+        _get_member_skill(leader, "Evasión de Sensores"),
+        [_get_member_skill(m, "Evasión de Sensores") for m in others]
     )
 
-    # 8. Persistir en base de datos
+    # 6. Persistir en base de datos
     if update_unit_skills(unit_id, skills):
         result["success"] = True
         result["skills"] = skills
@@ -531,48 +526,31 @@ def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
     return result
 
 
-def _extract_character_attributes(member: Dict[str, Any]) -> Dict[str, int]:
+def _get_member_skill(member: Dict[str, Any], skill_name: str) -> int:
     """
-    V17.0: Extrae los atributos de un miembro tipo character.
-
-    Los atributos vienen en member['details']['habilidades'] pero necesitamos
-    acceder a los atributos base. Como _hydrate_member_names ya carga stats_json,
-    extraemos desde ahí.
+    V17.0 (Refactor): Extrae el valor de una habilidad ya calculada
+    del snapshot 'details' -> 'habilidades'.
+    
+    Esto asegura que se usen los valores finales (incluyendo multiplicadores x2)
+    en lugar de intentar recalcularlos desde atributos base.
 
     Args:
-        member: Dict del miembro con estructura de UnitMemberSchema
+        member: Dict del miembro (UnitMemberSchema)
+        skill_name: Nombre de la habilidad (ej: "Detección")
 
     Returns:
-        Dict con los 6 atributos primarios (default 5 si no existen)
+        Valor entero de la habilidad o 0 si no existe.
     """
-    defaults = {
-        "fuerza": 5,
-        "agilidad": 5,
-        "tecnica": 5,
-        "intelecto": 5,
-        "voluntad": 5,
-        "presencia": 5
-    }
-
-    details = member.get("details", {})
+    details = member.get("details")
     if not details:
-        return defaults
-
-    # Los atributos pueden venir en diferentes estructuras según la hidratación
-    # Intentamos extraer desde 'atributos' directamente o desde 'habilidades'
-    attrs = details.get("atributos", {})
-
-    if attrs:
-        return {
-            "fuerza": attrs.get("fuerza", 5),
-            "agilidad": attrs.get("agilidad", 5),
-            "tecnica": attrs.get("tecnica", 5),
-            "intelecto": attrs.get("intelecto", 5),
-            "voluntad": attrs.get("voluntad", 5),
-            "presencia": attrs.get("presencia", 5)
-        }
-
-    return defaults
+        return 0
+    
+    habilidades = details.get("habilidades")
+    if not habilidades:
+        return 0
+        
+    # Extraer valor, asegurando int
+    return int(habilidades.get(skill_name, 0))
 
 
 def _calculate_weighted_skill(leader_value: int, others_values: list) -> int:
@@ -583,8 +561,8 @@ def _calculate_weighted_skill(leader_value: int, others_values: list) -> int:
     Donde W = LEADER_WEIGHT (4)
 
     Args:
-        leader_value: Valor calculado para el líder
-        others_values: Lista de valores de los otros personajes
+        leader_value: Valor de la habilidad del líder
+        others_values: Lista de valores de habilidad de los otros personajes
 
     Returns:
         Valor entero redondeado al más cercano
