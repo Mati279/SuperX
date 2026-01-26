@@ -19,6 +19,7 @@ Actualizado V14.1: Sistema de Detección - Estados STEALTH_MODE, HIDDEN y flag d
 Actualizado V15.1: Soporte para 'ring' en CommanderData y CharacterLocation.
 Actualizado V15.2: Fix Validación CommanderData (Ring Nullable).
 Actualizado V15.3: Fix Resolución Nombres Ubicación Espacial (Fix entidades desaparecidas).
+Actualizado V17.0: Habilidades Colectivas de Unidad (Unit Skills).
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -723,6 +724,7 @@ class UnitSchema(BaseModel):
     Persistido en tabla 'units'.
     Capacidad máxima: 8 slots. Mínimo 1 Character (líder).
     V14.0: Añadidos estados STEALTH_MODE, HIDDEN y flag disoriented.
+    V17.0: Añadidas Habilidades Colectivas de Unidad.
     """
     model_config = ConfigDict(extra='allow')
 
@@ -759,6 +761,13 @@ class UnitSchema(BaseModel):
     
     # V11.2: Control de movimientos locales diarios
     local_moves_count: int = Field(default=0, ge=0)
+
+    # V17.0: Habilidades Colectivas de Unidad
+    skill_deteccion: int = 0
+    skill_radares: int = 0
+    skill_exploracion: int = 0
+    skill_sigilo: int = 0
+    skill_evasion_sensores: int = 0
 
     # Composición (máximo 8 slots)
     members: List[UnitMemberSchema] = Field(default_factory=list)

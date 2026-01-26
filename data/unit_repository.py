@@ -25,6 +25,7 @@ def _hydrate_member_names(members: List[Dict[str, Any]]) -> None:
     """
     Hidrata una lista de miembros de unidad con el nombre de la entidad.
     V16.0: También incluye habilidades en 'details' para cálculo de capacidad.
+    V17.0: Incluye atributos en 'details' para cálculo de habilidades colectivas.
     Realiza consultas en lote para optimizar rendimiento.
     Modifica la lista in-place agregando los campos 'name' y 'details'.
     Nota: 'is_leader' ya viene de la consulta a unit_members y se preserva.
@@ -39,7 +40,7 @@ def _hydrate_member_names(members: List[Dict[str, Any]]) -> None:
     troop_ids = list({m["entity_id"] for m in members if m["entity_type"] == "troop"})
 
     char_map = {}
-    char_details = {}  # V16.0: Snapshot de habilidades para líderes
+    char_details = {}  # V16.0/V17.0: Snapshot de habilidades y atributos
     troop_map = {}
 
     # 2. Consultar Nombres y Stats de Personajes
@@ -50,13 +51,18 @@ def _hydrate_member_names(members: List[Dict[str, Any]]) -> None:
             if resp.data:
                 for item in resp.data:
                     char_map[item["id"]] = item["nombre"]
-                    # V16.0: Extraer habilidades para cálculo de liderazgo
+                    # V16.0/V17.0: Extraer habilidades y atributos
                     stats = item.get("stats_json", {})
                     if isinstance(stats, dict):
-                        skills = stats.get("capacidades", {}).get("habilidades", {})
-                        char_details[item["id"]] = {"habilidades": skills}
+                        capacidades = stats.get("capacidades", {})
+                        skills = capacidades.get("habilidades", {})
+                        attrs = capacidades.get("atributos", {})
+                        char_details[item["id"]] = {
+                            "habilidades": skills,
+                            "atributos": attrs  # V17.0: Para cálculo de habilidades colectivas
+                        }
                     else:
-                        char_details[item["id"]] = {"habilidades": {}}
+                        char_details[item["id"]] = {"habilidades": {}, "atributos": {}}
         except Exception as e:
             print(f"Error hydrating characters batch: {e}")
 
@@ -458,6 +464,7 @@ def add_unit_member(unit_id: int, entity_type: str, entity_id: int, slot_index: 
     """
     Asigna una entidad (character/troop) a una unidad.
     V16.0: Si la unidad está vacía y es un character, se marca como líder automáticamente.
+    V17.0: Recalcula habilidades colectivas al agregar un character.
     """
     db = get_supabase()
     try:
@@ -484,13 +491,23 @@ def add_unit_member(unit_id: int, entity_type: str, entity_id: int, slot_index: 
             "is_leader": should_be_leader  # V16.0
         }
         response = db.table("unit_members").insert(data).execute()
-        return bool(response.data)
+        success = bool(response.data)
+
+        # V17.0: Trigger - Recalcular habilidades si se agregó un character
+        if success and entity_type == 'character':
+            from core.unit_engine import calculate_and_update_unit_skills
+            calculate_and_update_unit_skills(unit_id)
+
+        return success
     except Exception as e:
         print(f"Error adding member to unit {unit_id}: {e}")
         return False
 
 def remove_unit_member(unit_id: int, slot_index: int) -> bool:
-    """Remueve un miembro de un slot específico."""
+    """
+    Remueve un miembro de un slot específico.
+    V17.0: Recalcula habilidades colectivas al remover un character.
+    """
     db = get_supabase()
     try:
         # V14.2: Verificar estado de tránsito antes de modificar
@@ -499,11 +516,27 @@ def remove_unit_member(unit_id: int, slot_index: int) -> bool:
             print(f"Cannot remove member from unit {unit_id} while in TRANSIT")
             return False
 
+        # V17.0: Verificar si el miembro a remover es un character
+        member_check = db.table("unit_members")\
+            .select("entity_type")\
+            .match({"unit_id": unit_id, "slot_index": slot_index})\
+            .maybe_single()\
+            .execute()
+
+        was_character = member_check.data and member_check.data.get("entity_type") == "character"
+
         response = db.table("unit_members")\
             .delete()\
             .match({"unit_id": unit_id, "slot_index": slot_index})\
             .execute()
-        return bool(response.data)
+        success = bool(response.data)
+
+        # V17.0: Trigger - Recalcular habilidades si se removió un character
+        if success and was_character:
+            from core.unit_engine import calculate_and_update_unit_skills
+            calculate_and_update_unit_skills(unit_id)
+
+        return success
     except Exception as e:
         print(f"Error removing member from unit {unit_id} slot {slot_index}: {e}")
         return False
@@ -514,6 +547,7 @@ def remove_unit_member(unit_id: int, slot_index: int) -> bool:
 def set_unit_leader(unit_id: int, character_entity_id: int, player_id: int) -> bool:
     """
     V16.0: Establece un personaje como líder de la unidad.
+    V17.0: Recalcula habilidades colectivas al cambiar de líder.
     Validaciones:
     - La entidad debe ser tipo 'character'
     - La entidad debe pertenecer a la unidad
@@ -555,7 +589,14 @@ def set_unit_leader(unit_id: int, character_entity_id: int, player_id: int) -> b
             .match({"unit_id": unit_id, "entity_type": "character", "entity_id": character_entity_id})\
             .execute()
 
-        return bool(response.data)
+        success = bool(response.data)
+
+        # V17.0: Trigger - Recalcular habilidades (el líder tiene mayor peso)
+        if success:
+            from core.unit_engine import calculate_and_update_unit_skills
+            calculate_and_update_unit_skills(unit_id)
+
+        return success
 
     except Exception as e:
         print(f"Error setting leader for unit {unit_id}: {e}")
@@ -1046,3 +1087,38 @@ def _log_transit_interdicted(unit_id: int, current_tick: int) -> None:
             .execute()
     except Exception as e:
         print(f"Error logging transit interdiction: {e}")
+
+
+# --- V17.0: FUNCIONES DE HABILIDADES COLECTIVAS ---
+
+def update_unit_skills(unit_id: int, skills: dict) -> bool:
+    """
+    V17.0: Actualiza las habilidades colectivas de una unidad.
+
+    Args:
+        unit_id: ID de la unidad
+        skills: Dict con las 5 habilidades:
+            - skill_deteccion
+            - skill_radares
+            - skill_exploracion
+            - skill_sigilo
+            - skill_evasion_sensores
+
+    Returns:
+        True si la actualización fue exitosa, False en caso contrario.
+    """
+    db = get_supabase()
+    try:
+        update_data = {
+            "skill_deteccion": skills.get("skill_deteccion", 0),
+            "skill_radares": skills.get("skill_radares", 0),
+            "skill_exploracion": skills.get("skill_exploracion", 0),
+            "skill_sigilo": skills.get("skill_sigilo", 0),
+            "skill_evasion_sensores": skills.get("skill_evasion_sensores", 0)
+        }
+
+        response = db.table("units").update(update_data).eq("id", unit_id).execute()
+        return bool(response.data)
+    except Exception as e:
+        print(f"Error updating unit skills for unit {unit_id}: {e}")
+        return False

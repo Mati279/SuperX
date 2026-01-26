@@ -17,7 +17,8 @@ from data.unit_repository import (
     get_units_by_player,
     add_unit_member,
     remove_unit_member,
-    get_unit_leader_skill
+    get_unit_leader_skill,
+    update_unit_skills
 )
 from data.log_repository import log_event
 from services.character_generation_service import recruit_character_with_ai
@@ -397,3 +398,205 @@ def process_troop_survival(player_id: int, current_tick: int) -> Dict[str, Any]:
 
     result["total_removed"] = len(result["troops_removed"])
     return result
+
+
+# --- V17.0: HABILIDADES COLECTIVAS DE UNIDAD ---
+
+# Peso del líder en el promedio ponderado
+LEADER_WEIGHT = 4
+
+
+def calculate_and_update_unit_skills(unit_id: int) -> Dict[str, Any]:
+    """
+    V17.0: Calcula y actualiza las habilidades colectivas de una unidad.
+
+    Las habilidades se calculan como promedio ponderado de los atributos
+    de los personajes miembros, donde el líder tiene peso 4.
+
+    Fórmulas base (atributos de CharacterAttributes):
+    - Detección: intelecto + voluntad
+    - Radares: intelecto + voluntad
+    - Exploración: intelecto + agilidad
+    - Sigilo: agilidad + voluntad
+    - Evasión de sensores: tecnica + intelecto
+
+    Algoritmo: (Valor_Líder * 4 + Suma_Otros) / (4 + Cantidad_Otros)
+
+    Args:
+        unit_id: ID de la unidad a actualizar
+
+    Returns:
+        Dict con:
+        - success: bool
+        - skills: Dict con las 5 habilidades calculadas
+        - character_count: int
+        - message: str (en caso de error)
+    """
+    result = {
+        "success": False,
+        "skills": {
+            "skill_deteccion": 0,
+            "skill_radares": 0,
+            "skill_exploracion": 0,
+            "skill_sigilo": 0,
+            "skill_evasion_sensores": 0
+        },
+        "character_count": 0,
+        "message": ""
+    }
+
+    # 1. Obtener datos de la unidad con miembros hidratados
+    unit_data = get_unit_by_id(unit_id)
+    if not unit_data:
+        result["message"] = f"Unit {unit_id} not found"
+        # Aún así intentamos resetear las habilidades a 0
+        update_unit_skills(unit_id, result["skills"])
+        return result
+
+    members = unit_data.get("members", [])
+
+    # 2. Filtrar solo miembros tipo 'character'
+    characters = [m for m in members if m.get("entity_type") == "character"]
+    result["character_count"] = len(characters)
+
+    # 3. Si no hay personajes, habilidades son 0
+    if not characters:
+        result["message"] = "No characters in unit"
+        update_unit_skills(unit_id, result["skills"])
+        result["success"] = True
+        return result
+
+    # 4. Identificar al líder
+    leader = None
+    others = []
+
+    for char in characters:
+        if char.get("is_leader", False):
+            leader = char
+        else:
+            others.append(char)
+
+    # Si no hay líder explícito, el primer personaje asume el rol
+    if leader is None:
+        leader = characters[0]
+        others = characters[1:]
+
+    # 5. Extraer atributos del líder
+    leader_attrs = _extract_character_attributes(leader)
+
+    # 6. Extraer atributos de los otros personajes
+    others_attrs = [_extract_character_attributes(c) for c in others]
+
+    # 7. Calcular cada habilidad con promedio ponderado
+    skills = {}
+
+    # Detección: INT + VOL
+    skills["skill_deteccion"] = _calculate_weighted_skill(
+        leader_attrs["intelecto"] + leader_attrs["voluntad"],
+        [a["intelecto"] + a["voluntad"] for a in others_attrs]
+    )
+
+    # Radares: INT + VOL (misma fórmula que Detección)
+    skills["skill_radares"] = _calculate_weighted_skill(
+        leader_attrs["intelecto"] + leader_attrs["voluntad"],
+        [a["intelecto"] + a["voluntad"] for a in others_attrs]
+    )
+
+    # Exploración: INT + AGI
+    skills["skill_exploracion"] = _calculate_weighted_skill(
+        leader_attrs["intelecto"] + leader_attrs["agilidad"],
+        [a["intelecto"] + a["agilidad"] for a in others_attrs]
+    )
+
+    # Sigilo: AGI + VOL
+    skills["skill_sigilo"] = _calculate_weighted_skill(
+        leader_attrs["agilidad"] + leader_attrs["voluntad"],
+        [a["agilidad"] + a["voluntad"] for a in others_attrs]
+    )
+
+    # Evasión de sensores: TEC + INT
+    skills["skill_evasion_sensores"] = _calculate_weighted_skill(
+        leader_attrs["tecnica"] + leader_attrs["intelecto"],
+        [a["tecnica"] + a["intelecto"] for a in others_attrs]
+    )
+
+    # 8. Persistir en base de datos
+    if update_unit_skills(unit_id, skills):
+        result["success"] = True
+        result["skills"] = skills
+        result["message"] = "Skills updated successfully"
+    else:
+        result["message"] = "Failed to persist skills"
+
+    return result
+
+
+def _extract_character_attributes(member: Dict[str, Any]) -> Dict[str, int]:
+    """
+    V17.0: Extrae los atributos de un miembro tipo character.
+
+    Los atributos vienen en member['details']['habilidades'] pero necesitamos
+    acceder a los atributos base. Como _hydrate_member_names ya carga stats_json,
+    extraemos desde ahí.
+
+    Args:
+        member: Dict del miembro con estructura de UnitMemberSchema
+
+    Returns:
+        Dict con los 6 atributos primarios (default 5 si no existen)
+    """
+    defaults = {
+        "fuerza": 5,
+        "agilidad": 5,
+        "tecnica": 5,
+        "intelecto": 5,
+        "voluntad": 5,
+        "presencia": 5
+    }
+
+    details = member.get("details", {})
+    if not details:
+        return defaults
+
+    # Los atributos pueden venir en diferentes estructuras según la hidratación
+    # Intentamos extraer desde 'atributos' directamente o desde 'habilidades'
+    attrs = details.get("atributos", {})
+
+    if attrs:
+        return {
+            "fuerza": attrs.get("fuerza", 5),
+            "agilidad": attrs.get("agilidad", 5),
+            "tecnica": attrs.get("tecnica", 5),
+            "intelecto": attrs.get("intelecto", 5),
+            "voluntad": attrs.get("voluntad", 5),
+            "presencia": attrs.get("presencia", 5)
+        }
+
+    return defaults
+
+
+def _calculate_weighted_skill(leader_value: int, others_values: list) -> int:
+    """
+    V17.0: Calcula el promedio ponderado de una habilidad.
+
+    Fórmula: (Valor_Líder * W + Suma_Otros) / (W + Cantidad_Otros)
+    Donde W = LEADER_WEIGHT (4)
+
+    Args:
+        leader_value: Valor calculado para el líder
+        others_values: Lista de valores de los otros personajes
+
+    Returns:
+        Valor entero redondeado al más cercano
+    """
+    others_sum = sum(others_values)
+    others_count = len(others_values)
+
+    weighted_sum = (leader_value * LEADER_WEIGHT) + others_sum
+    total_weight = LEADER_WEIGHT + others_count
+
+    # Evitar división por cero (no debería ocurrir ya que siempre hay líder)
+    if total_weight == 0:
+        return 0
+
+    return round(weighted_sum / total_weight)

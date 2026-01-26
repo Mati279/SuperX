@@ -125,6 +125,39 @@ def render_troop_row(troop: Any, is_space: bool):
         st.caption(f"ID: {troop_id}")
 
 
+def _render_unit_skills(unit: Any):
+    """
+    V17.0: Renderiza las habilidades colectivas de una unidad en formato compacto.
+    Muestra las 5 habilidades con iconos y valores.
+    """
+    # Extraer habilidades de la unidad
+    skill_deteccion = get_prop(unit, "skill_deteccion", 0)
+    skill_radares = get_prop(unit, "skill_radares", 0)
+    skill_exploracion = get_prop(unit, "skill_exploracion", 0)
+    skill_sigilo = get_prop(unit, "skill_sigilo", 0)
+    skill_evasion = get_prop(unit, "skill_evasion_sensores", 0)
+
+    # Solo mostrar si hay al menos una habilidad > 0
+    if skill_deteccion == 0 and skill_radares == 0 and skill_exploracion == 0 and skill_sigilo == 0 and skill_evasion == 0:
+        return
+
+    st.caption("Habilidades Colectivas:")
+
+    # Renderizar en 5 columnas compactas
+    c1, c2, c3, c4, c5 = st.columns(5)
+
+    with c1:
+        st.metric("👁️ Detección", skill_deteccion, help="INT + VOL")
+    with c2:
+        st.metric("📡 Radares", skill_radares, help="INT + VOL")
+    with c3:
+        st.metric("🔭 Exploración", skill_exploracion, help="INT + AGI")
+    with c4:
+        st.metric("🥷 Sigilo", skill_sigilo, help="AGI + VOL")
+    with c5:
+        st.metric("🛡️ Evasión", skill_evasion, help="TEC + INT")
+
+
 def render_unit_row(
     unit: Any,
     player_id: int,
@@ -207,6 +240,9 @@ def render_unit_row(
             if st.button("⚙️", key=f"manage_unit_{unit_id}", help="Gestionar unidad"):
                 manage_unit_dialog(unit, player_id, available_chars, available_troops)
 
+        # V17.0: Habilidades Colectivas de Unidad
+        _render_unit_skills(unit)
+
         # Lista de miembros
         if members:
             st.caption("Composición:")
@@ -283,6 +319,9 @@ def render_starlanes_section(
             with col2:
                 if st.button("⚙️", key=f"manage_transit_{unit_id}", help="Gestionar unidad"):
                     manage_unit_dialog(unit, player_id, [], [])
+
+            # V17.0: Habilidades Colectivas de Unidad
+            _render_unit_skills(unit)
 
             if members:
                 st.caption("Composición:")
