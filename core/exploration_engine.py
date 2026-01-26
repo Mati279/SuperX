@@ -19,7 +19,7 @@ from data.unit_repository import (
     increment_unit_local_moves
 )
 from data.planet_repository import grant_sector_knowledge, get_sector_by_id
-from data.database import get_supabase, get_service_container
+from data.database import get_supabase
 from data.log_repository import log_event
 
 @dataclass
@@ -73,7 +73,7 @@ def resolve_sector_exploration(
     # 2. Obtener y Validar Sector
     # Se ajusta la consulta para asegurar campos de recursos y nombre
     db = get_supabase()
-    resp = db.table('sectors').select('*, planets(name)').eq('id', sector_id).single().execute()
+    resp = db.table('sectors').select('*, resource_category, luxury_resource, planets(name)').eq('id', sector_id).single().execute()
     
     if not resp.data:
         raise ValueError(f"Sector {sector_id} no encontrado.")
@@ -120,19 +120,11 @@ def resolve_sector_exploration(
     increment_unit_local_moves(unit_id)
 
     if success:
-        # Construcción de narrativa exitosa con recursos
-        res_cat = sector_data.get('resource_category', 'Ninguno')
-        lux_res = sector_data.get('luxury_resource', 'Ninguno')
-        sec_name = sector_data.get('name')
-        
-        narrative = (
-            f"🗺️ Exploración exitosa: {unit.name} ha cartografiado el sector {sec_name}. "
-            f"Recursos: {res_cat} y {lux_res}"
-        )
+        narrative = "Sector cartografiado. Análisis de recursos completado."
         
         # Efecto mecánico: Revelar sector
         grant_sector_knowledge(player_id, sector_id)
-        log_event(narrative, player_id)
+        log_event(f"🗺️ Exploración exitosa: {unit.name} ha cartografiado el sector {sector_data['name']}.", player_id)
 
     else:
         # Penalización Condicional
@@ -150,8 +142,8 @@ def resolve_sector_exploration(
             
             log_event(f"{narrative} ({unit.name})", player_id)
         else:
-            narrative = f"⚠️ Exploración fallida: {unit.name} no pudo obtener datos concluyentes. Acción consumida."
-            log_event(narrative, player_id)
+            narrative = "Interferencia en los sensores. Datos no concluyentes."
+            log_event(f"⚠️ Exploración fallida: {unit.name} no pudo obtener datos. Acción consumida.", player_id)
 
     return ExplorationResult(
         success=success,

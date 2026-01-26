@@ -16,6 +16,7 @@ V14.6: Corrección de cálculo de costos (basa en miembros reales) y marcador vi
 V14.7: Sincronización dinámica de ticks de viaje (Real-time calculation vs World Tick).
 V15.0: Integración de Exploración Táctica de Sectores.
 V15.1: Feedback persistente de exploración y gestión de fatiga.
+V15.2: Integración de @st.fragment y widget MRG. Feedback simplificado.
 """
 
 import streamlit as st
@@ -49,6 +50,7 @@ from data.world_repository import get_world_state
 from services.unit_service import toggle_stealth_mode
 from core.exploration_engine import resolve_sector_exploration, ExplorationResult
 from core.mrg_engine import ResultType
+from ui.mrg_resolution_widget import render_full_mrg_resolution
 
 
 def _inject_movement_css():
@@ -620,37 +622,54 @@ def _render_ring_options(
             st.info("No hay Starlanes conectadas a este sistema.")
 
     with tab4:
-        st.markdown("**⚡ Salto WARP**")
+        st.markdown("**⚡ Motor WARP**")
         action_container = st.container()
-
-        if current_ring > 0:
-            st.warning("WARP desde un anillo planetario tiene penalización de energía x2")
+        
+        st.caption("Salto FTL directo a otro sistema. Consume mucha energía.")
 
         all_systems = get_all_systems_from_db()
-        # V14.0: Filtrar sistemas > WARP_MAX_DISTANCE
-        valid_warp_destinations = []
         
+        # Filtro V14.0: Solo sistemas dentro de rango (30.0) y excluir actual
+        origin_sys_coords = (0, 0, 0) # Fallback, debería buscarse
+        origin_sys_data = get_system_by_id(system_id)
+        if origin_sys_data:
+            origin_sys_coords = (origin_sys_data['x'], origin_sys_data['y'], origin_sys_data['z'])
+
+        warp_targets = []
         for s in all_systems:
             if s['id'] == system_id:
                 continue
-            dist = calculate_euclidean_distance(system_id, s['id'])
+            
+            dist = calculate_euclidean_distance(
+                origin_sys_coords, 
+                (s['x'], s['y'], s['z'])
+            )
+            
             if dist <= WARP_MAX_DISTANCE:
-                valid_warp_destinations.append(s)
+                 warp_targets.append({
+                     'id': s['id'],
+                     'name': s['name'],
+                     'distance': dist
+                 })
         
-        if valid_warp_destinations:
-            sys_options = {s['id']: s.get('name', f"Sistema {s['id']}") for s in valid_warp_destinations}
+        warp_targets.sort(key=lambda x: x['distance'])
+
+        if warp_targets:
+            warp_options = {s['id']: f"{s['name']} (Dist: {s['distance']:.1f})" for s in warp_targets}
+            
             selected_warp_dest = st.selectbox(
-                "Sistema destino",
-                options=list(sys_options.keys()),
-                format_func=lambda x: sys_options.get(x, str(x)),
+                "Sistema destino (WARP)",
+                options=list(warp_options.keys()),
+                format_func=lambda x: warp_options.get(x, str(x)),
                 key="select_warp_space"
             )
 
             if selected_warp_dest:
                 estimate = estimate_travel_time(
-                    system_id, selected_warp_dest,
-                    origin_ring=current_ring,
-                    dest_ring=0,
+                    system_id, 
+                    selected_warp_dest, 
+                    current_ring, 
+                    RING_MAX, 
                     ship_count=real_ship_count
                 )
                 
@@ -662,11 +681,12 @@ def _render_ring_options(
                             system_id=selected_warp_dest,
                             planet_id=None,
                             sector_id=None,
-                            ring=0
+                            ring=RING_MAX # Warp llega al borde
                         )
                         selected_type = MovementType.WARP
         else:
-            st.warning(f"No hay sistemas dentro del rango máximo de Warp ({WARP_MAX_DISTANCE} unidades).")
+            st.warning("No hay sistemas al alcance del Motor WARP (< 30.0 U).")
+
 
     if selected_dest and selected_type:
         return (selected_dest, selected_type, use_boost)
@@ -680,54 +700,47 @@ def _render_stellar_options(
 ) -> Optional[Tuple[DestinationData, MovementType, bool]]:
     """Opciones cuando la unidad está en el Sector Estelar (Ring 0)."""
     st.markdown("#### Opciones de Movimiento")
+    st.info("🌌 Estás en el Sector Estelar Central (Ring 0).")
 
     system_id = unit.location_system_id
     current_ring = 0
-    
-    # V14.6: Calcular naves basado en miembros reales
     real_ship_count = len(unit.members) if unit.members else 1
 
     starlanes = _get_starlanes_from_system(system_id)
-
+    
     selected_dest = None
     selected_type = None
     use_boost = False
 
-    tab1, tab2, tab3 = st.tabs(["Anillos Interiores", "Starlane", "WARP"])
+    tab1, tab2 = st.tabs(["Navegación Intra-Sistema", "Starlane"])
 
     with tab1:
-        st.markdown("**🔄 Mover a Anillo Interior**")
+        st.markdown("**🔄 Ir a un Anillo**")
         action_container = st.container()
 
         valid_rings = _get_valid_rings_for_selector(system_id)
-        selectable_rings = [r for r in valid_rings if r != current_ring]
-
-        ring_labels = {}
-        for r in range(RING_MIN, RING_MAX + 1):
-            ring_labels[r] = f"Anillo {r}"
-            
-        st.info(f"📍 Posición Actual: **Sector Estelar (Ring 0)**")
+        selectable_rings = [r for r in valid_rings if r != 0]
 
         if selectable_rings:
             selected_ring = st.selectbox(
                 "Anillo destino",
                 options=selectable_rings,
-                format_func=lambda x: ring_labels.get(x, f"Ring {x}"),
+                format_func=lambda x: f"Anillo {x}",
                 key="select_ring_stellar"
             )
 
-            if selected_ring is not None:
+            if selected_ring:
                 estimate = estimate_travel_time(
                     system_id, 
                     system_id, 
-                    origin_ring=current_ring, 
+                    origin_ring=0, 
                     dest_ring=selected_ring,
                     ship_count=real_ship_count
                 )
                 
                 with action_container:
                     _render_cost_display(estimate, real_ship_count)
-
+                    
                     if st.button("Iniciar Maniobra", type="primary", key="btn_ring_stellar", use_container_width=True):
                         selected_dest = DestinationData(
                             system_id=system_id,
@@ -737,7 +750,7 @@ def _render_stellar_options(
                         )
                         selected_type = MovementType.INTER_RING
         else:
-            st.info("No hay anillos poblados en este sistema.")
+            st.info("Este sistema no tiene anillos explorables.")
 
     with tab2:
         st.markdown("**🛤️ Usar Starlane**")
@@ -760,12 +773,12 @@ def _render_stellar_options(
             if selected_lane_dest:
                 # Checkbox para Boost
                 boost_check = st.checkbox("🔥 Sobrecarga de Motores (Boost)", key="boost_check_stellar")
-                
+
                 estimate = estimate_travel_time(
                     system_id, 
                     selected_lane_dest, 
-                    current_ring, 
-                    0,
+                    origin_ring=0, 
+                    dest_ring=0,
                     ship_count=real_ship_count,
                     use_boost=boost_check
                 )
@@ -773,7 +786,7 @@ def _render_stellar_options(
                 with action_container:
                     if estimate.get('can_boost') and not boost_check:
                          st.info("💡 Ruta larga detectada. Puedes usar Sobrecarga de Motores para reducir el tiempo.")
-
+                         
                     _render_cost_display(estimate, real_ship_count)
 
                     if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane_stellar", use_container_width=True):
@@ -788,52 +801,6 @@ def _render_stellar_options(
         else:
             st.info("No hay Starlanes conectadas a este sistema.")
 
-    with tab3:
-        st.markdown("**⚡ Salto WARP**")
-        st.success("WARP desde el Sector Estelar: Costo de energía normal (sin penalización)")
-        action_container = st.container()
-
-        all_systems = get_all_systems_from_db()
-        # V14.0: Filtrar sistemas > WARP_MAX_DISTANCE
-        valid_warp_destinations = []
-        for s in all_systems:
-            if s['id'] == system_id:
-                continue
-            dist = calculate_euclidean_distance(system_id, s['id'])
-            if dist <= WARP_MAX_DISTANCE:
-                valid_warp_destinations.append(s)
-
-        if valid_warp_destinations:
-            sys_options = {s['id']: s.get('name', f"Sistema {s['id']}") for s in valid_warp_destinations}
-            selected_warp_dest = st.selectbox(
-                "Sistema destino",
-                options=list(sys_options.keys()),
-                format_func=lambda x: sys_options.get(x, str(x)),
-                key="select_warp_stellar"
-            )
-
-            if selected_warp_dest:
-                estimate = estimate_travel_time(
-                    system_id, selected_warp_dest,
-                    origin_ring=current_ring,
-                    dest_ring=0,
-                    ship_count=real_ship_count
-                )
-                
-                with action_container:
-                    _render_cost_display(estimate, real_ship_count)
-
-                    if st.button("Iniciar Salto WARP", type="primary", key="btn_warp_stellar", use_container_width=True):
-                        selected_dest = DestinationData(
-                            system_id=selected_warp_dest,
-                            planet_id=None,
-                            sector_id=None,
-                            ring=0
-                        )
-                        selected_type = MovementType.WARP
-        else:
-            st.warning(f"No hay sistemas dentro del rango máximo de Warp ({WARP_MAX_DISTANCE} unidades).")
-
     if selected_dest and selected_type:
         return (selected_dest, selected_type, use_boost)
     return None
@@ -841,87 +808,29 @@ def _render_stellar_options(
 
 def _render_transit_info(unit: UnitSchema):
     """Muestra información cuando la unidad está en tránsito."""
-    # Obtener el Tick Actual Global para cálculos dinámicos
+    st.info("🚀 La unidad está actualmente en tránsito.")
+    
     world_state = get_world_state()
     current_tick = world_state.get('current_tick', 0)
     
     # Calcular ticks restantes reales
-    real_ticks_remaining = unit.transit_ticks_remaining # Fallback
+    ticks_remaining = 0
     if unit.transit_end_tick:
-        real_ticks_remaining = max(0, unit.transit_end_tick - current_tick)
+        ticks_remaining = max(0, unit.transit_end_tick - current_tick)
+        
+    st.write(f"**Destino:** Sistema {unit.transit_destination_system_id}")
+    st.write(f"**Llegada estimada:** En {ticks_remaining} tick(s)")
     
-    is_local_transit = unit.transit_origin_system_id == unit.transit_destination_system_id
-    
-    if is_local_transit:
-        # Intento de recuperar datos de anillo destino
-        dest_ring = getattr(unit, 'transit_destination_ring', None)
-        if dest_ring is None:
-            try:
-                if hasattr(unit, 'transit_destination_data') and unit.transit_destination_data:
-                    data = unit.transit_destination_data
-                    if isinstance(data, str):
-                        data = json.loads(data)
-                    dest_ring = data.get('ring', '?')
-                else:
-                    dest_ring = '?'
-            except:
-                dest_ring = '?'
-
-        current_ring_val = unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring
-
-        st.info("Maniobra de Cambio de Anillo (SCO)")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            origin_sys = get_system_by_id(unit.transit_origin_system_id)
-            sys_name = origin_sys.get('name', '???') if origin_sys else '???'
-            st.markdown(f"**Operando en Sistema:** {sys_name}")
-            
-        with col2:
-            st.metric("Trayectoria", f"R[{current_ring_val}] → R[{dest_ring}]")
-            st.caption(f"Ticks Restantes: {real_ticks_remaining}")
-            
-    else:
-        st.warning("Esta unidad está en tránsito interestelar")
-
-        origin_sys = get_system_by_id(unit.transit_origin_system_id)
-        dest_sys = get_system_by_id(unit.transit_destination_system_id)
-
-        origin_name = origin_sys.get('name', '???') if origin_sys else '???'
-        dest_name = dest_sys.get('name', '???') if dest_sys else '???'
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Origen", origin_name)
-        with col2:
-            st.metric("Destino", dest_name)
-        with col3:
-            st.metric("Ticks Restantes", real_ticks_remaining)
-
-    if unit.transit_end_tick and unit.transit_origin_system_id:
-        # Estimación de progreso basada en diferencia de Ticks
-        # Si no tenemos 'start_tick' explícito, usamos el estado de la DB como referencia aproximada
-        # total_ticks = real_remaining + ticks_transcurridos
-        # Usamos unit.transit_ticks_remaining (DB) como cota superior probable si real < DB
-        
-        # Fórmula simple visual: asumimos que unit.transit_ticks_remaining en DB
-        # era el total al momento del último update si no ha pasado el tick,
-        # o usamos una estimación de avance.
-        
-        # Mejor aproximación: Usar diferencia con el valor almacenado en DB vs cálculo real
-        # Si DB dice 5 y Real dice 3, hemos avanzado 2 ticks desde la lectura.
-        
-        # Para evitar saltos extraños, definimos el denominador (total)
-        # como el máximo entre lo que dice la DB y lo real + 1.
-        estimated_total = max(unit.transit_ticks_remaining, real_ticks_remaining + 1)
-        
-        if estimated_total > 0:
-            progress = 1 - (real_ticks_remaining / estimated_total)
-            st.progress(min(1.0, max(0.0, progress)), text=f"Progreso del viaje: {progress*100:.0f}%")
-
-    st.info("Los controles de movimiento estarán disponibles cuando la unidad llegue a su destino.")
+    # Barra de progreso (simulada)
+    if unit.transit_start_tick and unit.transit_end_tick:
+        total = unit.transit_end_tick - unit.transit_start_tick
+        if total > 0:
+            elapsed = current_tick - unit.transit_start_tick
+            progress = min(1.0, max(0.0, elapsed / total))
+            st.progress(progress)
 
 
+@st.fragment
 def render_movement_console():
     """Punto de entrada principal - Página de Control de Movimiento."""
     from .state import get_player
@@ -979,41 +888,28 @@ def render_movement_console():
         if is_stealth:
             st.caption("🔒 En modo sigilo, los movimientos locales están restringidos a 1 por tick.")
 
-    # --- V15.1: Feedback Visual Persistente (Exploración) ---
+    # --- V15.2: Feedback Visual Persistente (Exploración) ---
     if 'last_exploration_result' in st.session_state:
         res = st.session_state.last_exploration_result
         if res.unit_id == unit.id: # Solo mostrar si corresponde a la unidad actual
             if res.success:
-                # Extraer recursos del diccionario details
-                details = res.details
-                resource_html = ""
-                # Lista de posibles claves de recursos en la DB
-                possible_resources = {
-                    'material_yield': 'Materiales',
-                    'fuel_yield': 'Combustible', 
-                    'organic_yield': 'Orgánicos',
-                    'energy_yield': 'Energía',
-                    'scientific_yield': 'Datos Científicos'
-                }
+                # Éxito: Mostrar detalles de recursos
+                sec_name = res.details.get('name', f"Sector {res.sector_id}")
+                res_cat = res.details.get('resource_category', 'Desconocido')
+                lux_res = res.details.get('luxury_resource', 'Desconocido')
                 
-                found_resources = []
-                for key, label in possible_resources.items():
-                    val = details.get(key)
-                    if val and isinstance(val, (int, float)) and val > 0:
-                        found_resources.append(f"{label}: {val}")
-                
-                res_txt = " | ".join(found_resources) if found_resources else "Sin recursos significativos detectados."
-                
-                st.success(f"📍 **Exploración Exitosa**\n\n{res.narrative}")
-                st.markdown(f"**Recursos Identificados:** {res_txt}")
+                st.success(f"📍 **Exploración Exitosa**\n\nSector {sec_name} cartografiado. Recursos: {res_cat}, {lux_res}")
             else:
-                # Feedback de error con diferenciación crítica
+                # Fallo: Diferenciar crítico de normal
                 is_critical = res.mrg_result.result_type in [ResultType.CRITICAL_FAILURE, ResultType.TOTAL_FAILURE]
                 
-                error_prefix = "⚠️ **FALLO CRÍTICO DE SENSORES**" if is_critical else "⚠️ **Exploración Fallida**"
-                burn_msg = "\n\n**🛑 La unidad ha perdido el resto de sus acciones este turno.**" if is_critical else ""
-                
-                st.error(f"{error_prefix}\n\n{res.narrative}{burn_msg}")
+                if is_critical:
+                    st.error("❌ **FALLO CRÍTICO**: La unidad se ha perdido, pierde sus acciones por el resto del turno.")
+                else:
+                    st.error("⚠️ **Exploración fallida**: Datos no concluyentes.")
+            
+            # Widget de resolución MRG en el fragmento
+            render_full_mrg_resolution(res.mrg_result)
 
     # --- V14.6: Lógica de Límites de Movimiento (Visualización Estricta) ---
     if unit.status == UnitStatus.STEALTH_MODE:
