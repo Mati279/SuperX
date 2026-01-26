@@ -12,6 +12,7 @@ V13.6: Soporte UI para saltos largos con costo de energía.
 V14.0: Soporte UI para Sobrecarga de Motores (Boost), filtrado de Warp > 30 y visualización de costos de flota.
 V14.2: Panel de Modos de Unidad (Sigilo) y restricciones visuales.
 V14.5: Visualización estricta de límites de movimiento para Stealth (1/1).
+V14.6: Corrección de cálculo de costos (basa en miembros reales) y marcador visual Movs X/Y.
 """
 
 import streamlit as st
@@ -191,8 +192,9 @@ def _get_location_display(unit: UnitSchema) -> Dict[str, str]:
 
 def _render_unit_info(unit: UnitSchema, location_info: Dict[str, str]):
     """Renderiza información de la unidad seleccionada."""
-    # V14.0: Mostrar Ship Count
-    ship_count_display = f" | 🚀 Naves: <strong>{unit.ship_count}</strong>"
+    # V14.6: Mostrar conteo real de miembros como naves
+    actual_ship_count = len(unit.members) if unit.members else 1
+    ship_count_display = f" | 🚀 Naves: <strong>{actual_ship_count}</strong>"
     
     st.markdown(f"""
     <div class="movement-header">
@@ -230,6 +232,7 @@ def _render_cost_display(estimate: Dict[str, Any], ship_count: int = 1):
         <div class="cost-display">
             Tiempo: <strong>{ticks} Tick(s)</strong> |
             Energía: <span class="{energy_class}"><strong>{energy}</strong> células{penalty_text}</span>
+            <br><span style="font-size:0.8em; color:#888;">(Cálculo para {ship_count} naves)</span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -445,11 +448,15 @@ def _render_ring_options(
     """
     Opciones cuando la unidad está en un anillo.
     V14.0: Filtro Warp > 30 y opción Boost para Starlanes.
+    V14.6: Uso de miembros reales para cálculo de flota.
     """
     st.markdown("#### Opciones de Movimiento")
 
     system_id = unit.location_system_id
     current_ring = unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring
+
+    # V14.6: Calcular naves basado en miembros reales
+    real_ship_count = len(unit.members) if unit.members else 1
 
     planets_in_system = get_planets_by_system_id(system_id)
     planets_in_ring = [p for p in planets_in_system if p.get('orbital_ring') == current_ring]
@@ -525,11 +532,11 @@ def _render_ring_options(
                     system_id, 
                     origin_ring=current_ring, 
                     dest_ring=selected_ring,
-                    ship_count=unit.ship_count
+                    ship_count=real_ship_count
                 )
                 
                 with action_container:
-                    _render_cost_display(estimate, unit.ship_count)
+                    _render_cost_display(estimate, real_ship_count)
                     
                     if st.button("Iniciar Maniobra", type="primary", key="btn_ring_space", use_container_width=True):
                         selected_dest = DestinationData(
@@ -569,7 +576,7 @@ def _render_ring_options(
                     selected_lane_dest, 
                     current_ring, 
                     0, 
-                    ship_count=unit.ship_count,
+                    ship_count=real_ship_count,
                     use_boost=boost_check
                 )
                 
@@ -577,7 +584,7 @@ def _render_ring_options(
                     if estimate.get('can_boost') and not boost_check:
                          st.info("💡 Ruta larga detectada. Puedes usar Sobrecarga de Motores para reducir el tiempo.")
                     
-                    _render_cost_display(estimate, unit.ship_count)
+                    _render_cost_display(estimate, real_ship_count)
 
                     if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane_space", use_container_width=True):
                         selected_dest = DestinationData(
@@ -623,11 +630,11 @@ def _render_ring_options(
                     system_id, selected_warp_dest,
                     origin_ring=current_ring,
                     dest_ring=0,
-                    ship_count=unit.ship_count
+                    ship_count=real_ship_count
                 )
                 
                 with action_container:
-                    _render_cost_display(estimate, unit.ship_count)
+                    _render_cost_display(estimate, real_ship_count)
 
                     if st.button("Iniciar Salto WARP", type="primary", key="btn_warp_space", use_container_width=True):
                         selected_dest = DestinationData(
@@ -655,6 +662,9 @@ def _render_stellar_options(
 
     system_id = unit.location_system_id
     current_ring = 0
+    
+    # V14.6: Calcular naves basado en miembros reales
+    real_ship_count = len(unit.members) if unit.members else 1
 
     starlanes = _get_starlanes_from_system(system_id)
 
@@ -691,11 +701,11 @@ def _render_stellar_options(
                     system_id, 
                     origin_ring=current_ring, 
                     dest_ring=selected_ring,
-                    ship_count=unit.ship_count
+                    ship_count=real_ship_count
                 )
                 
                 with action_container:
-                    _render_cost_display(estimate, unit.ship_count)
+                    _render_cost_display(estimate, real_ship_count)
 
                     if st.button("Iniciar Maniobra", type="primary", key="btn_ring_stellar", use_container_width=True):
                         selected_dest = DestinationData(
@@ -735,7 +745,7 @@ def _render_stellar_options(
                     selected_lane_dest, 
                     current_ring, 
                     0,
-                    ship_count=unit.ship_count,
+                    ship_count=real_ship_count,
                     use_boost=boost_check
                 )
                 
@@ -743,7 +753,7 @@ def _render_stellar_options(
                     if estimate.get('can_boost') and not boost_check:
                          st.info("💡 Ruta larga detectada. Puedes usar Sobrecarga de Motores para reducir el tiempo.")
 
-                    _render_cost_display(estimate, unit.ship_count)
+                    _render_cost_display(estimate, real_ship_count)
 
                     if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane_stellar", use_container_width=True):
                         selected_dest = DestinationData(
@@ -786,11 +796,11 @@ def _render_stellar_options(
                     system_id, selected_warp_dest,
                     origin_ring=current_ring,
                     dest_ring=0,
-                    ship_count=unit.ship_count
+                    ship_count=real_ship_count
                 )
                 
                 with action_container:
-                    _render_cost_display(estimate, unit.ship_count)
+                    _render_cost_display(estimate, real_ship_count)
 
                     if st.button("Iniciar Salto WARP", type="primary", key="btn_warp_stellar", use_container_width=True):
                         selected_dest = DestinationData(
@@ -927,20 +937,25 @@ def render_movement_console():
         if is_stealth:
             st.caption("🔒 En modo sigilo, los movimientos locales están restringidos a 1 por tick.")
 
+    # --- V14.6: Lógica de Límites de Movimiento (Visualización Estricta) ---
+    if unit.status == UnitStatus.STEALTH_MODE:
+        limit_count = 1
+    else:
+        limit_count = MAX_LOCAL_MOVES_PER_TURN
+    
+    # Texto para mostrar en la UI
+    limit_txt = f"Movs: {unit.local_moves_count}/{limit_count}"
+
     if unit.movement_locked:
-        # V14.5: Lógica de visualización para límite dinámico con STEALTH estricto (1/1)
-        if unit.status == UnitStatus.STEALTH_MODE:
-            limit_count = 1
-        else:
-            limit_count = MAX_LOCAL_MOVES_PER_TURN
-        
-        if unit.local_moves_count < limit_count:
-             st.info(f"⚠️ Unidad parcialmente fatigada. Queda **{limit_count - unit.local_moves_count}** movimiento local disponible este tick.")
-        else:
-            st.warning("🔒 Esta unidad ha alcanzado su límite de movimientos y está bloqueada hasta el próximo tick.")
-            if unit.local_moves_count > 0:
-                 st.caption(f"Movimientos locales realizados: {unit.local_moves_count}/{limit_count}")
-            return
+        st.warning(f"🔒 Movimiento Bloqueado ({limit_txt}). Espera al siguiente tick.")
+        if unit.local_moves_count > 0:
+             st.caption(f"Movimientos locales realizados: {unit.local_moves_count}/{limit_count}")
+        return
+
+    # Visualización de fatiga/estado antes de las opciones
+    if unit.local_moves_count > 0:
+         remaining = limit_count - unit.local_moves_count
+         st.info(f"⚠️ Unidad parcialmente fatigada. {limit_txt} (Restantes: {remaining})")
 
     movement_result: Optional[Tuple[DestinationData, MovementType, bool]] = None
 
