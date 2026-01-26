@@ -10,6 +10,7 @@ V13.3: Refactor visualización SCO (Inter-Ring).
 V13.5: Persistencia del diálogo tras movimiento local.
 V13.6: Soporte UI para saltos largos con costo de energía.
 V14.0: Soporte UI para Sobrecarga de Motores (Boost), filtrado de Warp > 30 y visualización de costos de flota.
+V14.2: Panel de Modos de Unidad (Sigilo) y restricciones visuales.
 """
 
 import streamlit as st
@@ -38,7 +39,9 @@ from core.movement_constants import (
     RING_STELLAR, RING_MIN, RING_MAX, MAX_LOCAL_MOVES_PER_TURN, 
     WARP_MAX_DISTANCE
 )
+from core.detection_constants import DISORIENTED_MAX_LOCAL_MOVES
 from data.world_repository import get_world_state
+from services.unit_service import toggle_stealth_mode
 
 
 def _inject_movement_css():
@@ -84,6 +87,7 @@ def _inject_movement_css():
     .loc-orbit { background: rgba(155,89,182,0.2); color: #9b59b6; }
     .loc-space { background: rgba(69,183,209,0.2); color: #45b7d1; }
     .loc-transit { background: rgba(241,196,15,0.2); color: #f1c40f; }
+    .loc-stealth { background: rgba(50, 50, 50, 0.8); color: #bdc3c7; border: 1px solid #7f8c8d; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -116,6 +120,10 @@ def _get_location_display(unit: UnitSchema) -> Dict[str, str]:
         'status_text': 'Desconocido',
         'status_class': 'loc-space'
     }
+    
+    # Manejo visual de STEALTH
+    if unit.status == UnitStatus.STEALTH_MODE:
+        info['status_class'] = 'loc-stealth'
 
     if unit.status == UnitStatus.TRANSIT:
         origin_sys = get_system_by_id(unit.transit_origin_system_id)
@@ -140,8 +148,9 @@ def _get_location_display(unit: UnitSchema) -> Dict[str, str]:
     ring_val = unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring
     if ring_val == 0:
         info['ring'] = 'Sector Estelar'
-        info['status_text'] = 'Sector Estelar (Espacio Profundo)'
-        info['status_class'] = 'loc-space'
+        if unit.status != UnitStatus.STEALTH_MODE:
+            info['status_text'] = 'Sector Estelar (Espacio Profundo)'
+            info['status_class'] = 'loc-space'
     else:
         info['ring'] = f'Anillo {ring_val}'
 
@@ -156,18 +165,25 @@ def _get_location_display(unit: UnitSchema) -> Dict[str, str]:
             if sector_data:
                 sector_type = sector_data.get('sector_type', 'Desconocido')
                 info['sector'] = sector_type
-                if sector_type == 'Orbital':
-                    info['status_text'] = f'Órbita de {info["planet"]}'
-                    info['status_class'] = 'loc-orbit'
-                else:
-                    info['status_text'] = f'{sector_type} - {info["planet"]}'
-                    info['status_class'] = 'loc-surface'
+                if unit.status != UnitStatus.STEALTH_MODE:
+                    if sector_type == 'Orbital':
+                        info['status_text'] = f'Órbita de {info["planet"]}'
+                        info['status_class'] = 'loc-orbit'
+                    else:
+                        info['status_text'] = f'{sector_type} - {info["planet"]}'
+                        info['status_class'] = 'loc-surface'
     elif unit.location_planet_id:
-        info['status_text'] = f'Órbita de {info["planet"]}'
-        info['status_class'] = 'loc-orbit'
+         if unit.status != UnitStatus.STEALTH_MODE:
+            info['status_text'] = f'Órbita de {info["planet"]}'
+            info['status_class'] = 'loc-orbit'
     elif ring_val > 0:
-        info['status_text'] = f'Anillo {ring_val} - Espacio'
-        info['status_class'] = 'loc-space'
+         if unit.status != UnitStatus.STEALTH_MODE:
+            info['status_text'] = f'Anillo {ring_val} - Espacio'
+            info['status_class'] = 'loc-space'
+
+    # Override texto si está en sigilo
+    if unit.status == UnitStatus.STEALTH_MODE:
+        info['status_text'] = 'Modo Sigilo (Ubicación Oculta)'
 
     return info
 
@@ -888,14 +904,38 @@ def render_movement_console():
 
     location_info = _get_location_display(unit)
     _render_unit_info(unit, location_info)
+    
+    # --- V14.2: SECCIÓN DE MODOS DE LA UNIDAD ---
+    if unit.status != UnitStatus.TRANSIT:
+        st.markdown("### 🎛️ Modos de la Unidad")
+        
+        mode_cols = st.columns([2, 1])
+        with mode_cols[0]:
+            is_stealth = unit.status == UnitStatus.STEALTH_MODE
+            btn_label = "Desactivar Sigilo 📡" if is_stealth else "Activar Sigilo 🥷"
+            btn_type = "secondary" if is_stealth else "primary"
+            
+            if st.button(btn_label, type=btn_type, key="toggle_stealth_btn", use_container_width=True):
+                result = toggle_stealth_mode(unit_id, player_id)
+                if result["success"]:
+                    st.toast(f"Modo actualizado: {result['new_status']}")
+                    st.rerun()
+                else:
+                    st.error(result["error"])
+        
+        if is_stealth:
+            st.caption("🔒 En modo sigilo, los movimientos locales están restringidos a 1 por tick.")
 
     if unit.movement_locked:
-        if unit.local_moves_count < MAX_LOCAL_MOVES_PER_TURN:
-             st.info(f"⚠️ Unidad parcialmente fatigada. Queda **{MAX_LOCAL_MOVES_PER_TURN - unit.local_moves_count}** movimiento local disponible este tick.")
+        # V14.2: Lógica de visualización para límite dinámico
+        limit_count = DISORIENTED_MAX_LOCAL_MOVES if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
+        
+        if unit.local_moves_count < limit_count:
+             st.info(f"⚠️ Unidad parcialmente fatigada. Queda **{limit_count - unit.local_moves_count}** movimiento local disponible este tick.")
         else:
             st.warning("🔒 Esta unidad ha alcanzado su límite de movimientos y está bloqueada hasta el próximo tick.")
             if unit.local_moves_count > 0:
-                 st.caption(f"Movimientos locales realizados: {unit.local_moves_count}/{MAX_LOCAL_MOVES_PER_TURN}")
+                 st.caption(f"Movimientos locales realizados: {unit.local_moves_count}/{limit_count}")
             return
 
     movement_result: Optional[Tuple[DestinationData, MovementType, bool]] = None
@@ -950,9 +990,12 @@ def render_movement_console():
                 updated_unit_data = get_unit_by_id(unit_id)
                 if updated_unit_data:
                     updated_unit = UnitSchema.from_dict(updated_unit_data)
-                    if updated_unit.local_moves_count < MAX_LOCAL_MOVES_PER_TURN:
+                    # V14.2: Usar límite dinámico para decidir si cerrar
+                    limit_count = DISORIENTED_MAX_LOCAL_MOVES if updated_unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
+                    
+                    if updated_unit.local_moves_count < limit_count:
                         should_close = False
-                        remaining = MAX_LOCAL_MOVES_PER_TURN - updated_unit.local_moves_count
+                        remaining = limit_count - updated_unit.local_moves_count
                         st.toast(f"✅ Posición actualizada. Movimientos restantes: {remaining}")
 
             if should_close:

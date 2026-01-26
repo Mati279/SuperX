@@ -1,10 +1,11 @@
-# services/unit_service.py
+# services/unit_service.py (Completo)
 """
 Servicio de Gestión de Unidades V10.0.
 Operaciones de alto nivel para agrupamiento, transferencia y gestión de unidades.
+Actualizado V14.2: Gestión de Modo Sigilo y Resolución de Escapes.
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from core.models import UnitSchema, UnitMemberSchema, UnitStatus
 from core.movement_constants import MAX_UNIT_SLOTS, MIN_CHARACTERS_PER_UNIT
 from data.unit_repository import (
@@ -17,6 +18,7 @@ from data.unit_repository import (
 )
 from data.character_repository import get_character_by_id
 from data.log_repository import log_event
+from data.database import get_supabase
 
 
 def agile_grouping(
@@ -258,6 +260,12 @@ def split_unit(
         return result
 
     new_unit_id = new_unit_data.get("id")
+    
+    # Asignar anillo correcto (create_unit por defecto usa Stellar/0)
+    origin_ring = source_unit.ring.value if hasattr(source_unit.ring, 'value') else source_unit.ring
+    if origin_ring != 0:
+        db = get_supabase()
+        db.table("units").update({"ring": origin_ring}).eq("id", new_unit_id).execute()
 
     # Transferir miembros
     slot = 0
@@ -423,3 +431,142 @@ def get_unit_summary(unit_id: int) -> Optional[Dict[str, Any]]:
         },
         "movement_locked": unit.movement_locked
     }
+
+
+# --- V14.2: LÓGICA DE SIGILO Y ESCAPE ---
+
+def toggle_stealth_mode(unit_id: int, player_id: int) -> Dict[str, Any]:
+    """
+    Alterna el modo de sigilo (STEALTH_MODE) de una unidad.
+    - Si está en GROUND/SPACE -> Pasa a STEALTH_MODE.
+    - Si está en STEALTH_MODE -> Pasa a GROUND/SPACE (según si tiene sector_id).
+    
+    Restricciones:
+    - No puede cambiar si está en tránsito.
+    - Requiere ser dueño de la unidad.
+    """
+    unit_data = get_unit_by_id(unit_id)
+    if not unit_data:
+        return {"success": False, "error": "Unidad no encontrada"}
+    
+    unit = UnitSchema.from_dict(unit_data)
+    
+    if unit.player_id != player_id:
+        return {"success": False, "error": "No tienes control de la unidad"}
+    
+    if unit.status == UnitStatus.TRANSIT:
+        return {"success": False, "error": "No puedes activar sigilo en tránsito"}
+    
+    new_status = None
+    message = ""
+    
+    if unit.status == UnitStatus.STEALTH_MODE:
+        # Desactivar sigilo
+        if unit.location_sector_id is not None:
+            new_status = UnitStatus.GROUND
+        else:
+            new_status = UnitStatus.SPACE
+        message = f"📡 Modo Sigilo DESACTIVADO para '{unit.name}'"
+    else:
+        # Activar sigilo
+        new_status = UnitStatus.STEALTH_MODE
+        message = f"🥷 Modo Sigilo ACTIVADO para '{unit.name}'"
+        
+    # Actualizar DB
+    success = update_unit_status(unit_id, new_status.value)
+    
+    if success:
+        log_event(message, player_id)
+        return {"success": True, "new_status": new_status.value}
+    
+    return {"success": False, "error": "Error actualizando estado"}
+
+
+def apply_escape_results(
+    source_unit_id: int,
+    pursuer_unit_id: int,
+    escape_results: Tuple[List[UnitMemberSchema], List[UnitMemberSchema]],
+    player_id: int
+) -> Dict[str, Any]:
+    """
+    Aplica los resultados de una maniobra de escape/caza.
+    
+    Args:
+        source_unit_id: Unidad original que intenta escapar.
+        pursuer_unit_id: Unidad cazadora.
+        escape_results: Tupla (escaped_members, captured_members).
+        player_id: Dueño de la unidad que escapa.
+        
+    Acciones:
+    1. Miembros escapados -> Se mueven a una NUEVA unidad con movimiento libre.
+    2. Miembros capturados (remanente) -> Se quedan en unidad original, quedan DESORIENTADOS.
+    3. Unidad cazadora -> Queda DESORIENTADA (fatiga de persecución).
+    """
+    escaped_members, captured_members = escape_results
+    
+    result_log = {
+        "escaped_unit_id": None,
+        "captured_unit_id": source_unit_id,
+        "pursuer_unit_id": pursuer_unit_id
+    }
+    
+    db = get_supabase()
+    
+    # 1. Procesar Escapados
+    if escaped_members:
+        # Preparar lista para split_unit
+        members_to_split = [
+            {"entity_type": m.entity_type, "entity_id": m.entity_id}
+            for m in escaped_members
+        ]
+        
+        # Validar líder para la nueva unidad
+        has_leader = any(m.entity_type == 'character' for m in escaped_members)
+        if not has_leader:
+            # Caso borde: Si escapan solo tropas, no pueden formar unidad válida por reglas actuales.
+            # En V14.2, si esto pasa, se considera que se dispersan y regresan a la reserva (o se pierden).
+            # Por simplicidad del MVP, forzamos que se queden capturados si no hay líder.
+            log_event(f"⚠️ Tropas escaparon pero sin líder. Regresan a la formación.", player_id)
+            captured_members.extend(escaped_members)
+            escaped_members.clear()
+        else:
+            unit_name_source = get_unit_by_id(source_unit_id).get('name', 'Unidad')
+            new_name = f"{unit_name_source} (Remanente)"
+            
+            split_res = split_unit(source_unit_id, new_name, members_to_split, player_id)
+            
+            if split_res["success"]:
+                new_unit_id = split_res["new_unit_id"]
+                result_log["escaped_unit_id"] = new_unit_id
+                
+                # Regla V14.2: Unidad escapada tiene movimiento gratis (movement_locked=False, local_moves=0)
+                # Actualización directa por DB ya que no hay función específica en repo para esto
+                db.table("units").update({
+                    "movement_locked": False,
+                    "local_moves_count": 0,
+                    "disoriented": False # Escaparon bien
+                }).eq("id", new_unit_id).execute()
+                
+                log_event(f"💨 '{new_name}' ha escapado con éxito y se reagrupa.", player_id)
+    
+    # 2. Procesar Capturados (Unidad Original)
+    if captured_members:
+        # Se quedan en la unidad original, que queda DESORIENTADA
+        db.table("units").update({
+            "disoriented": True
+        }).eq("id", source_unit_id).execute()
+        
+        unit_name = get_unit_by_id(source_unit_id).get('name', 'Unidad')
+        log_event(f"😵 Unidad '{unit_name}' no logró evadir totalmente y queda DESORIENTADA.", player_id)
+        
+    # 3. Procesar Cazadores
+    # Regla V14.2: La persecución agota, los cazadores también quedan DESORIENTADOS
+    db.table("units").update({
+        "disoriented": True
+    }).eq("id", pursuer_unit_id).execute()
+    
+    pursuer = get_unit_by_id(pursuer_unit_id)
+    if pursuer:
+        log_event(f"😓 Unidad '{pursuer.get('name')}' queda DESORIENTADA tras la persecución.", pursuer.get('player_id'))
+
+    return result_log

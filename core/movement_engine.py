@@ -15,6 +15,7 @@ Refactorizado V13.3: Fix bug de llegada a Ring 0 en tránsitos locales y manejo 
 Refactorizado V13.4: Persistencia total de anillo destino en Data Layer.
 Actualizado V13.5: Soporte para saltos Inter-Ring largos con costo de energía.
 Actualizado V14.0: Soporte para ship_count, Starlane Boost y límites de Warp.
+Actualizado V14.2: Restricción de movimientos locales para unidades en STEALTH_MODE.
 """
 
 from typing import Optional, Dict, Any, Tuple, List
@@ -38,8 +39,10 @@ from core.movement_constants import (
     WARP_TICKS_BASE,
     WARP_TICKS_PER_10_DISTANCE,
     WARP_MAX_DISTANCE,
-    MOVEMENT_LOCK_ON_ORBIT_CHANGE
+    MOVEMENT_LOCK_ON_ORBIT_CHANGE,
+    MAX_LOCAL_MOVES_PER_TURN
 )
+from core.detection_constants import DISORIENTED_MAX_LOCAL_MOVES
 from data.unit_repository import (
     get_unit_by_id,
     start_unit_transit,
@@ -286,6 +289,7 @@ def validate_movement_request(
     """
     Valida que un movimiento sea posible.
     V14.0: Validación de distancia máxima de Warp (30.0).
+    V14.2: Restricción de movimientos locales para unidades en Sigilo.
     """
     # Validar propiedad de la unidad
     if unit.player_id != player_id:
@@ -321,16 +325,25 @@ def validate_movement_request(
     # Validar bloqueo de movimiento (movement_locked)
     if unit.movement_locked:
         allow_override = False
-        if is_local and unit.local_moves_count < 2:
+        
+        # V14.2: Lógica de límite dinámica
+        local_limit = MAX_LOCAL_MOVES_PER_TURN
+        if unit.status == UnitStatus.STEALTH_MODE:
+             local_limit = DISORIENTED_MAX_LOCAL_MOVES
+        
+        if is_local and unit.local_moves_count < local_limit:
             allow_override = True
         
         if not allow_override:
             return False, "La unidad no puede moverse este tick (movimiento bloqueado o sin acciones disponibles)"
 
-    # Restricción 1: Límite de movimientos locales (Max 2)
+    # Restricción 1: Límite de movimientos locales
     if is_local:
-        if unit.local_moves_count >= 2:
-            return False, f"Límite de movimientos locales alcanzado ({unit.local_moves_count}/2). Espera al próximo tick."
+        # V14.2: Si está en Stealth, solo 1 movimiento local. Si no, 2 (incluso si está desorientada, por regla explícita).
+        limit_count = DISORIENTED_MAX_LOCAL_MOVES if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
+        
+        if unit.local_moves_count >= limit_count:
+            return False, f"Límite de movimientos locales alcanzado ({unit.local_moves_count}/{limit_count}). Espera al próximo tick."
         
         # Validación Órbita <-> Anillo (Constraint estricto)
         if unit.location_planet_id is not None and destination.planet_id is None:

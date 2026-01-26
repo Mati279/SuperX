@@ -1,4 +1,4 @@
-# core/detection_engine.py
+# core/detection_engine.py (Completo)
 """
 Motor de Detección V14.1.
 Implementa checks de detección entre unidades usando MRG 2d50.
@@ -889,6 +889,7 @@ def resolve_mutual_detection(
     IMPORTANTE:
     - Las entidades NO reveladas inician cualquier combate posterior en estado HIDDEN
     - Si una unidad es detectada mientras estaba en STEALTH_MODE, entra como 'disoriented'
+    - V14.2: Si hay TOTAL_FAILURE (pifia), la unidad se desorienta automáticamente.
     """
     # Detección A -> B
     result_a_to_b = resolve_detection_round(unit_a, unit_b, player_a_id)
@@ -905,6 +906,17 @@ def resolve_mutual_detection(
         outcome = DetectionOutcome.AMBUSH_B
     else:
         outcome = DetectionOutcome.MUTUAL_STEALTH
+
+    # V14.2: Lógica de Fallo Total (Pifia) -> Desorientación
+    # Si A pifia al detectar a B, A se desorienta
+    if result_a_to_b.mrg_result.result_type == ResultType.TOTAL_FAILURE:
+        mark_unit_disoriented(unit_a)
+        log_event(f"😵 Fallo crítico en detección: {unit_a.name} queda desorientada", player_a_id)
+
+    # Si B pifia al detectar a A, B se desorienta
+    if result_b_to_a.mrg_result.result_type == ResultType.TOTAL_FAILURE:
+        mark_unit_disoriented(unit_b)
+        log_event(f"😵 Fallo crítico en detección: {unit_b.name} queda desorientada", player_b_id)
 
     # Compilar entidades reveladas
     unit_a_revealed = result_b_to_a.entities_revealed  # A revelado a B
@@ -968,15 +980,17 @@ def mark_unit_disoriented(
     Marca una unidad como desacomodada (disoriented).
 
     Consecuencias:
-    - Restricción a 1 movimiento local por tick
+    - Restricción a 1 movimiento local por tick (si está en stealth)
     - Puede iniciar combate con desventaja
 
     Se aplica cuando:
     - La unidad estaba en STEALTH_MODE y fue detectada
+    - Fallo crítico (Pifia) en detección
     """
+    unit.disoriented = True
+    
     if revealed_while_stealth:
-        unit.disoriented = True
-        # Resetear status de sigilo al estado base
+        # Resetear status de sigilo al estado base si fue revelada
         if unit.status == UnitStatus.STEALTH_MODE:
             # Determinar nuevo estado según ubicación
             if unit.location_sector_id is not None:
@@ -1123,6 +1137,7 @@ def prepare_combat_state(
     Marca:
     - Entidades no reveladas como HIDDEN (pueden escapar automáticamente)
     - Unidad como disoriented si fue emboscada mientras estaba en STEALTH_MODE
+    - V14.2: Unidad como disoriented si fue revelada mientras estaba en STEALTH_MODE (aunque no fuera emboscada)
 
     Returns:
         Dict con estado de combate preparado para el motor de combate
@@ -1133,8 +1148,9 @@ def prepare_combat_state(
     # Determinar si la unidad estaba en modo sigilo
     was_in_stealth = unit.status == UnitStatus.STEALTH_MODE
 
-    # Marcar disoriented si fue emboscada mientras estaba en sigilo
-    unit_disoriented = was_ambushed and was_in_stealth
+    # V14.2: Se desorienta si fue emboscada en sigilo O si fue revelada en sigilo
+    is_revealed = len(revealed_entities) > 0
+    unit_disoriented = unit.disoriented or (was_in_stealth and (was_ambushed or is_revealed))
 
     return {
         "unit_id": unit.id,
