@@ -43,7 +43,7 @@ from core.prestige_engine import (
 # IMPORT V10.0: Motores de Movimiento y Detección
 from core.movement_engine import process_transit_arrivals
 from core.detection_engine import process_detection_phase
-from data.unit_repository import reset_all_movement_locks
+from data.unit_repository import reset_all_movement_locks, decrement_transit_ticks
 
 # Forzamos la zona horaria a Argentina (GMT-3)
 SAFE_TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
@@ -234,6 +234,15 @@ def _phase_decrement_and_persistence():
                     "stats_json": stats
                 })
                 log_event(f"{char['nombre']} has recovered from injuries.", char.get('player_id'))
+
+        # 3. Decrement unit transit ticks
+        # Se ejecuta para todas las unidades en TRANSIT con ticks > 0
+        try:
+            updated_transits = decrement_transit_ticks()
+            if updated_transits > 0:
+                log_event(f"⏳ Actualizados {updated_transits} tránsitos en progreso (tick -1).")
+        except Exception as e:
+            logger.error(f"Error decrementando tránsitos: {e}")
 
     except Exception as e:
         logger.error(f"Error en fase de decremento: {e}")

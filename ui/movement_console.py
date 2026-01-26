@@ -13,6 +13,7 @@ V14.0: Soporte UI para Sobrecarga de Motores (Boost), filtrado de Warp > 30 y vi
 V14.2: Panel de Modos de Unidad (Sigilo) y restricciones visuales.
 V14.5: Visualización estricta de límites de movimiento para Stealth (1/1).
 V14.6: Corrección de cálculo de costos (basa en miembros reales) y marcador visual Movs X/Y.
+V14.7: Sincronización dinámica de ticks de viaje (Real-time calculation vs World Tick).
 """
 
 import streamlit as st
@@ -128,17 +129,25 @@ def _get_location_display(unit: UnitSchema) -> Dict[str, str]:
         info['status_class'] = 'loc-stealth'
 
     if unit.status == UnitStatus.TRANSIT:
+        # Calcular ticks reales dinámicamente para la etiqueta
+        world_state = get_world_state()
+        current_tick = world_state.get('current_tick', 0)
+        
+        real_ticks_remaining = unit.transit_ticks_remaining # Fallback
+        if unit.transit_end_tick:
+            real_ticks_remaining = max(0, unit.transit_end_tick - current_tick)
+            
         origin_sys = get_system_by_id(unit.transit_origin_system_id)
         
         is_local_transit = unit.transit_origin_system_id == unit.transit_destination_system_id
         
         if is_local_transit:
             info['system'] = origin_sys.get('name', '?') if origin_sys else '?'
-            info['status_text'] = f"Maniobra Orbital ({unit.transit_ticks_remaining} ticks)"
+            info['status_text'] = f"Maniobra Orbital ({real_ticks_remaining} ticks)"
         else:
             dest_sys = get_system_by_id(unit.transit_destination_system_id)
             info['system'] = f"{origin_sys.get('name', '?') if origin_sys else '?'} → {dest_sys.get('name', '?') if dest_sys else '?'}"
-            info['status_text'] = f"En Tránsito ({unit.transit_ticks_remaining} ticks)"
+            info['status_text'] = f"En Tránsito ({real_ticks_remaining} ticks)"
             
         info['status_class'] = 'loc-transit'
         return info
@@ -820,6 +829,15 @@ def _render_stellar_options(
 
 def _render_transit_info(unit: UnitSchema):
     """Muestra información cuando la unidad está en tránsito."""
+    # Obtener el Tick Actual Global para cálculos dinámicos
+    world_state = get_world_state()
+    current_tick = world_state.get('current_tick', 0)
+    
+    # Calcular ticks restantes reales
+    real_ticks_remaining = unit.transit_ticks_remaining # Fallback
+    if unit.transit_end_tick:
+        real_ticks_remaining = max(0, unit.transit_end_tick - current_tick)
+    
     is_local_transit = unit.transit_origin_system_id == unit.transit_destination_system_id
     
     if is_local_transit:
@@ -849,7 +867,7 @@ def _render_transit_info(unit: UnitSchema):
             
         with col2:
             st.metric("Trayectoria", f"R[{current_ring_val}] → R[{dest_ring}]")
-            st.caption(f"Ticks Restantes: {unit.transit_ticks_remaining}")
+            st.caption(f"Ticks Restantes: {real_ticks_remaining}")
             
     else:
         st.warning("Esta unidad está en tránsito interestelar")
@@ -866,15 +884,27 @@ def _render_transit_info(unit: UnitSchema):
         with col2:
             st.metric("Destino", dest_name)
         with col3:
-            st.metric("Ticks Restantes", unit.transit_ticks_remaining)
+            st.metric("Ticks Restantes", real_ticks_remaining)
 
     if unit.transit_end_tick and unit.transit_origin_system_id:
-        world_state = get_world_state()
-        current_tick = world_state.get('current_tick', 0)
-
-        total_ticks = unit.transit_ticks_remaining + (current_tick - (unit.transit_end_tick - unit.transit_ticks_remaining))
-        if total_ticks > 0:
-            progress = 1 - (unit.transit_ticks_remaining / max(1, total_ticks))
+        # Estimación de progreso basada en diferencia de Ticks
+        # Si no tenemos 'start_tick' explícito, usamos el estado de la DB como referencia aproximada
+        # total_ticks = real_remaining + ticks_transcurridos
+        # Usamos unit.transit_ticks_remaining (DB) como cota superior probable si real < DB
+        
+        # Fórmula simple visual: asumimos que unit.transit_ticks_remaining en DB
+        # era el total al momento del último update si no ha pasado el tick,
+        # o usamos una estimación de avance.
+        
+        # Mejor aproximación: Usar diferencia con el valor almacenado en DB vs cálculo real
+        # Si DB dice 5 y Real dice 3, hemos avanzado 2 ticks desde la lectura.
+        
+        # Para evitar saltos extraños, definimos el denominador (total)
+        # como el máximo entre lo que dice la DB y lo real + 1.
+        estimated_total = max(unit.transit_ticks_remaining, real_ticks_remaining + 1)
+        
+        if estimated_total > 0:
+            progress = 1 - (real_ticks_remaining / estimated_total)
             st.progress(min(1.0, max(0.0, progress)), text=f"Progreso del viaje: {progress*100:.0f}%")
 
     st.info("Los controles de movimiento estarán disponibles cuando la unidad llegue a su destino.")
