@@ -17,7 +17,7 @@ V14.7: Sincronización dinámica de ticks de viaje (Real-time calculation vs Wor
 V15.0: Integración de Exploración Táctica de Sectores.
 V15.1: Feedback persistente de exploración y gestión de fatiga.
 V15.2: Integración de @st.fragment y widget MRG. Feedback simplificado.
-V15.3: Fix coordenadas Warp (Cálculo 2D local).
+V15.3: Fix coordenadas Warp (Cálculo 2D local y eliminación de referencia a 'z').
 """
 
 import streamlit as st
@@ -631,7 +631,7 @@ def _render_ring_options(
 
         all_systems = get_all_systems_from_db()
         
-        # Corrección de coordenadas 2D y cálculo local
+        # Corrección V15.3: Obtención segura de coordenadas 2D (sin 'z')
         origin_sys_data = get_system_by_id(system_id)
         ox = origin_sys_data.get('x', 0.0) if origin_sys_data else 0.0
         oy = origin_sys_data.get('y', 0.0) if origin_sys_data else 0.0
@@ -641,7 +641,7 @@ def _render_ring_options(
             if s['id'] == system_id:
                 continue
             
-            # Cálculo directo 2D (evita errores de tuplas/z)
+            # Cálculo directo 2D local (math.sqrt) para evitar KeyErrors
             dx = ox - s.get('x', 0.0)
             dy = oy - s.get('y', 0.0)
             dist = math.sqrt(dx**2 + dy**2)
