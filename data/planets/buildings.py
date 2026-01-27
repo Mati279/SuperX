@@ -7,6 +7,9 @@ Actualizado v8.3.0: Business Logic para HQ Único (Reemplazo de Constraint DB).
 Refactor v11.0: INTEGRACIÓN DE SISTEMA DE BASES MILITARES (Tabla 'bases').
 Refactor v11.2: INTEGRACIÓN UI VISUAL DE BASES (Inyección Virtual).
 Refactor v12.0: Soporte para Naming de bases y función de actualización.
+Refactor v19.0: Inyección de bases con player_id real de tabla 'bases' (no del asset).
+    - Permite visualizar bases de ocupación correctamente.
+    - Incluye campo player_id en la estructura virtual de base.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -40,35 +43,45 @@ def get_planet_buildings(planet_asset_id: int) -> List[Dict[str, Any]]:
         buildings = response.data if response and response.data else []
 
         # 2. Inyectar Bases Militares
+        # V19.0: Inyecta TODAS las bases del planeta visibles para el jugador del asset,
+        #        asignando el player_id real de cada base (no del asset).
         asset = get_planet_asset_by_id(planet_asset_id)
         if asset:
             planet_id = asset["planet_id"]
-            player_id = asset["player_id"]
+            asset_player_id = asset["player_id"]
 
-            # Intentamos obtener también el 'name' de la base si existe columna
+            # Obtener TODAS las bases del planeta (propias y de ocupación)
+            # para que la UI pueda mostrarlas correctamente
             bases_res = db.table("bases")\
                 .select("*")\
                 .eq("planet_id", planet_id)\
-                .eq("player_id", player_id)\
                 .execute()
 
             if bases_res and bases_res.data:
                 for base in bases_res.data:
+                    # player_id real de la base (puede diferir del dueño del asset)
+                    base_player_id = base.get("player_id")
+
                     # Determinamos nombre visual
                     base_custom_name = base.get("name")
                     if not base_custom_name:
-                         base_custom_name = f"Base Militar {asset.get('nombre_asentamiento', '')}"
-                    
+                        # Solo usar nombre del asset si es nuestra base
+                        if base_player_id == asset_player_id:
+                            base_custom_name = f"Base Militar {asset.get('nombre_asentamiento', '')}"
+                        else:
+                            base_custom_name = "Base Militar Enemiga"
+
                     virtual_base = {
                         "id": base["id"],
-                        "building_type": "military_base", # Tipo especial reservado
+                        "building_type": "military_base",  # Tipo especial reservado
                         "building_tier": base.get("tier", 1),
                         "sector_id": base["sector_id"],
                         "planet_asset_id": planet_asset_id,
+                        "player_id": base_player_id,  # V19.0: player_id real de la base
                         "is_active": True,
                         "built_at_tick": base.get("created_at_tick", 0),
                         "is_virtual": True,
-                        "custom_name": base_custom_name # Campo auxiliar para UI
+                        "custom_name": base_custom_name  # Campo auxiliar para UI
                     }
                     buildings.append(virtual_base)
 

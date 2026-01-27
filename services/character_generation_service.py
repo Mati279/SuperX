@@ -11,6 +11,7 @@ Corrección v5.2.1: Uso de cliente Supabase para consultas de planetas (Fix Impo
 Actualizado V9.0: Soporte para coordenadas precisas (Hero Spawn) en RecruitmentContext.
 Refactorizado V10: Inyección de coordenadas SQL en diccionario de retorno y limpieza de JSON.
 Actualizado V10.2: Eliminado fallback automático a base en generación de pool (Candidatos nacen sin ubicación física).
+Actualizado V10.3: Implementado recruit_initial_crew_fast para generación masiva sin IA.
 """
 
 import random
@@ -698,3 +699,160 @@ def generate_character_pool(
             continue
             
     return candidates
+
+# =============================================================================
+# RECLUTAMIENTO RÁPIDO (NO-AI)
+# =============================================================================
+
+def recruit_initial_crew_fast(player_id: int, count: int = 7) -> List[Dict[str, Any]]:
+    """
+    Genera 7 personajes de Nivel 1 de forma instantánea sin usar IA.
+    Utiliza _generate_fallback_identity para velocidad máxima.
+    Ideal para start-game o testing.
+    """
+    log_event(f"🚀 Iniciando Reclutamiento Rápido ({count} unidades) para Jugador {player_id}", player_id)
+    
+    created_units = []
+    existing_names: List[str] = []
+    
+    # Obtener coordenadas de base para spawn
+    base_coords = {}
+    try:
+        base_coords = get_player_base_coordinates(player_id)
+    except Exception:
+        log_event("Advertencia: No se pudieron obtener coordenadas base para reclutamiento rápido.", player_id)
+
+    location_system_id = base_coords.get("system_id")
+    location_planet_id = base_coords.get("planet_id")
+    location_sector_id = base_coords.get("sector_id")
+    location_name = base_coords.get("nombre_asentamiento", "Base Principal")
+    system_name = f"Sistema {location_system_id}" if location_system_id else "Desconocido"
+    
+    context = RecruitmentContext(
+        player_id=player_id,
+        location_planet_id=location_planet_id
+    )
+
+    for i in range(count):
+        try:
+            # 1. Selección básica
+            level = 1
+            xp = 0
+            race_name, race_data = _select_race(context)
+            
+            # Forzar variedad de clases (o aleatorio)
+            class_name, class_data = _select_class(1)
+            
+            primary_attr = class_data.get("bonus_attr")
+            age = random.randint(AGE_MIN, AGE_MAX)
+            sex = random.choice([BiologicalSex.MALE, BiologicalSex.FEMALE])
+            
+            # 2. Generar Stats
+            attributes = _generate_base_attributes()
+            
+            # Bonus Raza
+            for attr, bonus in race_data.get("bonus", {}).items():
+                if attr in attributes: attributes[attr] = min(attributes[attr] + bonus, MAX_ATTRIBUTE_VALUE)
+            
+            # Bonus Clase
+            if class_name != "Novato" and primary_attr and primary_attr in attributes:
+                attributes[primary_attr] = min(attributes[primary_attr] + 1, MAX_ATTRIBUTE_VALUE)
+            
+            # Distribuir puntos extra de nivel 1
+            extra_attr_points = sum(1 for lvl in ATTRIBUTE_POINT_LEVELS if lvl <= level)
+            _distribute_random_points(attributes, extra_attr_points, primary_attr)
+            
+            skills = calculate_skills(attributes)
+            skill_points = level * SKILL_POINTS_PER_LEVEL
+            skills = _boost_skills(skills, skill_points, primary_attr)
+            
+            # 3. Identidad Fallback (Sin IA)
+            identity = _generate_fallback_identity(race_name, sex)
+            
+            # Resolución de nombres duplicados simple
+            full_name = f"{identity.nombre} {identity.apellido}"
+            if full_name in existing_names:
+                identity.apellido += f"-{random.randint(10,99)}"
+                full_name = f"{identity.nombre} {identity.apellido}"
+            
+            existing_names.append(full_name)
+            
+            # 4. Construcción JSON Manual
+            birth_planet, birth_biome = _select_birth_planet(location_system_id)
+            
+            stats_json = {
+                "bio": {
+                    "nombre": identity.nombre,
+                    "apellido": identity.apellido,
+                    "edad": age,
+                    "sexo": sex.value,
+                    "biografia_corta": "Recluta de asignación rápida.",
+                    "bio_conocida": f"Personal operativo reclutado mediante protocolo de emergencia en {location_name}.",
+                    "bio_profunda": "Expediente clasificado por reclutamiento rápido.",
+                    "apariencia_visual": identity.apariencia_visual,
+                    "origen": {"planeta": birth_planet, "bioma": birth_biome},
+                    "nivel_acceso": BIO_ACCESS_UNKNOWN
+                },
+                "taxonomia": {
+                    "raza": race_name,
+                    "transformaciones": []
+                },
+                "progresion": {
+                    "nivel": level,
+                    "clase": class_name,
+                    "xp": 0,
+                    "rango": "Soldado" # Rango inicial por defecto para tropa
+                },
+                "capacidades": {
+                    "atributos": attributes,
+                    "habilidades": skills,
+                    "feats": []
+                },
+                "comportamiento": {
+                    "rasgos_personalidad": ["Disciplinado", "Leal"],
+                    "relaciones": []
+                },
+                "logistica": {
+                    "equipo": [],
+                    "slots_ocupados": 0,
+                    "slots_maximos": 10
+                },
+                "estado": {
+                    "estados_activos": ["Disponible"],
+                    "sistema_actual": system_name,
+                    "ubicacion_local": location_name,
+                    "rol_asignado": CharacterRole.NONE.value,
+                    "accion_actual": "Reportándose al servicio",
+                    # INYECCIÓN PARA EXTRACTOR SQL
+                    "ubicacion": { 
+                        "system_id": location_system_id,
+                        "planet_id": location_planet_id,
+                        "sector_id": location_sector_id,
+                        "ubicacion_local": location_name
+                    }
+                }
+            }
+            
+            character_data = {
+                "nombre": full_name,
+                "rango": "Soldado",
+                "estado": "Disponible",
+                "ubicacion": location_name,
+                "es_comandante": False,
+                "location_system_id": location_system_id,
+                "location_planet_id": location_planet_id,
+                "location_sector_id": location_sector_id,
+                "initial_knowledge_level": KnowledgeLevel.FRIEND, # Es tripulación propia
+                "stats_json": stats_json
+            }
+            
+            result = create_character(player_id, character_data)
+            if result:
+                created_units.append(result)
+                
+        except Exception as e:
+            log_event(f"Error generando unidad rápida {i}: {e}", player_id, is_error=True)
+            continue
+            
+    log_event(f"✅ Reclutamiento Rápido finalizado. {len(created_units)} unidades desplegadas.", player_id)
+    return created_units
