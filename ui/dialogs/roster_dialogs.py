@@ -42,11 +42,11 @@ def view_character_dialog(char: Any, player_id: int):
 
 
 @st.dialog("Control de Movimiento", width="large")
-def movement_dialog():
+def movement_dialog(unit_id: int):
     """Modal para control de movimiento."""
     # Importación local para evitar dependencia circular con movement_console -> roster_dialogs
     from ui.movement_console import render_movement_console
-    render_movement_console()
+    render_movement_console(unit_id)
 
 
 def render_exploration_result_view(result: ExplorationResult):

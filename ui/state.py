@@ -8,7 +8,7 @@ import streamlit as st
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
 
-from data.player_repository import clear_session_token
+# Se eliminó la importación top-level de player_repository para evitar ciclo
 from config.app_constants import SESSION_COOKIE_NAME
 from core.models import PlayerData, CommanderData
 
@@ -112,6 +112,9 @@ def logout_user(cookie_manager=None) -> None:
     Args:
         cookie_manager: Instancia del gestor de cookies (opcional)
     """
+    # Lazy import para evitar dependencia circular
+    from data.player_repository import clear_session_token
+
     # 1. Limpiar Token en DB
     player_data = st.session_state.get('player_data')
     if player_data:
