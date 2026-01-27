@@ -19,6 +19,7 @@ Refactor V21.0: Ajuste de Permisos de Construcción (Soberanía Planetaria).
 Refactor V21.1: Debug Hook para construcción forzada de Bases en zonas hostiles.
 Refactor V21.2: Integración de Estaciones Orbitales (Stellar Buildings) en visualización y gestión.
 Refactor V23.1: Restricción de construcción por dependencia de recursos locales (Sólo aparece si hay recurso).
+Refactor V23.2: Filtro de UI para evitar duplicidad de edificios por sector.
 """
 
 import streamlit as st
@@ -616,7 +617,10 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                     if has_hq and 'hq' in available_types:
                         available_types.remove('hq')
                     
-                    # Filtrar por terreno
+                    # V23.2: Evitar Duplicidad en el Sector
+                    existing_types_in_sector = set(b.get('building_type') for b in sector_buildings)
+
+                    # Filtrar por terreno y duplicidad
                     filtered_types = []
                     for t in available_types:
                         b_def = BUILDING_TYPES[t]
@@ -625,6 +629,10 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                         if t == "outpost": continue
                         if t == "military_base": continue 
                         if t == "orbital_station": continue # Orbital Station es táctica ahora
+
+                        # Check duplicidad por sector
+                        if t in existing_types_in_sector:
+                            continue
                             
                         # V23.1: Check de Dependencia de Recursos
                         # Si el edificio requiere un recurso específico, el sector debe tenerlo
@@ -640,7 +648,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                              filtered_types.append(t)
                     
                     if not filtered_types:
-                        st.caption("No hay construcciones disponibles para este terreno o recursos.")
+                        st.caption("No hay construcciones disponibles para este terreno o recursos (o ya construidas).")
                     else:
                         selected_type = st.selectbox(
                             "Tipo de Edificio",

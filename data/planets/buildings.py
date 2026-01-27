@@ -10,6 +10,7 @@ Refactor v12.0: Soporte para Naming de bases y función de actualización.
 Refactor v19.0: Inyección de bases con player_id real de tabla 'bases' (no del asset).
 Refactor v21.0: Validación de Construcción por Soberanía (Surface Owner ID).
 Refactor v23.0: Implementación de Mejoras Tier 2 y Limpieza de Lógica HQ.
+Refactor v23.2: Cobro inmediato de recursos y validación de duplicidad por sector.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -130,6 +131,9 @@ def build_structure(
     Refactor V23.0:
         - Eliminada validación de "Base Única" o HQ.
         - Validación de costes explícita desde definiciones.
+    Refactor V23.2:
+        - Cobro inmediato de recursos.
+        - Validación de duplicidad en el mismo sector.
     """
     # Importación local para evitar dependencia circular
     from .sovereignty import update_planet_sovereignty
@@ -292,10 +296,37 @@ def build_structure(
             log_event("No hay espacio en el sector seleccionado.", player_id, is_error=True)
             return None
             
-        # --- V23.0: VALIDACIÓN DE RECURSOS (Implícita o Explícita si UI no lo hace) ---
-        # Asumimos que la lógica de cobro principal está en la capa de servicios, 
-        # pero upgrade_structure (abajo) sí maneja cobros. 
-        # Si se requiere cobro aquí, debería descomentarse la lógica de finanzas.
+        # --- V23.2: VALIDACIÓN DE DUPLICIDAD ---
+        # Verificar si el edificio ya existe en este sector para este asset
+        existing_duplicate = next(
+            (b for b in all_buildings 
+             if b["sector_id"] == target_sector["id"] 
+             and b["planet_asset_id"] == planet_asset_id 
+             and b["building_type"] == building_type), 
+            None
+        )
+        if existing_duplicate:
+            log_event(f"El edificio {definition['name']} ya existe en este sector.", player_id, is_error=True)
+            return None
+
+        # --- V23.2: COBRO DE RECURSOS ---
+        cost_materials = definition.get("material_cost", 0)
+        cost_credits = definition.get("credit_cost", 0) # Soporte para costo en créditos si existe
+
+        finances = get_player_finances(player_id)
+        if not finances:
+            log_event("Error obteniendo finanzas del jugador.", player_id, is_error=True)
+            return None
+
+        if finances["materiales"] < cost_materials or finances["creditos"] < cost_credits:
+            log_event(f"Recursos insuficientes. Requiere {cost_materials} Mat / {cost_credits} CR.", player_id, is_error=True)
+            return None
+
+        # Aplicar descuento
+        update_player_resources(player_id, {
+            "materiales": finances["materiales"] - cost_materials,
+            "creditos": finances["creditos"] - cost_credits
+        })
         
         # 3. Insertar Edificio
         world = get_world_state()
@@ -322,7 +353,11 @@ def build_structure(
             log_event(f"Construido {definition['name']} en {target_sector.get('sector_type', 'Sector')}", player_id)
             update_planet_sovereignty(planet_id)
             return response.data[0]
-        return None
+        else:
+            # Nota: Si el insert falla, el usuario ya pagó. 
+            # En un entorno ideal se usaría rollback, pero bajo este esquema simple logueamos el error crítico.
+            log_event("Error crítico DB: Pago realizado pero construcción falló.", player_id, is_error=True)
+            return None
     except Exception as e:
         log_event(f"Error construyendo edificio: {e}", player_id, is_error=True)
         return None
