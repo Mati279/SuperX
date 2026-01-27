@@ -7,6 +7,7 @@ Refactor V10.0: Limpieza total de acciones de exploración manual y debug button
 Ahora todas las acciones tácticas (Explorar/Colonizar) se realizan desde la Consola de Movimiento.
 Refactor V16.0: Soporte para visualización de "En Construcción" y Puestos de Avanzada.
 Refactor V17.0: Consolidación de gestión de edificios mediante modal único. Integración de bases militares.
+Refactor V17.1 (Fix): Corrección de detección de soberanía basada en Planet Owner IDs.
 """
 
 import streamlit as st
@@ -164,7 +165,8 @@ def render_planet_surface(planet_id: int):
     
     if orbital_sector:
         with st.container(border=True):
-             _render_sector_card(orbital_sector, buildings, asset_id, player_id, debug_mode, planet_id)
+             # MODIFICADO V17.1: Pasamos el objeto planet completo en lugar del ID
+             _render_sector_card(orbital_sector, buildings, asset_id, player_id, debug_mode, planet)
     else:
         with st.container(border=True):
             st.caption("Espacio orbital no cartografiado.")
@@ -232,19 +234,22 @@ def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_
         for idx, sector in enumerate(row_sectors):
             with cols[idx]:
                 with st.container(border=True):
-                    _render_sector_card(sector, buildings, asset_id, player_id, debug_mode, planet['id'])
+                    # MODIFICADO V17.1: Pasamos el objeto planet completo
+                    _render_sector_card(sector, buildings, asset_id, player_id, debug_mode, planet)
 
 
-def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id: int, debug_mode: bool, planet_id: int):
+def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id: int, debug_mode: bool, planet: dict):
     """
     Renderiza una tarjeta individual para un sector específico.
     V10.0: Eliminación de acciones de exploración y puestos de avanzada debug.
     V16.0: Soporte visual para 'En Construcción' y habilitación de menú si existe Outpost.
     V17.0: Reemplazo de botones directos por Modal de Gestión (Gear Icon).
+    V17.1: Fix lógica soberanía. Prioridad a planet['owner_id'] sobre lista de edificios.
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
     is_orbital = sector.get('sector_type') == SECTOR_TYPE_ORBITAL
+    planet_id = planet['id']
     
     # La órbita siempre es visible, independientemente del flag (safety check)
     if not is_explored and not is_orbital and not debug_mode:
@@ -272,25 +277,37 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     
     st.markdown(f"### {icon} {s_type}")
     
-    # --- PROPIEDAD DEL SECTOR ---
+    # --- PROPIEDAD DEL SECTOR (LÓGICA CORREGIDA V17.1) ---
     sector_buildings = [b for b in buildings if b.get('sector_id') == sector['id']]
+    
+    # Determinamos el dueño efectivo basándonos en la tabla PLANETS, 
+    # que es la fuente de verdad (calculada por sovereignty.py)
     current_sector_owner_id = None
     
+    if is_orbital:
+        current_sector_owner_id = planet.get('orbital_owner_id')
+    else:
+        current_sector_owner_id = planet.get('surface_owner_id')
+
+    # Visualización del Dueño
+    if current_sector_owner_id:
+        faction_name = _get_faction_name_by_player(current_sector_owner_id)
+        # Diferenciar visualmente si soy yo
+        color = "green" if current_sector_owner_id == player_id else "orange"
+        st.caption(f"Propiedad de: :{color}[**{faction_name}**]")
+    else:
+        # Si sovereignty dice None, verificamos si hay edificios (Outposts neutrales, etc)
+        if sector_buildings:
+            # Caso raro: Edificio existe pero sovereignty es None (posible conflicto o anarquía)
+            b_owner = sector_buildings[0].get('player_id')
+            f_name = _get_faction_name_by_player(b_owner)
+            st.caption(f"Ocupado por: :gray[**{f_name}**]")
+        else:
+            st.caption("Sector No Reclamado")
+
     # Obtener tick actual para verificar construcciones en progreso
     world_state = get_world_state()
     current_tick = world_state.get('current_tick', 1)
-
-    if sector_buildings:
-        # Asumimos que el primer edificio define el owner del sector
-        owner_pid = sector_buildings[0].get('player_id')
-        current_sector_owner_id = owner_pid
-        if owner_pid:
-            faction_name = _get_faction_name_by_player(owner_pid)
-            st.caption(f"Propiedad de: :orange[**{faction_name}**]")
-        else:
-             st.caption("Propiedad: Desconocida")
-    else:
-        st.caption("Sector No Reclamado")
 
     # --- RECURSOS ---
     res_cat = sector.get('resource_category')
@@ -346,19 +363,27 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                         show_structure_management_modal(b, asset_id, player_id, planet_id)
 
     else:
-        st.caption("No hay estructuras en este sector.")
+        if used > 0 and not sector_buildings:
+            # Caso especial: Slot ocupado pero no hay edificios visibles en planet_buildings
+            # Típicamente una BASE MILITAR (que vive en tabla 'bases')
+            if current_sector_owner_id == player_id:
+                 st.info("🛡️ Base Militar Operativa")
+            else:
+                 st.warning("🛡️ Instalación Militar Detectada")
+        else:
+            st.caption("No hay estructuras en este sector.")
 
-    # --- DEFINICIONES DE PROPIEDAD ---
-    is_sector_empty = (not sector_buildings)
+    # --- DEFINICIONES DE PROPIEDAD Y PERMISOS ---
+    is_sector_empty = (used == 0) # Usamos 'used' en lugar de lista buildings por si hay bases
+    # Lógica corregida: Es mi sector si la soberanía planetaria lo dice, no solo los edificios
     is_my_sector = (current_sector_owner_id == player_id)
-
-    # --- PANEL DE BASE MILITAR (Eliminado en V17: Ahora integrado en el modal de gestión) ---
-    # La gestión de bases se realiza clickeando el engranaje de la estructura "Base Militar"
 
     # --- PANEL DE CONSTRUCCIÓN (Solo si es dueño) ---
     
     if asset_id and used < total:
-        if is_sector_empty:
+        if is_sector_empty and not is_my_sector:
+             # Si está vacío y no es mío, verificar si puedo reclamarlo (solo via unidades o outpost)
+             # En la UI actual, los Outposts se construyen con unidades en el mapa, no aqui.
              st.caption("🔒 Sector libre. Utiliza una unidad para establecer un Puesto de Avanzada.")
 
         elif is_my_sector:
@@ -387,13 +412,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                 
                 # Opción especial: Construir Base si es urbano y no hay una
                 if s_type == SECTOR_TYPE_URBAN:
-                    # Verificar si ya existe base en el planeta para este jugador (regla de negocio 1 base x planeta)
-                    # Esto se valida en build_base, pero podemos filtrar aquí visualmente
-                    pass # Se deja para el panel de base management que ahora se invoca de otra forma?
-                    # TODO: Revisar si se debe re-integrar el botón de "Construir Base" aquí o dejarlo aparte.
-                    # En V17, si no hay base, render_base_management_panel muestra el botón de construir.
-                    # Pero render_base_management_panel ya no se llama automáticamente.
-                    # Solución: Añadir botón explícito de "Fundar Base" si es sector urbano propio.
+                    pass 
                     
                 selected_type = st.selectbox(
                     "Tipo de Edificio",
