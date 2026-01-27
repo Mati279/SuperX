@@ -5,6 +5,7 @@ Interfaz para la gestión de sectores, visualización orbital y construcción.
 Implementa la visualización de la Planetología Avanzada.
 Refactor V10.0: Limpieza total de acciones de exploración manual y debug buttons. 
 Ahora todas las acciones tácticas (Explorar/Colonizar) se realizan desde la Consola de Movimiento.
+Refactor V16.0: Soporte para visualización de "En Construcción" y Puestos de Avanzada.
 """
 
 import streamlit as st
@@ -17,6 +18,7 @@ from data.planet_repository import (
     build_structure,
     demolish_building
 )
+from data.world_repository import get_world_state
 from core.rules import calculate_planet_habitability
 from core.world_constants import (
     BUILDING_TYPES, 
@@ -173,7 +175,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     """
     Renderiza una tarjeta individual para un sector específico.
     V10.0: Eliminación de acciones de exploración y puestos de avanzada debug.
-    Solo muestra información y gestión de edificios existentes.
+    V16.0: Soporte visual para 'En Construcción' y habilitación de menú si existe Outpost.
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -209,7 +211,12 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     sector_buildings = [b for b in buildings if b.get('sector_id') == sector['id']]
     current_sector_owner_id = None
     
+    # Obtener tick actual para verificar construcciones en progreso
+    world_state = get_world_state()
+    current_tick = world_state.get('current_tick', 1)
+
     if sector_buildings:
+        # Asumimos que el primer edificio define el owner del sector
         owner_pid = sector_buildings[0].get('player_id')
         current_sector_owner_id = owner_pid
         if owner_pid:
@@ -249,14 +256,24 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
             b_def = BUILDING_TYPES.get(b['building_type'], {})
             name = b_def.get("name", b['building_type'])
             
-            c1, c2 = st.columns([0.8, 0.2])
-            c1.write(f"• {name} (Tier {b['building_tier']})")
+            # Verificar si está en construcción
+            built_at = b.get('built_at_tick', 0)
+            is_under_construction = built_at > current_tick
             
-            # Demolición
-            if asset_id and b.get('player_id') == player_id and c2.button("🗑️", key=f"dem_{b['id']}", help=f"Demoler {name}"):
-                if demolish_building(b['id'], player_id):
-                    st.toast(f"Estructura {name} demolida.")
-                    st.rerun()
+            c1, c2 = st.columns([0.8, 0.2])
+            
+            if is_under_construction:
+                ticks_left = built_at - current_tick
+                c1.markdown(f"🚧 *Construyendo: {name}* (T-{ticks_left})")
+            else:
+                c1.write(f"• {name} (Tier {b['building_tier']})")
+            
+            # Demolición (Solo si es mío)
+            if asset_id and b.get('player_id') == player_id:
+                if c2.button("🗑️", key=f"dem_{b['id']}", help=f"Demoler {name}"):
+                    if demolish_building(b['id'], player_id):
+                        st.toast(f"Estructura {name} demolida.")
+                        st.rerun()
     else:
         st.caption("No hay estructuras en este sector.")
 
@@ -266,7 +283,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     
     if asset_id and used < total:
         if is_sector_empty:
-             st.caption("🔒 Sector libre. Utiliza el comando 'Establecer Puesto de Avanzada' con una unidad para reclamarlo.")
+             st.caption("🔒 Sector libre. Utiliza una unidad para establecer un Puesto de Avanzada.")
 
         elif is_my_sector:
              with st.expander("🏗️ Construir"):
@@ -282,6 +299,10 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                 for t in available_types:
                     b_def = BUILDING_TYPES[t]
                     allowed = b_def.get("allowed_terrain")
+                    # No mostrar Outpost en este menú (se construye vía unidad)
+                    if t == "outpost":
+                        continue
+                        
                     if not allowed or s_type in allowed:
                          filtered_types.append(t)
 

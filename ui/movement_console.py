@@ -3,22 +3,9 @@
 Control de Movimiento - Vista para gestionar el movimiento de unidades.
 V10.1: Implementación inicial con opciones dinámicas según ubicación.
 V12.0: Adaptación para uso en componente/diálogo.
-V12.1: Reorganización de UI - Botones de acción.
-V12.2: Fix de bloqueo - UI permite 2 movimientos locales.
-V13.0: Refactorización de Navegación - Restricciones físicas estrictas.
-V13.3: Refactor visualización SCO (Inter-Ring).
-V13.5: Persistencia del diálogo tras movimiento local.
-V13.6: Soporte UI para saltos largos con costo de energía.
-V14.0: Soporte UI para Sobrecarga de Motores (Boost), filtrado de Warp > 30 y visualización de costos de flota.
-V14.2: Panel de Modos de Unidad (Sigilo) y restricciones visuales.
-V14.5: Visualización estricta de límites de movimiento para Stealth (1/1).
-V14.6: Corrección de cálculo de costos (basa en miembros reales) y marcador visual Movs X/Y.
-V14.7: Sincronización dinámica de ticks de viaje (Real-time calculation vs World Tick).
 V15.0: Integración de Exploración Táctica de Sectores.
-V15.1: Feedback persistente de exploración y gestión de fatiga.
-V15.2: Integración de @st.fragment y widget MRG. Feedback simplificado.
-V15.3: Fix coordenadas Warp (Cálculo 2D local y eliminación de referencia a 'z').
-V15.4: Desacople de visualización MRG a Vista Condicional (Fix Nesting Dialogs).
+V15.4: Desacople de visualización MRG a Vista Condicional.
+V16.0: Integración de Construcción de Puestos de Avanzada.
 """
 
 import streamlit as st
@@ -55,6 +42,7 @@ from core.exploration_engine import resolve_sector_exploration, ExplorationResul
 from core.mrg_engine import ResultType
 # Importamos la VISTA de resultado (no el diálogo) para renderizarla in-place
 from ui.dialogs.roster_dialogs import render_exploration_result_view
+from core.construction_engine import resolve_outpost_construction, OUTPOST_COST_CREDITS, OUTPOST_COST_MATERIALS
 
 
 def _inject_movement_css():
@@ -917,30 +905,52 @@ def render_movement_console():
          remaining = limit_count - unit.local_moves_count
          st.info(f"⚠️ Unidad parcialmente fatigada. {limit_txt} (Restantes: {remaining})")
 
-    # --- V15.0: SECCIÓN DE ACCIONES TÁCTICAS (Exploración) ---
+    # --- V15.0 & V16.0: SECCIÓN DE ACCIONES TÁCTICAS (Exploración y Construcción) ---
     if unit.status != UnitStatus.TRANSIT and unit.location_sector_id and unit.location_planet_id:
         sectors = get_planet_sectors_status(unit.location_planet_id, player_id)
         current_sector = next((s for s in sectors if s['id'] == unit.location_sector_id), None)
+        
+        is_known = current_sector.get('is_discovered', False) if current_sector else False
+        is_orbital = current_sector.get('sector_type') == 'Orbital' if current_sector else False
 
-        if current_sector and not current_sector.get('is_discovered', False):
-            st.markdown("### 🔭 Acciones Tácticas")
-            
-            # V15.1: Deshabilitar si no hay acciones
-            can_explore = unit.local_moves_count < limit_count
-            
-            if can_explore:
-                st.info(f"Este sector no ha sido cartografiado. Realiza una exploración para revelar recursos y amenazas. (Consume 1 Acción)")
+        st.markdown("### 🔭 Acciones Tácticas")
+        can_act = unit.local_moves_count < limit_count
+        
+        if not can_act:
+             st.warning(f"🚫 Acciones agotadas ({unit.local_moves_count}/{limit_count}).")
+        else:
+            # 1. Exploración
+            if current_sector and not is_known:
+                st.info(f"Sector sin cartografiar. (1 Acción)")
                 if st.button("📡 Explorar Sector Actual", type="primary", use_container_width=True):
                     with st.spinner("Escaneando terreno..."):
                         try:
                             result = resolve_sector_exploration(unit_id, unit.location_sector_id, player_id)
-                            # Guardar resultado en sesión para persistencia visual
                             st.session_state.last_exploration_result = result
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Error crítico en exploración: {e}")
-            else:
-                st.warning(f"🚫 Acciones agotadas ({unit.local_moves_count}/{limit_count}). No se puede explorar este turno.")
+                            st.error(f"Error crítico: {e}")
+            
+            # 2. Construcción (Puesto de Avanzada)
+            # Solo si es conocido, no es orbital, y está vacío (buildings_count == 0)
+            elif current_sector and is_known and not is_orbital:
+                # Verificar ocupación localmente (la lógica fuerte está en el backend)
+                buildings_here = current_sector.get('buildings_count', 0)
+                
+                if buildings_here == 0:
+                     st.info(f"Sector libre. Puedes establecer un Puesto de Avanzada para reclamar soberanía y habilitar construcciones.")
+                     st.caption(f"Costo: {OUTPOST_COST_CREDITS} CR, {OUTPOST_COST_MATERIALS} Materiales. Tiempo: 1 Tick.")
+                     
+                     if st.button("🏗️ Construir Puesto de Avanzada", type="primary", use_container_width=True):
+                        with st.spinner("Iniciando construcción..."):
+                            res = resolve_outpost_construction(unit_id, unit.location_sector_id, player_id)
+                            if res["success"]:
+                                st.success(res["message"])
+                                st.rerun()
+                            else:
+                                st.error(res["error"])
+                else:
+                    st.caption("✅ Sector ocupado/reclamado.")
 
     movement_result: Optional[Tuple[DestinationData, MovementType, bool]] = None
 
