@@ -18,6 +18,7 @@ Refactor V20.1: Excepción de construcción orbital (No requiere comando previo)
 Refactor V21.0: Ajuste de Permisos de Construcción (Soberanía Planetaria).
 Refactor V21.1: Debug Hook para construcción forzada de Bases en zonas hostiles.
 Refactor V21.2: Integración de Estaciones Orbitales (Stellar Buildings) en visualización y gestión.
+Refactor V23.1: Restricción de construcción por dependencia de recursos locales (Sólo aparece si hay recurso).
 """
 
 import streamlit as st
@@ -44,6 +45,16 @@ from ui.state import get_player_id
 from ui.base_management import render_base_management_panel
 from core.construction_engine import resolve_base_construction # V21.1: Debug Hook
 
+# --- CONFIGURACIÓN V23.1 ---
+# Mapeo de dependencia de recursos para edificios de explotación
+# El edificio solo aparecerá si el sector contiene el recurso especificado.
+BUILDING_RESOURCE_DEPENDENCY = {
+    "mat_foundry": "materiales",
+    "assembly_plant": "componentes",
+    "fusion_core": "celulas_energia",
+    "foreign_ministry": "influencia",
+    "encryption_center": "datos"
+}
 
 # --- Helpers de Facciones (Simplificado) ---
 @st.cache_data(ttl=600)
@@ -130,9 +141,16 @@ def show_structure_management_modal(building: dict, asset_id: int, player_id: in
                 st.error("Error al procesar demolición.")
                 
     with col2:
-        # Mejorar (Placeholder lógica básica)
-        can_upgrade = False # TODO: Implementar lógica real de check_upgrade
-        st.button("⬆️ Mejorar", disabled=not can_upgrade, use_container_width=True, help="Funcionalidad en desarrollo", key=f"btn_upg_{building['id']}")
+        # Mejorar
+        # Solo disponible para dueños y si es Tier 1 (Lógica simplificada UI, backend valida)
+        can_upgrade = (tier == 1)
+        if st.button("⬆️ Mejorar", disabled=not can_upgrade, use_container_width=True, help="Mejorar a Nivel 2 (500 CR / 35 Mat)", key=f"btn_upg_{building['id']}"):
+            from data.planets.buildings import upgrade_structure
+            if upgrade_structure(building['id'], player_id):
+                st.toast(f"Mejora de {name} iniciada.")
+                st.rerun()
+            else:
+                st.error("No se pudo iniciar la mejora (Verifica recursos o nivel).")
         
     with col3:
         # Asignar Guardia
@@ -282,6 +300,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     V21.0: Ajuste de Permisos de Construcción (Soberanía Planetaria).
     V21.1: Debug Hook para construcción forzada.
     V21.2: Detección y renderizado de Estructuras Estelares (Orbital Stations).
+    V23.1: Filtrado de construcción por dependencia de recursos locales.
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -607,29 +626,42 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                         if t == "military_base": continue 
                         if t == "orbital_station": continue # Orbital Station es táctica ahora
                             
+                        # V23.1: Check de Dependencia de Recursos
+                        # Si el edificio requiere un recurso específico, el sector debe tenerlo
+                        if t in BUILDING_RESOURCE_DEPENDENCY:
+                            req_res = BUILDING_RESOURCE_DEPENDENCY[t]
+                            sec_res = sector.get('resource_category')
+                            sec_res_norm = sec_res.lower().strip() if sec_res else None
+                            
+                            if sec_res_norm != req_res:
+                                continue # No mostrar si no hay coincidencia
+
                         if not allowed or s_type in allowed:
                              filtered_types.append(t)
                     
-                    selected_type = st.selectbox(
-                        "Tipo de Edificio",
-                        filtered_types,
-                        format_func=lambda x: BUILDING_TYPES[x]['name'],
-                        key=f"sel_build_{sector['id']}"
-                    )
-                    
-                    if selected_type:
-                        st.info(BUILDING_TYPES[selected_type]['description'])
-                        cost = BUILDING_TYPES[selected_type].get("material_cost", 0)
-                        st.caption(f"Costo: {cost} Materiales")
-                    
-                        if st.button("Confirmar Construcción", key=f"btn_b_{sector['id']}", use_container_width=True):
-                            new_struct = build_structure(
-                                planet_asset_id=asset_id,
-                                player_id=player_id,
-                                building_type=selected_type,
-                                sector_id=sector['id']
-                            )
-                            
-                            if new_struct:
-                                st.toast(f"Construcción de {BUILDING_TYPES[selected_type]['name']} iniciada.")
-                                st.rerun()
+                    if not filtered_types:
+                        st.caption("No hay construcciones disponibles para este terreno o recursos.")
+                    else:
+                        selected_type = st.selectbox(
+                            "Tipo de Edificio",
+                            filtered_types,
+                            format_func=lambda x: BUILDING_TYPES[x]['name'],
+                            key=f"sel_build_{sector['id']}"
+                        )
+                        
+                        if selected_type:
+                            st.info(BUILDING_TYPES[selected_type]['description'])
+                            cost = BUILDING_TYPES[selected_type].get("material_cost", 0)
+                            st.caption(f"Costo: {cost} Materiales")
+                        
+                            if st.button("Confirmar Construcción", key=f"btn_b_{sector['id']}", use_container_width=True):
+                                new_struct = build_structure(
+                                    planet_asset_id=asset_id,
+                                    player_id=player_id,
+                                    building_type=selected_type,
+                                    sector_id=sector['id']
+                                )
+                                
+                                if new_struct:
+                                    st.toast(f"Construcción de {BUILDING_TYPES[selected_type]['name']} iniciada.")
+                                    st.rerun()
