@@ -126,17 +126,27 @@ def resolve_action(
     action_description: str = "",
     player_id: Optional[int] = None,
     skill_source: Optional[str] = None,
-    details: Optional[dict] = None
+    details: Optional[dict] = None,
+    use_direct_bonus: bool = False
 ) -> MRGResult:
     """
     Ejecuta una acción completa del MRG.
     Función pura: (Stats, Dif) -> Resultado.
+
+    Args:
+        use_direct_bonus: Si True, usa merit_points directamente como bono
+                         sin aplicar la fórmula asintótica.
     """
     # 1. Tirada física
     roll = roll_2d50()
 
-    # 2. Cálculo de bonos (Asintótico)
-    bonus = calculate_asymptotic_bonus(merit_points)
+    # 2. Cálculo de bonos
+    if use_direct_bonus:
+        # Bono directo: usa el skill sin transformación
+        bonus = merit_points
+    else:
+        # Bono asintótico (comportamiento legacy)
+        bonus = calculate_asymptotic_bonus(merit_points)
 
     # 3. Cálculo de Margen
     margin = (roll.total + bonus) - difficulty

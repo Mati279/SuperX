@@ -141,7 +141,8 @@ def resolve_sector_exploration(
             "sector_id": sector_id,
             "sector_type": sector_data.get('sector_type'),
             "skill_exploracion_usado": unit_skill_exploracion  # Para debug en UI
-        }
+        },
+        use_direct_bonus=True  # Usa el skill de exploración directamente como bono
     )
 
     # 5. Procesar Consecuencias y Narrativa
