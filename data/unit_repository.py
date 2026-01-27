@@ -15,6 +15,7 @@ V15.1: Fix Crítico Disolución - Persistencia de 'ring' en Characters y Troops.
 V15.2: Fix "Problema del Anillo 0" en creación y limpieza de ubicación en disolución.
 V17.2: Fix Crítico Hydration - Aislamiento estricto de datos de miembros y validación de tipos.
 V17.3: Update Hydration Validation - Uso de keys descriptivas para verificar habilidades.
+V17.4: Add update_unit_moves - Soporte para actualización directa de fatiga.
 """
 
 from typing import Optional, List, Dict, Any
@@ -1049,6 +1050,22 @@ def increment_unit_local_moves(unit_id: int) -> bool:
     except Exception as e:
         print(f"Error incrementing moves for unit {unit_id}: {e}")
         return False
+
+# --- V17.4: ACTUALIZACIÓN DIRECTA DE FATIGA ---
+
+def update_unit_moves(unit_id: int, moves_count: int) -> bool:
+    """
+    Actualiza el contador de movimientos locales de una unidad directamente.
+    Utilizado por motores externos (ej: Construction Engine) que calculan el coste.
+    """
+    db = get_supabase()
+    try:
+        response = db.table("units").update({"local_moves_count": moves_count}).eq("id", unit_id).execute()
+        return bool(response.data)
+    except Exception as e:
+        print(f"Error updating unit moves {unit_id}: {e}")
+        return False
+
 
 def decrement_transit_ticks() -> int:
     """
