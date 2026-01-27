@@ -1,8 +1,6 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
--- This may be outdated, consult user if needed!
-
 CREATE TABLE public.action_queue (
   id integer NOT NULL DEFAULT nextval('action_queue_id_seq'::regclass),
   player_id integer,
@@ -22,6 +20,31 @@ CREATE TABLE public.active_missions (
   remaining_days integer NOT NULL,
   created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT active_missions_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.bases (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  player_id bigint NOT NULL,
+  planet_id bigint NOT NULL,
+  sector_id bigint NOT NULL,
+  tier integer NOT NULL DEFAULT 1 CHECK (tier >= 1 AND tier <= 4),
+  upgrade_in_progress boolean DEFAULT false,
+  upgrade_completes_at_tick integer,
+  upgrade_target_tier integer,
+  module_sensor_planetary integer DEFAULT 0,
+  module_sensor_orbital integer DEFAULT 0,
+  module_defense_ground integer DEFAULT 0,
+  module_bunker integer DEFAULT 0,
+  module_defense_aa integer DEFAULT 0,
+  module_defense_missile integer DEFAULT 0,
+  module_energy_shield integer DEFAULT 0,
+  module_planetary_shield integer DEFAULT 0,
+  created_at_tick integer,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT bases_pkey PRIMARY KEY (id),
+  CONSTRAINT bases_player_id_fkey FOREIGN KEY (player_id) REFERENCES public.players(id),
+  CONSTRAINT bases_planet_id_fkey FOREIGN KEY (planet_id) REFERENCES public.planets(id),
+  CONSTRAINT bases_sector_id_fkey FOREIGN KEY (sector_id) REFERENCES public.sectors(id)
 );
 CREATE TABLE public.character_knowledge (
   id integer NOT NULL DEFAULT nextval('character_knowledge_id_seq'::regclass),
@@ -400,6 +423,7 @@ CREATE TABLE public.unit_members (
   entity_type text NOT NULL CHECK (entity_type = ANY (ARRAY['character'::text, 'troop'::text])),
   entity_id bigint NOT NULL,
   slot_index integer NOT NULL CHECK (slot_index >= 0 AND slot_index < 8),
+  is_leader boolean DEFAULT false,
   CONSTRAINT unit_members_pkey PRIMARY KEY (unit_id, slot_index),
   CONSTRAINT unit_members_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id)
 );
@@ -449,6 +473,11 @@ CREATE TABLE public.units (
   local_moves_count integer DEFAULT 0,
   transit_destination_ring integer,
   ship_count integer DEFAULT 1,
+  skill_deteccion integer DEFAULT 0,
+  skill_radares integer DEFAULT 0,
+  skill_exploracion integer DEFAULT 0,
+  skill_sigilo integer DEFAULT 0,
+  skill_evasion_sensores integer DEFAULT 0,
   CONSTRAINT units_pkey PRIMARY KEY (id),
   CONSTRAINT units_player_id_fkey FOREIGN KEY (player_id) REFERENCES public.players(id),
   CONSTRAINT units_location_system_id_fkey FOREIGN KEY (location_system_id) REFERENCES public.systems(id),
