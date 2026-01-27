@@ -59,6 +59,7 @@ from .planets.sectors import (
     get_sector_by_id,
     get_sector_details,
     grant_sector_knowledge,
+    has_urban_sector,
 )
 
 # --- BUILDINGS: Construcción y demolición de edificios ---
@@ -115,6 +116,7 @@ __all__ = [
     "get_sector_by_id",
     "get_sector_details",
     "grant_sector_knowledge",
+    "has_urban_sector",
     # Buildings
     "get_planet_buildings",
     "build_structure",

@@ -6,6 +6,7 @@ Actualizado v7.2: Soporte para Niebla de Superficie (grant_sector_knowledge).
 Actualizado v10.3: Helper get_sector_by_id para exploración táctica.
 Actualizado v11.2: Conteo de slots de base en get_planet_sectors_status.
 Refactor v12.0: Validación estricta de slots ocupados por bases militares.
+Actualizado Refactor Soberanía V21.0: Implementación de has_urban_sector.
 """
 
 from typing import Dict, List, Any, Optional
@@ -14,6 +15,7 @@ from ..log_repository import log_event
 from core.world_constants import (
     BUILDING_TYPES,
     SECTOR_TYPE_ORBITAL,
+    SECTOR_TYPE_URBAN,
 )
 
 from .core import _get_db
@@ -160,4 +162,23 @@ def grant_sector_knowledge(player_id: int, sector_id: int) -> bool:
         return True
     except Exception as e:
         log_event(f"Error otorgando conocimiento de sector {sector_id}: {e}", player_id, is_error=True)
+        return False
+
+
+def has_urban_sector(planet_id: int) -> bool:
+    """
+    Verifica si un planeta tiene al menos un sector urbano.
+    Usado para determinar el modelo de soberanía (Ciudad vs Puesto de Avanzada).
+    V21.0: Nueva lógica de soberanía.
+    """
+    try:
+        response = _get_db().table("sectors")\
+            .select("id")\
+            .eq("planet_id", planet_id)\
+            .eq("sector_type", SECTOR_TYPE_URBAN)\
+            .limit(1)\
+            .execute()
+        return bool(response.data)
+    except Exception as e:
+        log_event(f"Error comprobando sector urbano en planeta {planet_id}: {e}", is_error=True)
         return False

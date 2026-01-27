@@ -15,6 +15,7 @@ Refactor V19.0 (Fix): Lógica unificada en _render_sector_card para detección i
 Refactor V19.1: Restricción de construcción civil. Solo permitida si hay estructura de comando OPERATIVA en el sector.
 Refactor V20.0: Visibilidad global de Sectores Urbanos (Fow Lift).
 Refactor V20.1: Excepción de construcción orbital (No requiere comando previo) y restricción civil para despliegue táctico.
+Refactor V21.0: Ajuste de Permisos de Construcción (Soberanía Planetaria).
 """
 
 import streamlit as st
@@ -258,6 +259,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     V19.1: Restricción de construcción civil basada en presencia de Estructura de Comando operativa.
     V20.0: Visibilidad Forzada de Sectores Urbanos.
     V20.1: Excepción de construcción orbital (No requiere comando previo) y restricción civil para despliegue táctico.
+    V21.0: Ajuste de Permisos de Construcción (Soberanía Planetaria).
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -311,7 +313,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     if current_sector_owner_id:
         faction_name = _get_faction_name_by_player(current_sector_owner_id)
         # Diferenciar visualmente si soy yo
-        color = "green" if current_sector_owner_id == player_id else "orange"
+        color = "green" if str(current_sector_owner_id) == str(player_id) else "orange"
         st.caption(f"Propiedad de: :{color}[**{faction_name}**]")
     else:
         # Si sovereignty dice None, verificamos si hay edificios
@@ -458,7 +460,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
         # No hay estructuras ni bases detectadas
         if used > 0:
             # Slot ocupado pero sin datos - caso edge (posible inconsistencia de datos)
-            if current_sector_owner_id == player_id:
+            if str(current_sector_owner_id) == str(player_id):
                 st.info("🛡️ Instalación Militar Detectada")
             else:
                 st.warning("🛡️ Instalación Enemiga Detectada")
@@ -467,7 +469,8 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
 
     # --- DEFINICIONES DE PROPIEDAD Y PERMISOS ---
     is_sector_empty = (used == 0)
-    is_my_sector = (current_sector_owner_id == player_id)
+    # V21.0: Usar is_my_sector para validar propiedad planetaria total
+    is_my_sector = (str(current_sector_owner_id) == str(player_id))
 
     # --- PANEL DE CONSTRUCCIÓN (Solo si es dueño) ---
     
@@ -480,13 +483,18 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
              else:
                  st.caption("🔒 Sector libre. Utiliza una unidad para establecer un Puesto de Avanzada.")
 
-        elif is_my_sector:
+        # V21.0: Condición Permisiva: Si es mi sector (Planeta Mío) OR tengo comando operativo
+        elif is_my_sector or has_operational_command:
              # V20.1: Restricción Táctica para Estaciones Orbitales
              if s_type == SECTOR_TYPE_ORBITAL:
-                  st.info("🛰️ Despliegue Orbital: Requiere una unidad táctica en órbita para iniciar la construcción de la Estación (Costo: 800 CR / 30 MAT | Tiempo: 2 ciclos)")
+                  # Si es orbital y no tengo estación, la única forma es via unidad táctica
+                  if not has_operational_command:
+                       st.info("🛰️ Despliegue Orbital: Requiere una unidad táctica en órbita para iniciar la construcción de la Estación (Costo: 800 CR / 30 MAT | Tiempo: 2 ciclos)")
+                  else:
+                       # Si YA tengo estación, podría ampliar (futuro)
+                       st.info("Estación Orbital operativa.")
              
-             # V19.1: Check de Estructura de Comando Operativa para el resto
-             elif has_operational_command:
+             else:
                  with st.expander("🏗️ Construir"):
                     available_types = list(BUILDING_TYPES.keys())
                     
@@ -533,9 +541,6 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                                 st.rerun()
                             else:
                                 st.error("Error en la construcción.")
-             else:
-                 # Mensaje informativo si no hay comando operativo
-                 st.info("⚠️ Se requiere una estructura de comando operativa (Puesto de Avanzada o Base) en este sector para iniciar obras civiles.", icon="🏗️")
 
         else:
              st.warning("⛔ Sector controlado por otra facción.")

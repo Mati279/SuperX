@@ -6,7 +6,7 @@ V12.0: Adaptación para uso en componente/diálogo.
 V15.0: Integración de Exploración Táctica de Sectores.
 V15.4: Desacople de visualización MRG a Vista Condicional.
 V16.0: Integración de Construcción de Puestos de Avanzada.
-V21.0: Integración de Construcción de Estaciones Orbitales.
+V21.0: Integración de Construcción de Estaciones Orbitales y Refactor Soberanía.
 """
 
 import streamlit as st
@@ -21,7 +21,7 @@ from data.world_repository import (
     get_starlanes_from_db,
     get_all_systems_from_db,
 )
-from data.planet_repository import get_planet_sectors_status, get_planet_by_id
+from data.planet_repository import get_planet_sectors_status, get_planet_by_id, has_urban_sector
 from core.models import UnitSchema, UnitStatus, LocationRing
 from core.movement_engine import (
     MovementType,
@@ -630,32 +630,25 @@ def _render_ring_options(
 
         all_systems = get_all_systems_from_db()
         
-        # Corrección V15.3: Obtención segura de coordenadas 2D (sin 'z')
-        origin_sys_data = get_system_by_id(system_id)
-        ox = origin_sys_data.get('x', 0.0) if origin_sys_data else 0.0
-        oy = origin_sys_data.get('y', 0.0) if origin_sys_data else 0.0
-
-        warp_targets = []
-        for s in all_systems:
-            if s['id'] == system_id:
-                continue
-            
-            # Cálculo directo 2D local (math.sqrt) para evitar KeyErrors
-            dx = ox - s.get('x', 0.0)
-            dy = oy - s.get('y', 0.0)
-            dist = math.sqrt(dx**2 + dy**2)
-            
-            if dist <= WARP_MAX_DISTANCE:
-                 warp_targets.append({
-                     'id': s['id'],
-                     'name': s['name'],
-                     'distance': dist
-                 })
+        # Corrección V14.0: Filtrar sistemas > 30 UA de distancia
+        valid_warp_destinations = []
+        origin_sys = get_system_by_id(system_id)
         
-        warp_targets.sort(key=lambda x: x['distance'])
-
-        if warp_targets:
-            warp_options = {s['id']: f"{s['name']} (Dist: {s['distance']:.1f})" for s in warp_targets}
+        if origin_sys:
+            origin_coords = (origin_sys.get('x', 0), origin_sys.get('y', 0))
+            
+            for s in all_systems:
+                if s['id'] == system_id: continue
+                dest_coords = (s.get('x', 0), s.get('y', 0))
+                dist = calculate_euclidean_distance(origin_coords, dest_coords)
+                if dist > WARP_MAX_DISTANCE: # > 30 UA
+                    valid_warp_destinations.append(s)
+        
+        if valid_warp_destinations:
+            # Ordenar alfabéticamente
+            valid_warp_destinations.sort(key=lambda x: x.get('name', ''))
+            
+            warp_options = {s['id']: s.get('name', f"Sistema {s['id']}") for s in valid_warp_destinations}
             
             selected_warp_dest = st.selectbox(
                 "Sistema destino (WARP)",
@@ -663,388 +656,217 @@ def _render_ring_options(
                 format_func=lambda x: warp_options.get(x, str(x)),
                 key="select_warp_space"
             )
-
+            
             if selected_warp_dest:
-                estimate = estimate_travel_time(
+                 estimate = estimate_travel_time(
                     system_id, 
                     selected_warp_dest, 
                     current_ring, 
-                    RING_MAX, 
+                    0, 
+                    movement_type=MovementType.WARP_JUMP,
                     ship_count=real_ship_count
-                )
-                
-                with action_container:
+                 )
+                 
+                 with action_container:
                     _render_cost_display(estimate, real_ship_count)
-
-                    if st.button("Iniciar Salto WARP", type="primary", key="btn_warp_space", use_container_width=True):
+                    
+                    if st.button("EJECUTAR SALTO WARP", type="primary", key="btn_warp_space", use_container_width=True):
                         selected_dest = DestinationData(
                             system_id=selected_warp_dest,
                             planet_id=None,
                             sector_id=None,
-                            ring=RING_MAX # Warp llega al borde
-                        )
-                        selected_type = MovementType.WARP
-        else:
-            st.warning("No hay sistemas al alcance del Motor WARP (< 30.0 U).")
-
-
-    if selected_dest and selected_type:
-        return (selected_dest, selected_type, use_boost)
-    return None
-
-
-def _render_stellar_options(
-    unit: UnitSchema,
-    player_id: int,
-    current_tick: int
-) -> Optional[Tuple[DestinationData, MovementType, bool]]:
-    """Opciones cuando la unidad está en el Sector Estelar (Ring 0)."""
-    st.markdown("#### Opciones de Movimiento")
-    st.info("🌌 Estás en el Sector Estelar Central (Ring 0).")
-
-    system_id = unit.location_system_id
-    current_ring = 0
-    real_ship_count = len(unit.members) if unit.members else 1
-
-    starlanes = _get_starlanes_from_system(system_id)
-    
-    selected_dest = None
-    selected_type = None
-    use_boost = False
-
-    tab1, tab2 = st.tabs(["Navegación Intra-Sistema", "Starlane"])
-
-    with tab1:
-        st.markdown("**🔄 Ir a un Anillo**")
-        action_container = st.container()
-
-        valid_rings = _get_valid_rings_for_selector(system_id)
-        selectable_rings = [r for r in valid_rings if r != 0]
-
-        if selectable_rings:
-            selected_ring = st.selectbox(
-                "Anillo destino",
-                options=selectable_rings,
-                format_func=lambda x: f"Anillo {x}",
-                key="select_ring_stellar"
-            )
-
-            if selected_ring:
-                estimate = estimate_travel_time(
-                    system_id, 
-                    system_id, 
-                    origin_ring=0, 
-                    dest_ring=selected_ring,
-                    ship_count=real_ship_count
-                )
-                
-                with action_container:
-                    _render_cost_display(estimate, real_ship_count)
-                    
-                    if st.button("Iniciar Maniobra", type="primary", key="btn_ring_stellar", use_container_width=True):
-                        selected_dest = DestinationData(
-                            system_id=system_id,
-                            planet_id=None,
-                            sector_id=None,
-                            ring=selected_ring
-                        )
-                        selected_type = MovementType.INTER_RING
-        else:
-            st.info("Este sistema no tiene anillos explorables.")
-
-    with tab2:
-        st.markdown("**🛤️ Usar Starlane**")
-        action_container = st.container()
-
-        if starlanes:
-            lane_options = {}
-            for lane in starlanes:
-                dest_sys = get_system_by_id(lane['dest_system_id'])
-                dest_name = dest_sys.get('name', f"Sistema {lane['dest_system_id']}") if dest_sys else f"Sistema {lane['dest_system_id']}"
-                lane_options[lane['dest_system_id']] = f"{dest_name} (dist: {lane['distance']:.1f})"
-
-            selected_lane_dest = st.selectbox(
-                "Sistema destino",
-                options=list(lane_options.keys()),
-                format_func=lambda x: lane_options.get(x, str(x)),
-                key="select_starlane_stellar"
-            )
-
-            if selected_lane_dest:
-                # Checkbox para Boost
-                boost_check = st.checkbox("🔥 Sobrecarga de Motores (Boost)", key="boost_check_stellar")
-
-                estimate = estimate_travel_time(
-                    system_id, 
-                    selected_lane_dest, 
-                    origin_ring=0, 
-                    dest_ring=0,
-                    ship_count=real_ship_count,
-                    use_boost=boost_check
-                )
-                
-                with action_container:
-                    if estimate.get('can_boost') and not boost_check:
-                         st.info("💡 Ruta larga detectada. Puedes usar Sobrecarga de Motores para reducir el tiempo.")
-                         
-                    _render_cost_display(estimate, real_ship_count)
-
-                    if st.button("Iniciar Viaje por Starlane", type="primary", key="btn_starlane_stellar", use_container_width=True):
-                        selected_dest = DestinationData(
-                            system_id=selected_lane_dest,
-                            planet_id=None,
-                            sector_id=None,
                             ring=0
                         )
-                        selected_type = MovementType.STARLANE
-                        use_boost = boost_check
+                        selected_type = MovementType.WARP_JUMP
         else:
-            st.info("No hay Starlanes conectadas a este sistema.")
+            st.info("No hay sistemas lejanos válidos para salto WARP (>30 UA).")
 
     if selected_dest and selected_type:
         return (selected_dest, selected_type, use_boost)
     return None
 
 
-def _render_transit_info(unit: UnitSchema):
-    """Muestra información cuando la unidad está en tránsito."""
-    st.info("🚀 La unidad está actualmente en tránsito.")
-    
-    world_state = get_world_state()
-    current_tick = world_state.get('current_tick', 0)
-    
-    # Calcular ticks restantes reales
-    ticks_remaining = 0
-    if unit.transit_end_tick:
-        ticks_remaining = max(0, unit.transit_end_tick - current_tick)
-        
-    st.write(f"**Destino:** Sistema {unit.transit_destination_system_id}")
-    st.write(f"**Llegada estimada:** En {ticks_remaining} tick(s)")
-    
-    # Barra de progreso (simulada)
-    if unit.transit_start_tick and unit.transit_end_tick:
-        total = unit.transit_end_tick - unit.transit_start_tick
-        if total > 0:
-            elapsed = current_tick - unit.transit_start_tick
-            progress = min(1.0, max(0.0, elapsed / total))
-            st.progress(progress)
+def render_movement_console(unit_id: int):
+    """
+    Renderiza la consola de movimiento y acciones tácticas para una unidad.
+    """
+    # 1. Validación de Sesión y Unidad
+    if 'player_id' not in st.session_state:
+        st.error("Sesión no válida.")
+        return
 
+    player_id = st.session_state.player_id
+    unit = get_unit_by_id(unit_id)
 
-@st.fragment
-def render_movement_console():
-    """Punto de entrada principal - Página de Control de Movimiento."""
-    from .state import get_player
-    
-    # Detectar si hay un resultado de exploración pendiente para mostrar en modal
-    # Si existe, reemplazamos la vista de la consola con la vista de resultado (Fix nesting)
-    if 'last_exploration_result' in st.session_state:
-        render_exploration_result_view(st.session_state.last_exploration_result)
-        return  # 🛑 DETENER EJECUCIÓN AQUÍ para ocultar el resto de la consola
+    if not unit or unit.player_id != player_id:
+        st.error("Unidad no encontrada o acceso denegado.")
+        return
 
+    # Inyectar CSS
     _inject_movement_css()
-    
-    player = get_player()
-    if not player:
-        st.error("Error de sesión. Por favor, inicia sesión nuevamente.")
-        return
 
-    player_id = player.id
-    unit_id = st.session_state.get('selected_unit_movement')
+    # 2. Renderizado de Cabecera
+    loc_type = _get_location_type(unit)
+    loc_info = _get_location_display(unit)
+    _render_unit_info(unit, loc_info)
 
-    if not unit_id:
-        st.warning("No hay unidad seleccionada.")
-        return
-
-    unit_data = get_unit_by_id(unit_id)
-    if not unit_data:
-        st.error(f"No se encontró la unidad con ID {unit_id}")
-        st.session_state.selected_unit_movement = None
-        return
-
-    if unit_data.get('player_id') != player_id:
-        st.error("No tienes control de esta unidad.")
-        st.session_state.selected_unit_movement = None
-        return
-
-    unit = UnitSchema.from_dict(unit_data)
+    # 3. Estado de Movimiento
     world_state = get_world_state()
     current_tick = world_state.get('current_tick', 0)
-
-    location_info = _get_location_display(unit)
-    _render_unit_info(unit, location_info)
     
-    # --- V14.2: SECCIÓN DE MODOS DE LA UNIDAD ---
-    if unit.status != UnitStatus.TRANSIT:
-        st.markdown("### 🎛️ Modos de la Unidad")
+    if unit.status == UnitStatus.TRANSIT:
+        st.info("🚀 La unidad está actualmente en tránsito.")
+        return
+
+    # 4. Acciones Tácticas (Exploración, Construcción, Sigilo)
+    st.divider()
+    
+    with st.expander("🛠️ Acciones Tácticas", expanded=True):
+        col1, col2 = st.columns(2)
         
-        mode_cols = st.columns([2, 1])
-        with mode_cols[0]:
-            is_stealth = unit.status == UnitStatus.STEALTH_MODE
-            btn_label = "Desactivar Sigilo 📡" if is_stealth else "Activar Sigilo 🥷"
-            btn_type = "secondary" if is_stealth else "primary"
+        # A) Exploración
+        can_explore = False
+        explore_label = "Explorar"
+        
+        if unit.location_sector_id:
+            # Check si el sector ya está explorado
+            is_orbital = loc_info.get('sector') == 'Orbital'
+            sectors = get_planet_sectors_status(unit.location_planet_id, player_id)
+            sector_data = next((s for s in sectors if s['id'] == unit.location_sector_id), None)
             
-            if st.button(btn_label, type=btn_type, key="toggle_stealth_btn", use_container_width=True):
-                result = toggle_stealth_mode(unit_id, player_id)
-                if result["success"]:
-                    st.toast(f"Modo actualizado: {result['new_status']}")
+            if sector_data:
+                # Permitir re-explorar orbital para actualizar datos
+                if is_orbital or not sector_data.get('is_explored_by_player'):
+                    can_explore = True
+                    explore_label = "Escanear Órbita" if is_orbital else "Explorar Sector"
+        
+        with col1:
+             if st.button(f"🔭 {explore_label}", disabled=not can_explore, use_container_width=True, help="Realizar reconocimiento del sector actual"):
+                 result = resolve_sector_exploration(unit_id, player_id)
+                 if result:
+                     # Renderizar resultado visual in-place
+                     render_exploration_result_view(result)
+                     # Forzar recarga ligera para actualizar vista
+                     st.rerun()
+
+        # B) Sigilo
+        is_stealth = unit.status == UnitStatus.STEALTH_MODE
+        stealth_label = "Desactivar Sigilo" if is_stealth else "Activar Sigilo"
+        stealth_btn_type = "secondary" if is_stealth else "primary"
+        
+        with col2:
+            if st.button(f"👻 {stealth_label}", type=stealth_btn_type, use_container_width=True):
+                success, msg = toggle_stealth_mode(unit_id, not is_stealth)
+                if success:
+                    st.toast(msg)
                     st.rerun()
                 else:
-                    st.error(result["error"])
+                    st.error(msg)
         
-        if is_stealth:
-            st.caption("🔒 En modo sigilo, los movimientos locales están restringidos a 1 por tick.")
-
-    # --- V14.6: Lógica de Límites de Movimiento (Visualización Estricta) ---
-    if unit.status == UnitStatus.STEALTH_MODE:
-        limit_count = 1
-    else:
-        limit_count = MAX_LOCAL_MOVES_PER_TURN
-    
-    # Texto para mostrar en la UI
-    limit_txt = f"Acciones: {unit.local_moves_count}/{limit_count}"
-
-    if unit.movement_locked:
-        st.warning(f"🔒 Movimiento/Acciones Bloqueadas ({limit_txt}). Espera al siguiente tick.")
-        if unit.local_moves_count > 0:
-             st.caption(f"Acciones realizadas: {unit.local_moves_count}/{limit_count}")
-        return
-
-    # Visualización de fatiga/estado antes de las opciones
-    if unit.local_moves_count > 0:
-         remaining = limit_count - unit.local_moves_count
-         st.info(f"⚠️ Unidad parcialmente fatigada. {limit_txt} (Restantes: {remaining})")
-
-    # --- V15.0 & V16.0 & V21.0: SECCIÓN DE ACCIONES TÁCTICAS ---
-    if unit.status != UnitStatus.TRANSIT and unit.location_sector_id and unit.location_planet_id:
-        sectors = get_planet_sectors_status(unit.location_planet_id, player_id)
-        current_sector = next((s for s in sectors if s['id'] == unit.location_sector_id), None)
+        # C) Construcción Táctica (Puestos de Avanzada / Estaciones Orbitales)
+        st.markdown("---")
+        c_col1, c_col2 = st.columns(2)
         
-        is_known = current_sector.get('is_discovered', False) if current_sector else False
-        is_orbital = current_sector.get('sector_type') == SECTOR_TYPE_ORBITAL if current_sector else False
-
-        st.markdown("### 🔭 Acciones Tácticas")
-        can_act = unit.local_moves_count < limit_count
+        # Validar Puesto de Avanzada
+        # Solo en superficie, terreno válido, sin propiedad previa y si NO hay ciudades (V21.0)
+        can_build_outpost = False
+        outpost_reason = ""
         
-        if not can_act:
-             st.warning(f"🚫 Acciones agotadas ({unit.local_moves_count}/{limit_count}).")
-        else:
-            # 1. Exploración
-            if current_sector and not is_known:
-                st.info(f"Sector sin cartografiar. (1 Acción)")
-                if st.button("📡 Explorar Sector Actual", type="primary", use_container_width=True):
-                    with st.spinner("Escaneando terreno..."):
-                        try:
-                            result = resolve_sector_exploration(unit_id, unit.location_sector_id, player_id)
-                            st.session_state.last_exploration_result = result
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error crítico: {e}")
-            
-            # 2. Construcción (Puesto de Avanzada)
-            elif current_sector and is_known and not is_orbital:
-                # Verificar ocupación localmente (la lógica fuerte está en el backend)
-                buildings_here = current_sector.get('buildings_count', 0)
-                
-                if buildings_here == 0:
-                     st.info(f"Sector libre. Puedes establecer un Puesto de Avanzada para reclamar soberanía y habilitar construcciones.")
-                     st.caption(f"Costo: {OUTPOST_COST_CREDITS} CR, {OUTPOST_COST_MATERIALS} Materiales. Tiempo: 1 Tick.")
-                     
-                     if st.button("🏗️ Construir Puesto de Avanzada", type="primary", use_container_width=True):
-                        with st.spinner("Iniciando construcción..."):
-                            res = resolve_outpost_construction(unit_id, unit.location_sector_id, player_id)
-                            if res["success"]:
-                                st.success(res["message"])
-                                st.rerun()
-                            else:
-                                st.error(res["error"])
-                else:
-                    st.caption("✅ Sector ocupado/reclamado.")
-
-            # 3. V21.0 Construcción Orbital (Estaciones)
-            elif current_sector and is_known and is_orbital:
-                st.info("Espacio orbital libre para desarrollo de infraestructura estelar.")
-                st.caption(f"Costo: {ORBITAL_STATION_CREDITS} CR, {ORBITAL_STATION_MATERIALS} Materiales.")
-                
-                if st.button("🛰️ Construir Estación Orbital", type="primary", use_container_width=True):
-                     with st.spinner("Desplegando módulos orbitales..."):
-                         res = build_orbital_station(unit_id, unit.location_sector_id)
-                         if res["success"]:
-                             st.success(res["message"])
-                             st.balloons()
-                             st.rerun()
-                         else:
-                             st.error(res["error"])
-
-    movement_result: Optional[Tuple[DestinationData, MovementType, bool]] = None
-
-    if unit.status == UnitStatus.TRANSIT:
-        _render_transit_info(unit)
-    else:
-        ring_val = unit.ring.value if isinstance(unit.ring, LocationRing) else unit.ring
-
-        if unit.location_sector_id is not None and unit.location_planet_id is not None:
-            sectors = get_planet_sectors_status(unit.location_planet_id, player_id)
-            current_sector = next((s for s in sectors if s['id'] == unit.location_sector_id), None)
-
-            if current_sector and current_sector.get('sector_type') == 'Orbital':
-                movement_result = _render_orbit_options(unit, player_id, current_tick)
+        if unit.location_sector_id and loc_info.get('sector') != SECTOR_TYPE_ORBITAL:
+            # Verificar si hay ciudades en el planeta (Nueva Soberanía V21.0)
+            if has_urban_sector(unit.location_planet_id):
+                outpost_reason = "Planeta con centros urbanos. Requiere conquista militar."
             else:
-                movement_result = _render_surface_options(unit, player_id, current_tick)
-
-        elif unit.location_planet_id is not None:
-            movement_result = _render_orbit_options(unit, player_id, current_tick)
-
-        elif ring_val == 0:
-            movement_result = _render_stellar_options(unit, player_id, current_tick)
-
-        else:
-            movement_result = _render_ring_options(unit, player_id, current_tick)
-
-    if movement_result:
-        destination, movement_type, use_boost = movement_result
-
-        with st.spinner("Iniciando trayectoria..."):
-            result = initiate_movement(
-                unit_id=unit_id,
-                destination=destination,
-                player_id=player_id,
-                current_tick=current_tick,
-                use_boost=use_boost
-            )
-
-        if result.success:
-            if result.is_instant:
-                st.success(f"Movimiento completado (instantáneo)")
-            else:
-                st.success(f"Trayectoria iniciada. Tiempo estimado: {result.ticks_required} tick(s)")
-                if result.energy_cost > 0:
-                    st.info(f"Energía consumida: {result.energy_cost} células")
-
-            # Persistencia de diálogo si es local y quedan movimientos
-            should_close = True
-            
-            if movement_type not in [MovementType.WARP, MovementType.STARLANE]:
-                updated_unit_data = get_unit_by_id(unit_id)
-                if updated_unit_data:
-                    updated_unit = UnitSchema.from_dict(updated_unit_data)
-                    # V14.5: Usar límite dinámico estricto para decidir si cerrar
-                    if updated_unit.status == UnitStatus.STEALTH_MODE:
-                        limit_count = 1
-                    else:
-                        limit_count = MAX_LOCAL_MOVES_PER_TURN
+                # Reglas clásicas para planetas salvajes
+                sectors = get_planet_sectors_status(unit.location_planet_id, player_id)
+                current_sector = next((s for s in sectors if s['id'] == unit.location_sector_id), None)
+                
+                if current_sector:
+                    # Validar si está ocupado
+                    is_occupied = current_sector.get('buildings_count', 0) > 0
+                    # Validar terreno (ej: no Inhóspito, no Urbano - aunque urbano ya filtrado arriba)
+                    terrain = current_sector.get('sector_type')
+                    valid_terrains = ["Llanura", "Montañoso"]
+                    is_terrain_ok = terrain in valid_terrains
                     
-                    if updated_unit.local_moves_count < limit_count:
-                        should_close = False
-                        remaining = limit_count - updated_unit.local_moves_count
-                        st.toast(f"✅ Posición actualizada. Acciones restantes: {remaining}")
+                    if is_occupied:
+                        outpost_reason = "Sector ya ocupado."
+                    elif not is_terrain_ok:
+                        outpost_reason = "Terreno no apto para construcción."
+                    else:
+                        can_build_outpost = True
 
-            if should_close:
-                st.session_state.selected_unit_movement = None
-            
-            # Limpiar resultado de exploración anterior al moverse para evitar popups viejos
-            if 'last_exploration_result' in st.session_state:
-                del st.session_state.last_exploration_result
-                
+        # Validar Estación Orbital (V21.0)
+        can_build_orbital = False
+        orbital_reason = ""
+        
+        if unit.location_sector_id and loc_info.get('sector') == SECTOR_TYPE_ORBITAL:
+             sectors = get_planet_sectors_status(unit.location_planet_id, player_id)
+             orbit_sector = next((s for s in sectors if s['sector_type'] == SECTOR_TYPE_ORBITAL), None)
+             
+             if orbit_sector:
+                 is_occupied = orbit_sector.get('buildings_count', 0) > 0
+                 if is_occupied:
+                     orbital_reason = "Órbita ya controlada."
+                 else:
+                     can_build_orbital = True
+
+        with c_col1:
+            # Botón Puesto de Avanzada
+            if can_build_outpost:
+                if st.button("🏗️ Construir Puesto", use_container_width=True, help=f"Costo: {OUTPOST_COST_CREDITS} CR / {OUTPOST_COST_MATERIALS} MAT"):
+                    result = resolve_outpost_construction(unit_id, player_id)
+                    if result['success']:
+                        st.success(result['message'])
+                        st.rerun()
+                    else:
+                        st.error(result['message'])
+            elif unit.location_sector_id and loc_info.get('sector') != SECTOR_TYPE_ORBITAL:
+                 st.button("🏗️ Construir Puesto", disabled=True, use_container_width=True, help=outpost_reason)
+
+        with c_col2:
+            # Botón Estación Orbital
+            if can_build_orbital:
+                 if st.button("🛰️ Estación Orbital", use_container_width=True, help=f"Costo: {ORBITAL_STATION_CREDITS} CR / {ORBITAL_STATION_MATERIALS} MAT"):
+                    result = build_orbital_station(unit_id, player_id)
+                    if result['success']:
+                        st.success(result['message'])
+                        st.rerun()
+                    else:
+                        st.error(result['message'])
+            elif unit.location_sector_id and loc_info.get('sector') == SECTOR_TYPE_ORBITAL:
+                  st.button("🛰️ Estación Orbital", disabled=True, use_container_width=True, help=orbital_reason)
+
+    st.divider()
+
+    # 5. Opciones de Movimiento Dinámicas
+    selection = None
+    
+    if loc_type == 'surface_or_orbit':
+        # Estamos en un sector específico
+        selection = _render_surface_options(unit, player_id, current_tick)
+        
+    elif loc_type == 'orbit':
+        # Estamos en órbita genérica (sin sector asignado - legacy o error, pero manejado)
+        selection = _render_orbit_options(unit, player_id, current_tick)
+        
+    elif loc_type == 'ring' or loc_type == 'stellar':
+        # Estamos en espacio
+        selection = _render_ring_options(unit, player_id, current_tick)
+
+    # 6. Procesar Selección de Movimiento
+    if selection:
+        dest_data, move_type, use_boost = selection
+        
+        # Validar penalización de movimiento local si está desorientada
+        if unit.moves_this_turn >= DISORIENTED_MAX_LOCAL_MOVES and move_type not in [MovementType.WARP_JUMP, MovementType.STARLANE]:
+             st.warning("⚠️ La unidad está desorientada y ha alcanzado el límite de movimientos locales por turno.")
+             return
+
+        result = initiate_movement(unit_id, dest_data, move_type, use_boost=use_boost)
+        
+        if result.success:
+            st.success(f"Movimiento iniciado: {result.message}")
             st.rerun()
         else:
-            st.error(f"Error: {result.error_message}")
+            st.error(f"Error de movimiento: {result.message}")

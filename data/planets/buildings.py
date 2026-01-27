@@ -8,8 +8,7 @@ Refactor v11.0: INTEGRACIÓN DE SISTEMA DE BASES MILITARES (Tabla 'bases').
 Refactor v11.2: INTEGRACIÓN UI VISUAL DE BASES (Inyección Virtual).
 Refactor v12.0: Soporte para Naming de bases y función de actualización.
 Refactor v19.0: Inyección de bases con player_id real de tabla 'bases' (no del asset).
-    - Permite visualizar bases de ocupación correctamente.
-    - Incluye campo player_id en la estructura virtual de base.
+Refactor v21.0: Validación de Construcción por Soberanía (Surface Owner ID).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -121,7 +120,12 @@ def build_structure(
     tier: int = 1,
     sector_id: Optional[int] = None
 ) -> Optional[Dict[str, Any]]:
-    """Construye validando espacio, bloqueos y presencia para edificios orbitales."""
+    """
+    Construye una estructura validando espacio, ocupación hostil y permisos de soberanía.
+    Refactor V21.0: 
+        - Permite construir si el jugador es el Dueño de Superficie (surface_owner_id).
+        - Elimina requisito de 'Comando Operativo' local si se posee soberanía.
+    """
     # Importación local para evitar dependencia circular
     from .sovereignty import update_planet_sovereignty
 
@@ -134,7 +138,18 @@ def build_structure(
         if not asset: return None
         planet_id = asset["planet_id"]
 
-        # --- Validaciones Generales ---
+        # --- Obtener Datos del Planeta (V21.0: Soberanía) ---
+        planet_info = get_planet_by_id(planet_id)
+        if not planet_info:
+             log_event("Planeta no encontrado.", player_id, is_error=True)
+             return None
+        
+        surface_owner_id = planet_info.get("surface_owner_id")
+        orbital_owner_id = planet_info.get("orbital_owner_id")
+
+        is_sovereign_owner = (str(surface_owner_id) == str(player_id)) if surface_owner_id else False
+
+        # --- Validaciones Generales de Ocupación ---
 
         all_assets = db.table("planet_assets").select("id, player_id").eq("planet_id", planet_id).execute().data
         all_asset_ids = [a["id"] for a in all_assets]
@@ -143,8 +158,6 @@ def build_structure(
             .select("sector_id, building_type, planet_asset_id")\
             .in_("planet_asset_id", all_asset_ids)\
             .execute().data or []
-
-        my_buildings = [b for b in all_buildings if b["planet_asset_id"] == planet_asset_id]
 
         # Mapa de ocupación
         sector_occupants = {}
@@ -174,7 +187,7 @@ def build_structure(
 
         # Contadores de slots
         sector_counts = {}
-        for b in all_buildings:  # FIX V11.1: Usar all_buildings para conteo global correcto
+        for b in all_buildings:
             sid = b.get("sector_id")
             bt = b.get("building_type")
             consumes = BUILDING_TYPES.get(bt, {}).get("consumes_slots", True)
@@ -190,7 +203,7 @@ def build_structure(
             if 'max_slots' in s: s['slots'] = s['max_slots']
             s['buildings_count'] = sector_counts.get(s["id"], 0)
 
-        # --- V8.3 / V11.0: VALIDACIÓN DE REGLAS DE NEGOCIO (Base vs HQ) ---
+        # --- V8.3 / V11.0: Validar Base Única ---
         if building_type == 'hq':
             existing_base = db.table("bases").select("id").eq("player_id", player_id).eq("planet_id", planet_id).maybe_single().execute()
             if existing_base and existing_base.data:
@@ -209,6 +222,7 @@ def build_structure(
                     log_event(f"Error de Construcción: Terreno {target_sector['sector_type']} incompatible con {definition['name']}.", player_id, is_error=True)
                     return None
         else:
+            # Auto-selección (Legacy)
             candidates = []
             for s in sectors:
                 if definition.get("consumes_slots", True) and s["buildings_count"] >= s["slots"]:
@@ -237,22 +251,47 @@ def build_structure(
 
         # --- VALIDACIONES ORBITALES ESPECÍFICAS (V6.4 y V9.2) ---
         if definition.get("is_orbital", False):
-            planet_info = get_planet_by_id(planet_id)
-            if planet_info:
-                surface_owner = planet_info.get("surface_owner_id")
-                orbital_owner = planet_info.get("orbital_owner_id")
+            is_surface_owner = (surface_owner_id == player_id)
+            is_orbital_owner = (orbital_owner_id == player_id)
 
-                is_surface_owner = (surface_owner == player_id)
-                is_orbital_owner = (orbital_owner == player_id)
+            if orbital_owner_id and orbital_owner_id != player_id:
+                log_event("Construcción orbital bloqueada: Órbita controlada por enemigo.", player_id, is_error=True)
+                return None
 
-                if orbital_owner and orbital_owner != player_id:
-                    log_event("Construcción orbital bloqueada: Órbita controlada por enemigo.", player_id, is_error=True)
+            if not is_surface_owner and not is_orbital_owner:
+                # V21.0: Si es construcción orbital táctica, esto se salta si se validó antes,
+                # pero aquí build_structure es genérico.
+                # Nota: La Estación Orbital ahora se construye vía `build_orbital_station` (táctica)
+                # que usa su propia lógica, pero si se llama desde aquí:
+                log_event("Requisito Orbital: Se requiere control de superficie o flota en órbita.", player_id, is_error=True)
+                return None
+        else:
+            # --- VALIDACIÓN DE PERMISOS DE CONSTRUCCIÓN CIVIL (V21.0) ---
+            # Regla: Si tengo Soberanía Planetaria (is_sovereign_owner), puedo construir en cualquier sector libre.
+            # Si NO tengo soberanía, necesito un "comando operativo" local (Base/HQ/Outpost) O que sea un Outpost.
+            
+            # Exceptuar estructuras de comando (Outpost/Base se autovalidan por lógica de expansión)
+            is_command_structure = building_type in ['outpost', 'hq', 'military_base']
+            
+            if not is_command_structure and not is_sovereign_owner:
+                # Verificar presencia local de comando
+                has_local_command = False
+                
+                # Check edificios propios en el sector
+                my_local_buildings = [b for b in all_buildings if b["sector_id"] == target_sector["id"] and b["planet_asset_id"] == planet_asset_id]
+                if any(b['building_type'] in ['outpost', 'hq', 'military_base'] for b in my_local_buildings):
+                    has_local_command = True
+                
+                # Check base militar independiente en el sector
+                my_local_base = next((b for b in bases_data if b["sector_id"] == target_sector["id"] and b["player_id"] == player_id), None)
+                if my_local_base:
+                    has_local_command = True
+                
+                if not has_local_command:
+                    log_event("Permiso denegado: Se requiere Soberanía Planetaria o un Puesto de Avanzada en el sector.", player_id, is_error=True)
                     return None
 
-                if not is_surface_owner and not is_orbital_owner:
-                    log_event("Requisito Orbital: Se requiere control de superficie o flota en órbita.", player_id, is_error=True)
-                    return None
-
+        # --- VALIDACIÓN DE OCUPANTES HOSTILES (Estricta) ---
         occupants = sector_occupants.get(target_sector["id"], set())
         if any(occ != player_id for occ in occupants):
             log_event("Construcción fallida: Sector ocupado por otra facción.", player_id, is_error=True)
