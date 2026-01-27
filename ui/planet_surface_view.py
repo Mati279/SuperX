@@ -279,6 +279,10 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     else:
         st.caption("No hay estructuras en este sector.")
 
+    # --- DEFINICIONES DE PROPIEDAD ---
+    is_sector_empty = (not sector_buildings)
+    is_my_sector = (current_sector_owner_id == player_id)
+
     # --- PANEL DE BASE MILITAR (Solo sectores urbanos bajo control) ---
     is_urban_sector = s_type == "Urbano"
     if is_urban_sector and is_my_sector:
@@ -298,8 +302,6 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
             render_base_management_panel(sector['id'], planet_id)
 
     # --- PANEL DE CONSTRUCCIÓN (Solo si es dueño) ---
-    is_sector_empty = (not sector_buildings)
-    is_my_sector = (current_sector_owner_id == player_id)
     
     if asset_id and used < total:
         if is_sector_empty:
