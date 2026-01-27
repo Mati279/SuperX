@@ -10,6 +10,7 @@ Refactor V17.0: Consolidación de gestión de edificios mediante modal único. I
 Refactor V17.1 (Fix): Corrección de detección de soberanía basada en Planet Owner IDs.
 Refactor V18.0: Eliminación de construcción manual de Bases Militares (delegado a Unidades). Unificación de UI.
 Refactor V18.1 (Fix): Inyección de botón de gestión para Bases Militares detectadas fuera de la lista de edificios estándar.
+Refactor V18.2 (Fix): Corrección de visibilidad del botón de gestión (gear icon) independiente del asset_id y propiedad del sector.
 """
 
 import streamlit as st
@@ -244,6 +245,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     Renderiza una tarjeta individual para un sector específico.
     V17.0: Reemplazo de botones directos por Modal de Gestión (Gear Icon).
     V18.1: Fix para visualizar botón de gestión en bases militares que no aparecen en la lista de edificios.
+    V18.2: Fix de visibilidad de botón independiente del asset_id o propiedad del sector.
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -350,8 +352,9 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                 else:
                     st.write(f"• {name} (Tier {b['building_tier']})")
             
-            # Botón de Gestión (Gear Icon) - Solo si es mío
-            if asset_id and b.get('player_id') == player_id:
+            # Botón de Gestión (Gear Icon) - Corrección V18.2: Chequeo directo de propiedad
+            # No dependemos de asset_id ya que el edificio existe
+            if b.get('player_id') == player_id:
                 with c2:
                     if st.button("⚙️", key=f"mng_btn_{b['id']}", help=f"Gestionar {name}"):
                         show_structure_management_modal(b, asset_id, player_id, planet_id)
@@ -363,12 +366,17 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
             
             # Intentar recuperar la base real para habilitar gestión
             base_obj = None
-            if current_sector_owner_id == player_id:
-                try:
-                    # Fetch al vuelo para obtener ID real para el modal
-                    res = get_supabase().table("bases").select("id, custom_name, level, player_id").eq("sector_id", sector['id']).maybe_single().execute()
-                    if res.data:
-                        d = res.data
+            
+            # Corrección V18.2: Intentar fetch siempre si está ocupado, no solo si soy dueño del sector.
+            # Esto permite ver y gestionar bases de ocupación o antes de que se actualice la soberanía.
+            try:
+                # Fetch al vuelo para obtener ID real para el modal
+                res = get_supabase().table("bases").select("id, custom_name, level, player_id").eq("sector_id", sector['id']).maybe_single().execute()
+                if res.data:
+                    d = res.data
+                    # Solo construimos el objeto virtual si la base es del jugador actual para gestionarla
+                    # O si queremos mostrar info (aunque la gestión estará restringida)
+                    if d['player_id'] == player_id:
                         base_obj = {
                             'id': d['id'],
                             'building_type': 'military_base',
@@ -378,8 +386,9 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                             'building_tier': d.get('level', 1),
                             'custom_name': d.get('custom_name')
                         }
-                except Exception as e:
-                     if debug_mode: st.error(f"Error fetching base: {e}")
+                    # Opcional: Podríamos capturar base de enemigo aquí también para mostrar nombre real
+            except Exception as e:
+                    if debug_mode: st.error(f"Error fetching base: {e}")
 
             if base_obj:
                 # Renderizado con botón de gestión habilitado
@@ -390,11 +399,12 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                      st.caption(f"Nivel {base_obj['building_tier']} • Operativa")
                 
                 with c2:
+                     # El check de propiedad ya se hizo al crear base_obj
                      if st.button("⚙️", key=f"mng_base_v_{base_obj['id']}", help="Gestionar Base"):
                          show_structure_management_modal(base_obj, asset_id, player_id, planet_id)
             
             elif current_sector_owner_id == player_id:
-                 # Fallback visual si falla la carga
+                 # Fallback visual si falla la carga pero el sector es mío
                  st.info("🛡️ Base Militar Operativa")
             else:
                  st.warning("🛡️ Instalación Militar Detectada")
