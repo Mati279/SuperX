@@ -9,6 +9,7 @@ Refactorizado V20.0: Restricciones de Sectores Urbanos y Soberanía Centralizada
 Refactorizado V20.1: Implementación de Construcción Orbital Táctica.
 Refactorizado V21.0: Implementación de Estaciones Orbitales (Stellar Buildings).
 Refactorizado V21.2: Soporte para Modo Debug (Bypass Subyugación) en Bases Militares.
+Refactorizado V22.0: Homogeneización de firmas (player_id explícito) en Orbital Station.
 """
 
 from typing import Dict, Any, Optional
@@ -354,9 +355,10 @@ def resolve_orbital_construction(unit_id: int, sector_id: int, player_id: int) -
     OBSOLETO: Usar build_orbital_station para nuevas implementaciones (V21.0).
     Mantiene compatibilidad con estructuras planet_buildings antiguas.
     """
-    return build_orbital_station(unit_id, sector_id)
+    # Propagamos el player_id para la nueva firma
+    return build_orbital_station(unit_id, sector_id, player_id)
 
-def build_orbital_station(unit_id: int, sector_id: int) -> Dict[str, Any]:
+def build_orbital_station(unit_id: int, sector_id: int, player_id: int) -> Dict[str, Any]:
     """
     V21.0: Construye una Estación Orbital en un sector espacial (Orbital o Deep Space).
     Registra la construcción en 'stellar_buildings'.
@@ -374,7 +376,10 @@ def build_orbital_station(unit_id: int, sector_id: int) -> Dict[str, Any]:
         return {"success": False, "error": "Unidad no encontrada."}
     
     unit = UnitSchema.from_dict(unit_data)
-    player_id = unit.player_id
+    
+    # Validación de Seguridad V22.0
+    if unit.player_id != player_id:
+        return {"success": False, "error": "Error de autorización."}
     
     # 2. Validaciones de Unidad (Estado y Movimiento)
     if unit.status == UnitStatus.TRANSIT:
