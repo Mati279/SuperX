@@ -11,6 +11,7 @@ Refactorizado V21.0: Implementación de Estaciones Orbitales (Stellar Buildings)
 Refactorizado V21.2: Soporte para Modo Debug (Bypass Subyugación) en Bases Militares.
 Refactorizado V22.0: Homogeneización de firmas (player_id explícito) en Orbital Station.
 Refactorizado V22.1: Implementación de Construcción Diferida y Estandarización de Errores (message).
+Refactorizado V23.0: Estandarización de Costes Civiles (Outposts usan CIVILIAN_BUILD_COST).
 """
 
 from typing import Dict, Any, Optional
@@ -22,13 +23,13 @@ from data.log_repository import log_event
 from data.world_repository import get_world_state
 from core.models import UnitSchema, UnitStatus
 from core.movement_constants import MAX_LOCAL_MOVES_PER_TURN
-from core.world_constants import SECTOR_TYPE_ORBITAL
+from core.world_constants import SECTOR_TYPE_ORBITAL, CIVILIAN_BUILD_COST
 from config.app_constants import TEXT_MODEL_NAME
 from google.genai import types
 
-# Costos fijos para Puesto de Avanzada (Outpost)
-OUTPOST_COST_CREDITS = 200
-OUTPOST_COST_MATERIALS = 40
+# Costos estandarizados para Puesto de Avanzada (Civilian Tier 1)
+OUTPOST_COST_CREDITS = CIVILIAN_BUILD_COST["creditos"]
+OUTPOST_COST_MATERIALS = CIVILIAN_BUILD_COST["materiales"]
 OUTPOST_BUILDING_TYPE = "outpost"
 
 # Costos fijos para Base Militar

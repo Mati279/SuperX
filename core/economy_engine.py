@@ -12,12 +12,14 @@ Actualizado V6.4: Penalización por Bloqueo Orbital Enemigo en Producción Indus
 Actualizado V8.0: Control del Sistema (Nivel Estelar) - Bonos de Sistema y Producción Estelar.
 Actualizado V9.0: Logística de Transporte Automático (Unidades en Tránsito).
 Refactorizado V20.0: Bloqueo total de ingresos en planetas DISPUTADOS.
+Refactorizado V23.0: Soporte para Tiers de Edificios (1.1x) y Extracción de Lujo Automática en Tier 2.
 """
 
 from typing import Dict, List, Any, Tuple, Optional
 from dataclasses import dataclass, field
 import math
 
+from data.database import get_supabase
 from data.log_repository import log_event
 from data.player_repository import get_player_finances, update_player_resources, get_all_players
 from data.planet_repository import (
@@ -183,11 +185,14 @@ def calculate_planet_production(active_buildings: List[Dict[str, Any]], penalty_
     Calcula producción SOLO de edificios activos y pagados.
     Actualizado v4.2.0: Aplica bono de +15% si está en sector Urbano.
     Actualizado V6.4: Aplica penalización por bloqueo (penalty_multiplier).
+    Actualizado V23.0: Aplica bono de Tier 2 (1.1x).
     """
     production = ProductionSummary()
 
     for building in active_buildings:
         building_type = building.get("building_type")
+        building_tier = building.get("building_tier", 1)
+        
         definition = BUILDING_TYPES.get(building_type, {})
         base_prod = definition.get("production", {})
         
@@ -195,6 +200,10 @@ def calculate_planet_production(active_buildings: List[Dict[str, Any]], penalty_
         sector_type = building.get("sector_type")
         multiplier = 1.15 if sector_type == SECTOR_TYPE_URBAN else 1.0
         
+        # V23.0: Chequear bono de Tier (10% extra si Tier >= 2)
+        if building_tier >= 2:
+            multiplier *= 1.1
+
         # V6.4: Penalización global por bloqueo
         multiplier *= penalty_multiplier
 
@@ -375,6 +384,7 @@ def process_stellar_building_maintenance(
 # --- PROCESAMIENTO DE RECURSOS DE LUJO ---
 
 def calculate_luxury_extraction(sites: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Calcula extracción base de sitios dedicados."""
     extracted: Dict[str, int] = {}
     for site in sites:
         if not site.get("is_active", True):
@@ -422,8 +432,10 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
     Actualizado V8.0: Soporte para bonos de sistema y estructuras estelares.
     Actualizado V9.0: Soporte para Logística de Transporte (Unidades en tránsito).
     Refactor V20.0: Bloqueo de ingresos en estados disputados.
+    Refactor V23.0: Extracción de lujo por edificios Tier 2.
     """
     result = EconomyTickResult(player_id=player_id)
+    db = get_supabase()
 
     try:
         try:
@@ -456,8 +468,9 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
 
         # --- V8.0: FASE 1 - Agrupar planetas por sistema y calcular bonos estelares ---
         systems_planets: Dict[int, List[Dict]] = {}
+        all_active_tier_2_sectors = [] # Para recursos de lujo V23.0
+
         # Obtener lista de IDs de sistema únicos (planetas + assets conocidos)
-        # Por simplificación, usamos los de los planetas controlados
         for planet in planets:
             sys_id = planet.get("system_id")
             if sys_id not in systems_planets:
@@ -517,10 +530,6 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
 
             # A. Seguridad (V4.4: Centralizada en tabla planets con Breakdown)
             pop = float(planet.get("population", 0.0))
-            if pop <= 0 and planet.get("buildings"):
-                # Debug log para rastrear posibles fallos de sincronización si hay edificios pero no pop
-                pass
-
             infra_def = planet.get("infraestructura_defensiva", 0)
 
             orbital_dist = planet.get("orbital_distance", 0)
@@ -613,11 +622,37 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
 
                 result.production = result.production.add(prod)
 
+                # V23.0: Recolectar IDs de sector de edificios Tier 2 pagados para extracción de lujo
+                for pb in maint_res.paid_buildings:
+                    if pb.get("building_tier", 1) >= 2 and pb.get("sector_id"):
+                         all_active_tier_2_sectors.append(pb["sector_id"])
+
         # V8.0: Añadir producción estelar al total
         result.production = result.production.add(stellar_production_total)
 
-        # 3. Recursos de Lujo
+        # 3. Recursos de Lujo (Legacy + Tier 2 V23.0)
         luxury_extracted = calculate_luxury_extraction(luxury_sites)
+        
+        # V23.0: Procesar Extracción de Lujo de Edificios Tier 2
+        if all_active_tier_2_sectors:
+            try:
+                # Fetch en lote de recursos de lujo de los sectores relevantes
+                sectors_res = db.table("sectors")\
+                    .select("id, luxury_resource, luxury_category")\
+                    .in_("id", all_active_tier_2_sectors)\
+                    .not_.is_("luxury_resource", "null")\
+                    .execute()
+                
+                if sectors_res.data:
+                    for s in sectors_res.data:
+                        cat = s.get("luxury_category")
+                        res_name = s.get("luxury_resource")
+                        if cat and res_name:
+                            key = f"{cat}.{res_name}"
+                            luxury_extracted[key] = luxury_extracted.get(key, 0) + 1
+            except Exception as e:
+                log_event(f"Error procesando extracción de lujo Tier 2: {e}", player_id, is_error=True)
+
         result.luxury_extracted = luxury_extracted
 
         # --- V9.0: COSTO LOGÍSTICA DE TRANSPORTE (Unidades en Tránsito) ---
@@ -630,8 +665,6 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
                 result.maintenance_cost["creditos"] = result.maintenance_cost.get("creditos", 0) + transit_cost
                 log_event(f"🚀 Logística de Flota: -{transit_cost} Cr ({troops_in_transit} tropas en tránsito).", player_id)
             else:
-                # Falta de créditos para logística (implementación futura: varar tropas?)
-                # Por ahora, se cobra lo que se puede y se loguea warning
                 paid = player_resources["creditos"]
                 player_resources["creditos"] = 0
                 result.maintenance_cost["creditos"] = result.maintenance_cost.get("creditos", 0) + paid

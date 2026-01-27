@@ -17,8 +17,13 @@ Actualizado v7.6.0: Ajuste de Capacidad Urbana (3 Slots).
 Actualizado v8.0.0: Control del Sistema (Nivel Estelar) - Megaestructuras y Bonos de Sistema.
 Actualizado v8.1.0: Estandarización de UI de Recursos (RESOURCE_UI_CONFIG).
 Actualizado V20.1: Ajuste de costos de Estación Orbital para construcción táctica.
+Actualizado V23.0: Refactorización Sistema de Edificios Terrestres (Tier System).
 """
 from typing import Dict, List
+
+# --- COSTOS ESTÁNDAR (V23.0) ---
+CIVILIAN_BUILD_COST = {"creditos": 350, "materiales": 20}
+CIVILIAN_UPGRADE_COST = {"creditos": 500, "materiales": 35}
 
 # --- ESTRELLAS ---
 
@@ -330,22 +335,14 @@ VALID_SECTOR_TYPES = [
 # Definición de sectores válidos para Outposts (Todo menos Urbano, Inhóspito y Orbital)
 OUTPOST_ALLOWED_TERRAIN = [SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN] + list(SECTOR_NAMES_BY_CATEGORY.values())
 
+# Terrenos válidos para nuevas estructuras civiles (V23.0)
+CIVILIAN_ALLOWED_TERRAIN = [SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN] + list(SECTOR_NAMES_BY_CATEGORY.values())
+
 BUILDING_TYPES = {
-    "hq": {
-        "name": "Comando Central",
-        "material_cost": 0,
-        "maintenance": {"creditos": 50},
-        "description": "Sede administrativa. Establece control territorial.",
-        "max_tier": 5,
-        "pops_required": 0,
-        "category": "administracion",
-        "allowed_terrain": [SECTOR_TYPE_URBAN],
-        "consumes_slots": True,
-        "production": {}
-    },
     "outpost": {
         "name": "Puesto de Avanzada",
-        "material_cost": 100,
+        "credit_cost": CIVILIAN_BUILD_COST["creditos"],
+        "material_cost": CIVILIAN_BUILD_COST["materiales"],
         "maintenance": {"creditos": 10, "materiales": 5},
         "description": "Establece presencia sin urbanizar. Costo reducido.",
         "max_tier": 1,
@@ -354,6 +351,71 @@ BUILDING_TYPES = {
         "allowed_terrain": OUTPOST_ALLOWED_TERRAIN,
         "consumes_slots": False,
         "production": {}
+    },
+    "mat_foundry": {
+        "name": "Fundición de Materiales",
+        "credit_cost": CIVILIAN_BUILD_COST["creditos"],
+        "material_cost": CIVILIAN_BUILD_COST["materiales"],
+        "maintenance": {"creditos": 20, "celulas_energia": 5},
+        "description": "Procesa mineral crudo en materiales de construcción.",
+        "max_tier": 2,
+        "pops_required": 100,
+        "category": "industria",
+        "allowed_terrain": CIVILIAN_ALLOWED_TERRAIN,
+        "consumes_slots": True,
+        "production": {"materiales": 20}
+    },
+    "assembly_plant": {
+        "name": "Planta de Ensamblaje",
+        "credit_cost": CIVILIAN_BUILD_COST["creditos"],
+        "material_cost": CIVILIAN_BUILD_COST["materiales"],
+        "maintenance": {"creditos": 20, "celulas_energia": 5},
+        "description": "Manufactura componentes avanzados de tecnología.",
+        "max_tier": 2,
+        "pops_required": 100,
+        "category": "tecnologia",
+        "allowed_terrain": CIVILIAN_ALLOWED_TERRAIN,
+        "consumes_slots": True,
+        "production": {"componentes": 5}
+    },
+    "fusion_core": {
+        "name": "Núcleo de Fusión",
+        "credit_cost": CIVILIAN_BUILD_COST["creditos"],
+        "material_cost": CIVILIAN_BUILD_COST["materiales"],
+        "maintenance": {"creditos": 20, "materiales": 5},
+        "description": "Generador de energía mediante fusión controlada.",
+        "max_tier": 2,
+        "pops_required": 50,
+        "category": "celulas_energia",
+        "allowed_terrain": CIVILIAN_ALLOWED_TERRAIN,
+        "consumes_slots": True,
+        "production": {"celulas_energia": 5}
+    },
+    "foreign_ministry": {
+        "name": "Ministerio de Asuntos Exteriores",
+        "credit_cost": CIVILIAN_BUILD_COST["creditos"],
+        "material_cost": CIVILIAN_BUILD_COST["materiales"],
+        "maintenance": {"creditos": 50},
+        "description": "Centro diplomático y cultural.",
+        "max_tier": 2,
+        "pops_required": 100,
+        "category": "administracion",
+        "allowed_terrain": CIVILIAN_ALLOWED_TERRAIN,
+        "consumes_slots": True,
+        "production": {"influencia": 5}
+    },
+    "encryption_center": {
+        "name": "Centro de Encriptación",
+        "credit_cost": CIVILIAN_BUILD_COST["creditos"],
+        "material_cost": CIVILIAN_BUILD_COST["materiales"],
+        "maintenance": {"creditos": 30, "celulas_energia": 10},
+        "description": "Procesamiento de datos y criptografía.",
+        "max_tier": 2,
+        "pops_required": 80,
+        "category": "tecnologia",
+        "allowed_terrain": CIVILIAN_ALLOWED_TERRAIN,
+        "consumes_slots": True,
+        "production": {"datos": 5}
     },
     "orbital_station": {
         "name": "Estación Orbital",
@@ -368,57 +430,6 @@ BUILDING_TYPES = {
         "allowed_terrain": [SECTOR_TYPE_ORBITAL], # Restricción V6.4
         "consumes_slots": True, # V6.4: Consume el slot único orbital
         "production": {"datos": 5}
-    },
-    "barracks": {
-        "name": "Barracas",
-        "material_cost": 300,
-        "maintenance": {"creditos": 20, "materiales": 5},
-        "description": "Alojamiento militar. Aumenta límite de reclutas.",
-        "pops_required": 50,
-        "category": "defensa",
-        "consumes_slots": True,
-        "production": {}
-    },
-    "mine_basic": {
-        "name": "Mina de Superficie",
-        "material_cost": 150,
-        "maintenance": {"creditos": 10, "celulas_energia": 5},
-        "description": "Extracción básica de minerales locales.",
-        "pops_required": 100,
-        "category": "extraccion",
-        "consumes_slots": True,
-        "production": {"materiales": 10}
-    },
-    "solar_plant": {
-        "name": "Planta Solar",
-        "material_cost": 100,
-        "maintenance": {"creditos": 5},
-        "description": "Generación de energía pasiva.",
-        "pops_required": 20,
-        "category": "celulas_energia",
-        "consumes_slots": True,
-        "production": {"celulas_energia": 15}
-    },
-    "fusion_reactor": {
-        "name": "Reactor de Fusión",
-        "material_cost": 500,
-        "maintenance": {"creditos": 50, "materiales": 10},
-        "description": "Generación masiva de energía (Tier 2).",
-        "pops_required": 50,
-        "min_tier": 2,
-        "category": "celulas_energia",
-        "consumes_slots": True,
-        "production": {"celulas_energia": 50}
-    },
-    "factory": {
-        "name": "Fundición Industrial",
-        "material_cost": 400,
-        "maintenance": {"creditos": 30, "celulas_energia": 10, "materiales": 10},
-        "description": "Procesa minerales en aleaciones.",
-        "pops_required": 200,
-        "category": "industria",
-        "consumes_slots": True,
-        "production": {"componentes": 5}
     },
 
     # --- MEGAESTRUCTURAS ESTELARES (V8.0) ---
