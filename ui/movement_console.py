@@ -8,6 +8,7 @@ V15.4: Desacople de visualización MRG a Vista Condicional.
 V16.0: Integración de Construcción de Puestos de Avanzada.
 V21.0: Integración de Construcción de Estaciones Orbitales y Refactor Soberanía.
 V21.1: Ocultación de Exploración en sectores URBANOS (Visibilidad automática).
+V21.2: Fix crítico - Conversión explícita a UnitSchema para evitar AttributeError.
 """
 
 import streamlit as st
@@ -702,10 +703,19 @@ def render_movement_console(unit_id: int):
         st.error("Sesión no válida.")
         return
 
-    unit = get_unit_by_id(unit_id)
+    # FIX: La función devuelve un dict, pero usamos notación de objeto en el resto del código
+    unit_dict = get_unit_by_id(unit_id)
 
-    if not unit or unit.player_id != player_id:
+    # Validamos usando acceso de diccionario
+    if not unit_dict or unit_dict.get('player_id') != player_id:
         st.error("Unidad no encontrada o acceso denegado.")
+        return
+        
+    # Convertimos a Pydantic Model para soportar notación de punto (unit.location_system_id, etc.)
+    try:
+        unit = UnitSchema(**unit_dict)
+    except Exception as e:
+        st.error(f"Error procesando datos de la unidad: {e}")
         return
 
     # Inyectar CSS
