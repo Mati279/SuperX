@@ -1,5 +1,6 @@
 # core/time_engine.py (Completo)
 # V10.0: Añadidas fases 1.5 (Llegadas de Tránsito) y 2.5 (Detección de Encuentros)
+# V10.4: Añadida fase 3.5 (Actualización Diferida de Soberanía)
 from datetime import datetime, time
 import pytz
 import random
@@ -44,6 +45,9 @@ from core.prestige_engine import (
 from core.movement_engine import process_transit_arrivals
 from core.detection_engine import process_detection_phase
 from data.unit_repository import reset_all_movement_locks, decrement_transit_ticks
+
+# IMPORT V10.4: Soberanía Diferida
+from data.planet_repository import update_planet_sovereignty
 
 # Forzamos la zona horaria a Argentina (GMT-3)
 SAFE_TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
@@ -158,6 +162,9 @@ def _execute_game_logic_tick(execution_time: datetime):
 
         # 3. Fase de Prestigio (Fricción V4.3 y Hegemonía)
         _phase_prestige_calculation(current_tick)
+        
+        # 3.5 V10.4: Actualización de Soberanía Diferida (Construcciones Completadas)
+        _phase_sovereignty_update(current_tick)
 
         # 4. Fase Macro económica (MMFR)
         _phase_macroeconomics()
@@ -516,6 +523,48 @@ def _phase_prestige_calculation(current_tick: int):
                 
     except Exception as e:
         logger.error(f"Error en fase de prestigio: {e}")
+
+def _phase_sovereignty_update(current_tick: int):
+    """
+    Fase 3.5: Actualización de Soberanía por Finalización de Construcciones.
+    Detecta edificios que terminaron de construirse en este tick y recalcula
+    la propiedad del planeta.
+    """
+    log_event("running phase 3.5: Actualización de Soberanía...")
+    try:
+        db = _get_db()
+        # Buscar edificios completados en este tick exacto
+        # Recuperamos planet_asset_id y hacemos join con assets para obtener planet_id
+        response = db.table("planet_buildings")\
+            .select("planet_asset_id, planet_assets(planet_id)")\
+            .eq("built_at_tick", current_tick)\
+            .execute()
+
+        if not response or not response.data:
+            return
+
+        # Extraer IDs de planetas únicos
+        planet_ids = set()
+        for b in response.data:
+            asset = b.get("planet_assets")
+            if asset and "planet_id" in asset:
+                planet_ids.add(asset["planet_id"])
+        
+        if not planet_ids:
+            return
+
+        log_event(f"🏗️ Construcciones finalizadas en {len(planet_ids)} planetas. Recalculando soberanía...")
+
+        count = 0
+        for pid in planet_ids:
+            update_planet_sovereignty(pid)
+            count += 1
+        
+        if count > 0:
+            log_event(f"✅ Soberanía actualizada en {count} sistemas.")
+
+    except Exception as e:
+        logger.error(f"Error en fase de soberanía: {e}")
 
 def _phase_macroeconomics():
     """Fase 4: Economía Macro (MMFR)."""

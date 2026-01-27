@@ -1,4 +1,4 @@
-# core/construction_engine.py
+# core/construction_engine.py (Completo)
 """
 Motor de Construcción.
 Maneja la lógica de construcción de puestos de avanzada y estructuras tácticas
@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional
 from data.database import get_supabase
 from data.player_repository import get_player_finances, update_player_resources
 from data.unit_repository import get_unit_by_id, update_unit_moves
-from data.planet_repository import update_planet_sovereignty
+from data.planet_repository import update_planet_sovereignty, create_planet_asset
 from data.log_repository import log_event
 from data.world_repository import get_world_state
 from core.models import UnitSchema, UnitStatus
@@ -33,7 +33,7 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
     - Descuento de recursos.
     - Creación de edificio (Time: Current Tick + 1).
     - Fatiga de unidad.
-    - Actualización de soberanía.
+    - Actualización de soberanía (Diferida hasta finalización).
     """
     db = get_supabase()
     
@@ -129,21 +129,33 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
             asset_id = asset_res.data["id"]
         else:
             # Si no tiene asset (es su primera construcción), creamos el asset contenedor.
-            # Usamos lógica simple aquí, o importamos create_planet_asset si fuera necesario.
-            # Para evitar circular imports complejos, hacemos insert directo básico.
-            new_asset = {
-                "planet_id": planet_id,
-                "system_id": unit.location_system_id,
-                "player_id": player_id,
-                "nombre_asentamiento": "Puesto de Avanzada",
-                "population": 0.0, # Outpost militar no tiene pop civil inicial obligatoria
-                "base_tier": 1
-            }
-            create_res = db.table("planet_assets").insert(new_asset).execute()
-            if create_res.data:
-                asset_id = create_res.data[0]["id"]
+            # Usamos create_planet_asset importado para asegurar consistencia (V7.7 logic)
+            # Pasamos population 0.0 ya que es un puesto militar, no una colonia civil.
+            new_asset = create_planet_asset(
+                planet_id=planet_id,
+                system_id=unit.location_system_id,
+                player_id=player_id,
+                settlement_name="Puesto de Avanzada",
+                initial_population=0.0 
+            )
+            
+            if new_asset:
+                asset_id = new_asset["id"]
             else:
-                raise Exception("Fallo al crear activo planetario para el puesto.")
+                # Fallback manual si create_planet_asset falla por alguna razón exótica
+                new_asset_manual = {
+                    "planet_id": planet_id,
+                    "system_id": unit.location_system_id,
+                    "player_id": player_id,
+                    "nombre_asentamiento": "Puesto de Avanzada",
+                    "population": 0.0,
+                    "base_tier": 1
+                }
+                create_res = db.table("planet_assets").insert(new_asset_manual).execute()
+                if create_res.data:
+                    asset_id = create_res.data[0]["id"]
+                else:
+                    raise Exception("Fallo al crear activo planetario para el puesto.")
 
         building_data = {
             "planet_asset_id": asset_id,
@@ -162,12 +174,13 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
         # C. Fatiga de Unidad
         update_unit_moves(unit_id, unit.local_moves_count + 1)
 
-        # D. Actualizar Soberanía (Importante para que la UI desbloquee el sector)
-        # Aunque tarde 1 tick, la "reclamación" es inmediata a efectos de mapa, 
-        # aunque el edificio no funcione hasta el siguiente tick.
+        # D. Actualizar Soberanía (DIFERIDA V10.4)
+        # Llamamos a la función, pero gracias al filtro de 'built_at_tick' en planet_repository,
+        # este edificio NO otorgará soberanía inmediata si target_tick > current_tick.
+        # La soberanía real se actualizará en la Phase 3.5 del TimeEngine cuando el tick se alcance.
         update_planet_sovereignty(planet_id)
 
-        msg = f"Iniciada construcción de Puesto de Avanzada en Sector {sector_id}."
+        msg = f"Iniciada construcción de Puesto de Avanzada en Sector {sector_id} (ETA: 1 ciclo)."
         log_event(msg, player_id)
 
         return {"success": True, "message": msg}

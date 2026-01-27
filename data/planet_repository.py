@@ -42,6 +42,7 @@ Actualizado v9.1.0: Implementación de Seguridad de Sistema (Recálculo automát
 Actualizado v9.2.0: Reglas de Soberanía Conflictiva y Excepción de Construcción Orbital (Bypass de Flota).
 Actualizado v10.0: Helper get_player_base_coordinates para Ubicación SQL.
 Actualizado v10.3: Helper get_sector_by_id para exploración táctica.
+Actualizado v10.4: Soberanía Diferida (Filtro por built_at_tick).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -697,6 +698,7 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
       * > 1 Jugador con Outposts (Conflicto) -> None (Tierra de nadie).
       
     V9.0: Al final, recalcula automáticamente el controlador del sistema (cascada).
+    V10.4: Filtra edificios en construcción (built_at_tick > current_tick).
     """
     try:
         db = _get_db()
@@ -722,9 +724,13 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
         asset_ids = [a["id"] for a in assets]
         player_map = {a["id"]: a["player_id"] for a in assets}
 
-        # Obtener edificios relevantes
+        # --- V10.4: Obtener Tick Actual ---
+        world = get_world_state()
+        current_tick = world.get("current_tick", 1)
+
+        # Obtener edificios relevantes (incluyendo built_at_tick)
         buildings_res = db.table("planet_buildings")\
-            .select("building_type, planet_asset_id, is_active")\
+            .select("building_type, planet_asset_id, is_active, built_at_tick")\
             .in_("planet_asset_id", asset_ids)\
             .execute()
 
@@ -735,6 +741,11 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
         orbital_station_owner = None
 
         for b in buildings:
+            # --- V10.4: Filtrar edificios en construcción ---
+            built_at = b.get("built_at_tick", 0)
+            if built_at > current_tick:
+                continue
+
             b_type = b.get("building_type")
             pid = player_map.get(b.get("planet_asset_id"))
             is_active = b.get("is_active", True)
