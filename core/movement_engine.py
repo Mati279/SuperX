@@ -20,6 +20,7 @@ Actualizado V14.3: Eliminada restricción de movimiento para STEALTH_MODE (ahora
 Refactorizado V14.4: Fix cálculo de ship_count dinámico (basado en miembros) y corrección de distancia Starlane por defecto (1.0).
 Refactorizado V14.5: Persistencia de STEALTH_MODE en movimientos y restricción estricta (1 movimiento local).
 Refactorizado V15.2: Refuerzo detección SURFACE_ORBIT para evitar falsos INTER_RING (Fix Anillo 0).
+Refactorizado V16.1: Unificación de respuesta MovementResult (message en lugar de error_message) y mensajes de éxito explícitos.
 """
 
 from typing import Optional, Dict, Any, Tuple, List
@@ -80,7 +81,7 @@ class MovementResult:
     energy_cost: int = 0
     is_instant: bool = False
     movement_locked: bool = False
-    error_message: str = ""
+    message: str = ""  # Unificado: contiene error o mensaje de éxito
 
 
 @dataclass
@@ -434,7 +435,7 @@ def initiate_movement(
     # Obtener unidad
     unit_data = get_unit_by_id(unit_id)
     if not unit_data:
-        return MovementResult(success=False, error_message="Unidad no encontrada")
+        return MovementResult(success=False, message="Unidad no encontrada")
 
     unit = UnitSchema.from_dict(unit_data)
 
@@ -455,7 +456,7 @@ def initiate_movement(
     # Validar movimiento
     is_valid, error_msg = validate_movement_request(unit, destination, player_id, movement_type)
     if not is_valid:
-        return MovementResult(success=False, error_message=error_msg)
+        return MovementResult(success=False, message=error_msg)
 
     # Calcular costos (incluyendo boost si aplica)
     ticks, energy_cost = calculate_movement_cost(unit, destination, movement_type, use_boost)
@@ -467,7 +468,7 @@ def initiate_movement(
         if current_energy < energy_cost:
             return MovementResult(
                 success=False,
-                error_message=f"Energía insuficiente. Necesitas {energy_cost} células, tienes {current_energy}."
+                message=f"Energía insuficiente. Necesitas {energy_cost} células, tienes {current_energy}."
             )
         # Deducir energía
         update_player_resources(player_id, {
@@ -496,9 +497,10 @@ def initiate_movement(
                 movement_type=movement_type,
                 ticks_required=0,
                 is_instant=True,
-                movement_locked=applied_lock
+                movement_locked=applied_lock,
+                message="Movimiento instantáneo completado exitosamente."
             )
-        return MovementResult(success=False, error_message="Error ejecutando movimiento instantáneo")
+        return MovementResult(success=False, message="Error ejecutando movimiento instantáneo")
     else:
         # Movimiento con duración
         starlane = None
@@ -524,9 +526,10 @@ def initiate_movement(
                 success=True,
                 movement_type=movement_type,
                 ticks_required=ticks,
-                energy_cost=energy_cost
+                energy_cost=energy_cost,
+                message=f"Tránsito iniciado. Tiempo estimado: {ticks} ticks."
             )
-        return MovementResult(success=False, error_message="Error iniciando tránsito")
+        return MovementResult(success=False, message="Error técnico iniciando tránsito.")
 
 
 def _execute_instant_movement(

@@ -11,6 +11,7 @@ V21.1: Ocultación de Exploración en sectores URBANOS (Visibilidad automática)
 V21.2: Fix crítico - Conversión explícita a UnitSchema para evitar AttributeError.
 V21.3: Fix validación movimientos locales (moves_this_turn -> local_moves_count).
 V22.0: Refactor integral de firmas de funciones y limpieza de UI.
+V22.1: Sincronización con MovementEngine V16.1 (MovementResult.message y corrección de Enum WARP).
 """
 
 import streamlit as st
@@ -675,7 +676,7 @@ def _render_ring_options(
                             sector_id=None,
                             ring=0
                      )
-                     selected_type = MovementType.WARP_JUMP
+                     selected_type = MovementType.WARP # Corrección: WARP_JUMP -> WARP
         else:
             st.warning("No hay sistemas dentro del rango de salto WARP.")
 
@@ -878,12 +879,14 @@ def render_movement_console(unit_id: int):
         allowed_moves = DISORIENTED_MAX_LOCAL_MOVES if unit.disoriented else MAX_LOCAL_MOVES_PER_TURN
         
         # Validación de movimientos locales usando move_type para filtrar WARP/STARLANE
-        if unit.local_moves_count >= allowed_moves and move_type not in [MovementType.WARP_JUMP, MovementType.STARLANE]:
+        # Corrección: WARP_JUMP -> WARP (enum correcto en el motor)
+        if unit.local_moves_count >= allowed_moves and move_type not in [MovementType.WARP, MovementType.STARLANE]:
              limit_msg = "desorientación" if unit.disoriented else "límite estándar"
              st.warning(f"⚠️ La unidad ha alcanzado el límite de movimientos locales por turno ({limit_msg}).")
              return
 
         # Refactor: initiate_movement con firma nueva (sin move_type, con player_id y current_tick)
+        # Se elimina explícitamente cualquier parámetro extra, el motor calcula el tipo.
         result = initiate_movement(unit_id, dest_data, player_id, current_tick, use_boost=use_boost)
         
         if result.success:
