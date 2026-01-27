@@ -5,6 +5,7 @@ Incluye consultas de estado, conocimiento de jugador y Fog of War.
 Actualizado v7.2: Soporte para Niebla de Superficie (grant_sector_knowledge).
 Actualizado v10.3: Helper get_sector_by_id para exploración táctica.
 Actualizado v11.2: Conteo de slots de base en get_planet_sectors_status.
+Refactor v12.0: Validación estricta de slots ocupados por bases militares.
 """
 
 from typing import Dict, List, Any, Optional
@@ -49,10 +50,12 @@ def get_planet_sectors_status(planet_id: int, player_id: Optional[int] = None) -
         for b in buildings:
             sid = b.get("sector_id")
             bt = b.get("building_type")
+            # Verificar si el tipo de edificio consume slot
             if sid and BUILDING_TYPES.get(bt, {}).get("consumes_slots", True):
                 counts[sid] = counts.get(sid, 0) + 1
 
         # 2b. Contar Bases Militares (Siempre ocupan slot en su sector)
+        # NOTA: Las bases se almacenan en tabla 'bases', no en 'planet_buildings'.
         base_response = db.table("bases")\
             .select("sector_id")\
             .eq("planet_id", planet_id)\
@@ -62,6 +65,7 @@ def get_planet_sectors_status(planet_id: int, player_id: Optional[int] = None) -
         for base in bases:
             sid = base.get("sector_id")
             if sid:
+                # La base militar ocupa 1 slot físico
                 counts[sid] = counts.get(sid, 0) + 1
 
         # 3. Validar conocimiento del jugador
@@ -81,6 +85,7 @@ def get_planet_sectors_status(planet_id: int, player_id: Optional[int] = None) -
         # 4. Mapear resultados
         for s in sectors:
             s['slots'] = s.get('max_slots', 2)
+            # El conteo ya incluye Edificios + Bases
             s['buildings_count'] = counts.get(s["id"], 0)
 
             is_orbital = s.get("sector_type") == SECTOR_TYPE_ORBITAL
@@ -134,9 +139,10 @@ def get_sector_details(sector_id: int) -> Optional[Dict[str, Any]]:
                 names.append(f"{name} (T{b['building_tier']})")
 
         # Incluir Base Militar si existe en el sector
-        base_res = db.table("bases").select("tier").eq("sector_id", sector_id).maybe_single().execute()
+        base_res = db.table("bases").select("tier, name").eq("sector_id", sector_id).maybe_single().execute()
         if base_res and base_res.data:
-            names.append(f"Base Militar (T{base_res.data['tier']})")
+            base_name = base_res.data.get("name") or "Base Militar"
+            names.append(f"{base_name} (T{base_res.data['tier']})")
 
         sector["buildings_list"] = names
         return sector

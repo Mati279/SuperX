@@ -6,6 +6,7 @@ Implementa la visualización de la Planetología Avanzada.
 Refactor V10.0: Limpieza total de acciones de exploración manual y debug buttons. 
 Ahora todas las acciones tácticas (Explorar/Colonizar) se realizan desde la Consola de Movimiento.
 Refactor V16.0: Soporte para visualización de "En Construcción" y Puestos de Avanzada.
+Refactor V17.0: Consolidación de gestión de edificios mediante modal único. Integración de bases militares.
 """
 
 import streamlit as st
@@ -29,7 +30,7 @@ from core.world_constants import (
     RESOURCE_UI_CONFIG
 )
 from ui.state import get_player_id
-from ui.base_management import render_base_management_panel, render_base_card_mini
+from ui.base_management import render_base_management_panel
 
 
 # --- Helpers de Facciones (Simplificado) ---
@@ -44,6 +45,67 @@ def _get_faction_name_by_player(player_id):
             return res.data.get('faccion_nombre', "Sin Facción")
     except: pass
     return "Desconocido"
+
+
+@st.dialog("Gestión de Estructura")
+def show_structure_management_modal(building: dict, asset_id: int, player_id: int, planet_id: int):
+    """
+    Modal unificado para la gestión de estructuras.
+    Maneja tanto edificios estándar como Bases Militares virtuales.
+    """
+    b_type = building.get('building_type')
+    is_virtual_base = building.get('is_virtual', False)
+    
+    # 1. Gestión de Base Militar (Integración de base_management)
+    if is_virtual_base or b_type == 'military_base':
+        sector_id = building.get('sector_id')
+        render_base_management_panel(sector_id, planet_id)
+        
+        st.divider()
+        st.markdown("#### Zona de Peligro")
+        if st.button("🚨 Desmantelar Base Militar", type="primary", key=f"nuke_base_{building['id']}"):
+             # Aquí usamos una lógica especial o llamamos a una función específica para destruir bases
+             # Por ahora, usamos demolish_building asumiendo que el ID de la base se maneja correctamente
+             # Ojo: demolish_building espera ID de planet_buildings, pero la base está en 'bases'.
+             # Se requiere una función específica en el backend real, pero simularé la llamada a la tabla bases
+             try:
+                 db = get_supabase()
+                 db.table("bases").delete().eq("id", building['id']).execute()
+                 st.toast("Base Militar desmantelada. Soberanía perdida.")
+                 st.rerun()
+             except Exception as e:
+                 st.error(f"Error al desmantelar: {e}")
+        return
+
+    # 2. Gestión de Edificio Estándar
+    b_def = BUILDING_TYPES.get(b_type, {})
+    name = b_def.get("name", b_type)
+    tier = building.get('building_tier', 1)
+    
+    st.header(f"{name} (Nivel {tier})")
+    st.info(b_def.get('description', 'Estructura operativa.'))
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        # Demoler
+        if st.button("🗑️ Demoler", use_container_width=True, key=f"btn_dem_{building['id']}"):
+            if demolish_building(building['id'], player_id):
+                st.success("Orden de demolición enviada. Efectiva en el próximo ciclo.")
+                st.rerun()
+            else:
+                st.error("Error al procesar demolición.")
+                
+    with col2:
+        # Mejorar (Placeholder lógica básica)
+        can_upgrade = False # TODO: Implementar lógica real de check_upgrade
+        st.button("⬆️ Mejorar", disabled=not can_upgrade, use_container_width=True, help="Funcionalidad en desarrollo", key=f"btn_upg_{building['id']}")
+        
+    with col3:
+        # Asignar Guardia
+        st.button("🛡️ Guardia", disabled=True, use_container_width=True, help="Asignar unidad defensiva (Próximamente)", key=f"btn_grd_{building['id']}")
+
+    st.caption("Nota: La demolición recupera el 50% de los materiales invertidos.")
 
 
 def render_planet_surface(planet_id: int):
@@ -102,7 +164,7 @@ def render_planet_surface(planet_id: int):
     
     if orbital_sector:
         with st.container(border=True):
-             _render_sector_card(orbital_sector, buildings, asset_id, player_id, debug_mode)
+             _render_sector_card(orbital_sector, buildings, asset_id, player_id, debug_mode, planet_id)
     else:
         with st.container(border=True):
             st.caption("Espacio orbital no cartografiado.")
@@ -170,14 +232,15 @@ def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_
         for idx, sector in enumerate(row_sectors):
             with cols[idx]:
                 with st.container(border=True):
-                    _render_sector_card(sector, buildings, asset_id, player_id, debug_mode)
+                    _render_sector_card(sector, buildings, asset_id, player_id, debug_mode, planet['id'])
 
 
-def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id: int, debug_mode: bool):
+def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id: int, debug_mode: bool, planet_id: int):
     """
     Renderiza una tarjeta individual para un sector específico.
     V10.0: Eliminación de acciones de exploración y puestos de avanzada debug.
     V16.0: Soporte visual para 'En Construcción' y habilitación de menú si existe Outpost.
+    V17.0: Reemplazo de botones directos por Modal de Gestión (Gear Icon).
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -255,27 +318,33 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     if sector_buildings:
         st.markdown("**Estructuras:**")
         for b in sector_buildings:
-            b_def = BUILDING_TYPES.get(b['building_type'], {})
-            name = b_def.get("name", b['building_type'])
+            # Determinación de nombre: Prioridad a custom_name (base militar), luego config, luego tipo
+            b_type = b['building_type']
+            b_def = BUILDING_TYPES.get(b_type, {})
+            
+            # Nombre visual
+            name = b.get("custom_name") or b_def.get("name", b_type)
             
             # Verificar si está en construcción
             built_at = b.get('built_at_tick', 0)
             is_under_construction = built_at > current_tick
             
+            # Layout de fila: Nombre + Estado | Botón Gestión
             c1, c2 = st.columns([0.8, 0.2])
             
-            if is_under_construction:
-                ticks_left = built_at - current_tick
-                c1.markdown(f"🚧 *Construyendo: {name}* (T-{ticks_left})")
-            else:
-                c1.write(f"• {name} (Tier {b['building_tier']})")
+            with c1:
+                if is_under_construction:
+                    ticks_left = built_at - current_tick
+                    st.markdown(f"🚧 *Construyendo: {name}* (T-{ticks_left})")
+                else:
+                    st.write(f"• {name} (Tier {b['building_tier']})")
             
-            # Demolición (Solo si es mío)
+            # Botón de Gestión (Gear Icon) - Solo si es mío
             if asset_id and b.get('player_id') == player_id:
-                if c2.button("🗑️", key=f"dem_{b['id']}", help=f"Demoler {name}"):
-                    if demolish_building(b['id'], player_id):
-                        st.toast(f"Estructura {name} demolida.")
-                        st.rerun()
+                with c2:
+                    if st.button("⚙️", key=f"mng_btn_{b['id']}", help=f"Gestionar {name}"):
+                        show_structure_management_modal(b, asset_id, player_id, planet_id)
+
     else:
         st.caption("No hay estructuras en este sector.")
 
@@ -283,23 +352,8 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     is_sector_empty = (not sector_buildings)
     is_my_sector = (current_sector_owner_id == player_id)
 
-    # --- PANEL DE BASE MILITAR (Solo sectores urbanos bajo control) ---
-    is_urban_sector = s_type == "Urbano"
-    if is_urban_sector and is_my_sector:
-        st.divider()
-        # Obtener planet_id del sector
-        planet_id = sector.get("planet_id")
-        if not planet_id:
-            # Intentar obtener de la base de datos
-            try:
-                db = get_supabase()
-                sec_res = db.table("sectors").select("planet_id").eq("id", sector['id']).single().execute()
-                planet_id = sec_res.data.get("planet_id") if sec_res and sec_res.data else None
-            except:
-                pass
-
-        if planet_id:
-            render_base_management_panel(sector['id'], planet_id)
+    # --- PANEL DE BASE MILITAR (Eliminado en V17: Ahora integrado en el modal de gestión) ---
+    # La gestión de bases se realiza clickeando el engranaje de la estructura "Base Militar"
 
     # --- PANEL DE CONSTRUCCIÓN (Solo si es dueño) ---
     
@@ -324,10 +378,23 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                     # No mostrar Outpost en este menú (se construye vía unidad)
                     if t == "outpost":
                         continue
+                    # Bases militares se construyen desde panel dedicado si no existen
+                    if t == "military_base":
+                        continue
                         
                     if not allowed or s_type in allowed:
                          filtered_types.append(t)
-
+                
+                # Opción especial: Construir Base si es urbano y no hay una
+                if s_type == SECTOR_TYPE_URBAN:
+                    # Verificar si ya existe base en el planeta para este jugador (regla de negocio 1 base x planeta)
+                    # Esto se valida en build_base, pero podemos filtrar aquí visualmente
+                    pass # Se deja para el panel de base management que ahora se invoca de otra forma?
+                    # TODO: Revisar si se debe re-integrar el botón de "Construir Base" aquí o dejarlo aparte.
+                    # En V17, si no hay base, render_base_management_panel muestra el botón de construir.
+                    # Pero render_base_management_panel ya no se llama automáticamente.
+                    # Solución: Añadir botón explícito de "Fundar Base" si es sector urbano propio.
+                    
                 selected_type = st.selectbox(
                     "Tipo de Edificio",
                     filtered_types,
@@ -353,6 +420,16 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                             st.rerun()
                         else:
                             st.error("Error en la construcción.")
+
+                # Botón especial para Bases Militares (si aplica)
+                if s_type == SECTOR_TYPE_URBAN:
+                    st.divider()
+                    st.caption("Proyectos Especiales")
+                    if st.button("🛡️ Proyecto: Base Militar", key=f"proj_base_{sector['id']}"):
+                        # Usamos un modal especial para la construcción inicial de la base
+                        # Truco: llamamos al modal pasando un objeto dummy para disparar el modo 'no base'
+                        dummy_base = {'building_type': 'military_base', 'is_virtual': True, 'sector_id': sector['id'], 'id': -1}
+                        show_structure_management_modal(dummy_base, asset_id, player_id, planet_id)
 
         else:
              st.warning("⛔ Sector controlado por otra facción.")

@@ -4,11 +4,13 @@ Gestión de Bases Militares.
 Interfaz para construcción, mejora y gestión de módulos de bases.
 v1.0.0: Implementación inicial.
 v1.0.1: Fix TypeError en target_tier None.
+Refactor v12.0: Soporte para renombrado de base y demolición externa.
 """
 
 import streamlit as st
 from data.database import get_supabase
 from data.planet_repository import get_planet_by_id, get_planet_sectors_status
+from data.planets.buildings import update_base_name
 from data.world_repository import get_world_state
 from core.base_engine import (
     build_base,
@@ -99,6 +101,9 @@ def _render_build_base_panel(sector_id: int, planet_id: int, player_id: int):
 def _render_base_details(base: dict, player_id: int, current_tick: int):
     """Renderiza los detalles de una base existente."""
     base_tier = base.get("tier", 1)
+    base_id = base.get("id")
+    current_name = base.get("name") or f"Base Militar {base_id}"
+    
     is_upgrading = base.get("upgrade_in_progress", False)
     completes_at = base.get("upgrade_completes_at_tick")
     
@@ -107,7 +112,17 @@ def _render_base_details(base: dict, player_id: int, current_tick: int):
     if target_tier is None:
         target_tier = base_tier + 1
 
-    st.markdown(f"### :shield: Base Militar Nv.{base_tier}")
+    st.markdown(f"### :shield: {current_name} (Nv.{base_tier})")
+    
+    # --- Renombrado Rápido ---
+    with st.expander("📝 Renombrar Base"):
+        new_name = st.text_input("Nuevo nombre:", value=current_name, key=f"rename_in_{base_id}")
+        if st.button("Guardar Nombre", key=f"btn_ren_{base_id}"):
+            if update_base_name(base_id, new_name, player_id):
+                st.success("Nombre actualizado.")
+                st.rerun()
+            else:
+                st.error("Error al actualizar nombre.")
 
     # Estado de mejora
     if is_upgrading and completes_at:
