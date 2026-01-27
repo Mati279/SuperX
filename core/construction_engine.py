@@ -7,10 +7,11 @@ Refactorizado V19.0: Actualización de estado de unidad a CONSTRUCTING.
 Refactorizado V19.1: Restricción de soberanía para Puestos de Avanzada.
 Refactorizado V20.0: Restricciones de Sectores Urbanos y Soberanía Centralizada.
 Refactorizado V20.1: Implementación de Construcción Orbital Táctica.
+Refactorizado V21.0: Implementación de Estaciones Orbitales (Stellar Buildings).
 """
 
 from typing import Dict, Any, Optional
-from data.database import get_supabase
+from data.database import get_supabase, get_service_container
 from data.player_repository import get_player_finances, update_player_resources
 from data.unit_repository import get_unit_by_id, update_unit_moves
 from data.planet_repository import update_planet_sovereignty, create_planet_asset
@@ -19,6 +20,8 @@ from data.world_repository import get_world_state
 from core.models import UnitSchema, UnitStatus
 from core.movement_constants import MAX_LOCAL_MOVES_PER_TURN
 from core.world_constants import SECTOR_TYPE_ORBITAL
+from config.app_constants import TEXT_MODEL_NAME
+from google.genai import types
 
 # Costos fijos para Puesto de Avanzada (Outpost)
 OUTPOST_COST_CREDITS = 200
@@ -29,10 +32,14 @@ OUTPOST_BUILDING_TYPE = "outpost"
 BASE_COST_CREDITS = 500
 BASE_COST_MATERIALS = 100
 
-# Costos fijos para Estación Orbital (V20.1)
+# Costos fijos para Estación Orbital (V20.1 / V21.0)
 ORBITAL_STATION_COST_CREDITS = 800
 ORBITAL_STATION_COST_MATERIALS = 30
 ORBITAL_BUILDING_TYPE = "orbital_station"
+
+# Alias para la tarea solicitada
+ORBITAL_STATION_CREDITS = ORBITAL_STATION_COST_CREDITS
+ORBITAL_STATION_MATERIALS = ORBITAL_STATION_COST_MATERIALS
 
 def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -> Dict[str, Any]:
     """
@@ -326,26 +333,32 @@ def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> D
 
 def resolve_orbital_construction(unit_id: int, sector_id: int, player_id: int) -> Dict[str, Any]:
     """
-    V20.1: Intenta construir una Estación Orbital en el sector actual de la unidad.
+    OBSOLETO: Usar build_orbital_station para nuevas implementaciones (V21.0).
+    Mantiene compatibilidad con estructuras planet_buildings antiguas.
+    """
+    return build_orbital_station(unit_id, sector_id)
+
+def build_orbital_station(unit_id: int, sector_id: int) -> Dict[str, Any]:
+    """
+    V21.0: Construye una Estación Orbital en un sector espacial (Orbital o Deep Space).
+    Registra la construcción en 'stellar_buildings'.
     
-    Reglas:
-    - Sector debe ser tipo 'ORBITAL'.
-    - Solo una estructura por sector (máx 1 slot).
-    - Costo: 800 CR / 30 MAT.
-    - Tiempo: 2 ciclos.
+    Requisitos:
+    - Sector tipo 'ORBITAL' o similar.
+    - Costo: 800 CR, 30 MAT.
+    - Mensaje narrativo generado por IA.
     """
     db = get_supabase()
     
-    # 1. Validar Unidad y Fatiga
+    # 1. Recuperar Unidad y Datos
     unit_data = get_unit_by_id(unit_id)
     if not unit_data:
         return {"success": False, "error": "Unidad no encontrada."}
     
     unit = UnitSchema.from_dict(unit_data)
+    player_id = unit.player_id
     
-    if unit.player_id != player_id:
-        return {"success": False, "error": "Error de autorización."}
-        
+    # 2. Validaciones de Unidad (Estado y Movimiento)
     if unit.status == UnitStatus.TRANSIT:
         return {"success": False, "error": "La unidad está en tránsito."}
     
@@ -355,103 +368,99 @@ def resolve_orbital_construction(unit_id: int, sector_id: int, player_id: int) -
     limit = 1 if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
     if unit.local_moves_count >= limit:
         return {"success": False, "error": "La unidad está fatigada y no puede construir este turno."}
-
-    # 2. Validar Ubicación y Tipo de Sector
+    
     if unit.location_sector_id != sector_id:
         return {"success": False, "error": "La unidad no está en el sector objetivo."}
-    
-    sector_res = db.table("sectors").select("sector_type").eq("id", sector_id).maybe_single().execute()
-    if not sector_res.data or sector_res.data.get("sector_type") != SECTOR_TYPE_ORBITAL:
-         return {"success": False, "error": "Las Estaciones Orbitales solo pueden construirse en sectores ORBITAL."}
 
-    # 3. Validar Ocupación (Máx 1 Estación)
-    buildings_check = db.table("planet_buildings")\
+    # 3. Validar Tipo de Sector
+    sector_res = db.table("sectors").select("sector_type, name").eq("id", sector_id).maybe_single().execute()
+    if not sector_res.data:
+        return {"success": False, "error": "Sector no encontrado."}
+    
+    sector_info = sector_res.data
+    sector_type = sector_info.get("sector_type", "")
+    
+    # Permitir 'Orbital' o 'Deep Space'
+    allowed_types = [SECTOR_TYPE_ORBITAL, "Deep Space", "Espacio Profundo"]
+    if sector_type not in allowed_types:
+        return {"success": False, "error": f"Las Estaciones Orbitales requieren espacio abierto (Orbital/Deep Space). Actual: {sector_type}"}
+
+    # 4. Validar Existencia Previa (Stellar Buildings)
+    existing = db.table("stellar_buildings")\
         .select("id")\
         .eq("sector_id", sector_id)\
+        .eq("is_active", True)\
         .execute()
         
-    if buildings_check.data and len(buildings_check.data) > 0:
-        return {"success": False, "error": "El sector orbital ya está ocupado."}
+    if existing.data and len(existing.data) > 0:
+        return {"success": False, "error": "Ya existe una estructura estelar activa en este sector."}
 
-    # 4. Validar Recursos
+    # 5. Validar Recursos
     finances = get_player_finances(player_id)
-    current_credits = finances.get("creditos", 0)
-    current_materials = finances.get("materiales", 0)
-
-    if current_credits < ORBITAL_STATION_COST_CREDITS or current_materials < ORBITAL_STATION_COST_MATERIALS:
+    curr_cred = finances.get("creditos", 0)
+    curr_mat = finances.get("materiales", 0)
+    
+    if curr_cred < ORBITAL_STATION_CREDITS or curr_mat < ORBITAL_STATION_MATERIALS:
         return {
             "success": False, 
-            "error": f"Recursos insuficientes. Requiere {ORBITAL_STATION_COST_CREDITS} CR y {ORBITAL_STATION_COST_MATERIALS} Materiales."
+            "error": f"Recursos insuficientes. Requiere {ORBITAL_STATION_CREDITS} CR y {ORBITAL_STATION_MATERIALS} Materiales."
         }
 
     # --- EJECUCIÓN ---
     try:
         # A. Descontar Recursos
-        new_credits = current_credits - ORBITAL_STATION_COST_CREDITS
-        new_materials = current_materials - ORBITAL_STATION_COST_MATERIALS
-        
         update_player_resources(player_id, {
-            "creditos": new_credits,
-            "materiales": new_materials
+            "creditos": curr_cred - ORBITAL_STATION_CREDITS,
+            "materiales": curr_mat - ORBITAL_STATION_MATERIALS
         })
-
-        # B. Insertar Edificio (Asset creation if needed)
-        world = get_world_state()
-        current_tick = world.get("current_tick", 1)
-        target_tick = current_tick + 2 # V20.1: Tarda 2 ciclos
         
-        planet_id = unit.location_planet_id
-        
-        # Verificar o crear Asset
-        asset_res = db.table("planet_assets")\
-            .select("id")\
-            .eq("planet_id", planet_id)\
-            .eq("player_id", player_id)\
-            .maybe_single()\
-            .execute()
-            
-        asset_id = None
-        
-        if asset_res and asset_res.data:
-            asset_id = asset_res.data["id"]
-        else:
-            new_asset = create_planet_asset(
-                planet_id=planet_id,
-                system_id=unit.location_system_id,
-                player_id=player_id,
-                settlement_name="Puesto Orbital",
-                initial_population=0.0 
-            )
-            asset_id = new_asset["id"]
-
-        building_data = {
-            "planet_asset_id": asset_id,
-            "player_id": player_id,
-            "building_type": ORBITAL_BUILDING_TYPE,
-            "building_tier": 1,
+        # B. Insertar en Stellar Buildings
+        stellar_data = {
             "sector_id": sector_id,
-            "is_active": True,
-            "built_at_tick": target_tick,
-            "pops_required": 20, # Requiere pops eventualmente, pero se construye vacía
-            "energy_consumption": 0 # Inicial
+            "player_id": player_id,
+            "building_type": "Orbital Station",
+            "is_active": True
+            # created_at es default now()
         }
         
-        db.table("planet_buildings").insert(building_data).execute()
-
-        # C. Fatiga y Estado de Unidad
+        db.table("stellar_buildings").insert(stellar_data).execute()
+        
+        # C. Actualizar Estado Unidad
         db.table("units").update({
             "status": UnitStatus.CONSTRUCTING,
             "local_moves_count": MAX_LOCAL_MOVES_PER_TURN
         }).eq("id", unit_id).execute()
+        
+        # D. Generar Log Narrativo con IA (Gemini)
+        narrative_log = f"Estación Orbital iniciada en {sector_info.get('name')}."
+        try:
+            container = get_service_container()
+            if container.is_ai_available():
+                prompt = (
+                    f"Genera un mensaje de registro militar breve (1 frase) confirmando el inicio de la construcción "
+                    f"de una Estación Orbital en el sector {sector_info.get('name')} por la unidad {unit.name}. "
+                    f"Estilo: Sci-fi, táctico."
+                )
+                
+                # Configuración explícita para Gemini
+                ai_resp = container.ai.models.generate_content(
+                    model=TEXT_MODEL_NAME,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.7,
+                        max_output_tokens=100
+                    )
+                )
+                if ai_resp.text:
+                    narrative_log = ai_resp.text.strip()
+        except Exception as ai_e:
+            print(f"Error generando narrativa AI: {ai_e}")
+            # Fallback silencioso al log por defecto
 
-        # D. Actualizar Soberanía
-        update_planet_sovereignty(planet_id)
-
-        msg = f"Unidad '{unit.name}' iniciando despliegue de Estación Orbital en Sector {sector_id} (ETA: 2 ciclos)."
-        log_event(msg, player_id)
-
-        return {"success": True, "message": msg}
+        log_event(narrative_log, player_id)
+        
+        return {"success": True, "message": narrative_log}
 
     except Exception as e:
-        log_event(f"Error crítico construyendo estación orbital: {e}", player_id, is_error=True)
+        log_event(f"Error crítico en build_orbital_station: {e}", player_id, is_error=True)
         return {"success": False, "error": f"Error del sistema: {e}"}

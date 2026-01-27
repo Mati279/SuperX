@@ -6,6 +6,7 @@ V12.0: Adaptación para uso en componente/diálogo.
 V15.0: Integración de Exploración Táctica de Sectores.
 V15.4: Desacople de visualización MRG a Vista Condicional.
 V16.0: Integración de Construcción de Puestos de Avanzada.
+V21.0: Integración de Construcción de Estaciones Orbitales.
 """
 
 import streamlit as st
@@ -42,7 +43,15 @@ from core.exploration_engine import resolve_sector_exploration, ExplorationResul
 from core.mrg_engine import ResultType
 # Importamos la VISTA de resultado (no el diálogo) para renderizarla in-place
 from ui.dialogs.roster_dialogs import render_exploration_result_view
-from core.construction_engine import resolve_outpost_construction, OUTPOST_COST_CREDITS, OUTPOST_COST_MATERIALS
+from core.construction_engine import (
+    resolve_outpost_construction, 
+    build_orbital_station,
+    OUTPOST_COST_CREDITS, 
+    OUTPOST_COST_MATERIALS,
+    ORBITAL_STATION_CREDITS,
+    ORBITAL_STATION_MATERIALS
+)
+from core.world_constants import SECTOR_TYPE_ORBITAL
 
 
 def _inject_movement_css():
@@ -905,13 +914,13 @@ def render_movement_console():
          remaining = limit_count - unit.local_moves_count
          st.info(f"⚠️ Unidad parcialmente fatigada. {limit_txt} (Restantes: {remaining})")
 
-    # --- V15.0 & V16.0: SECCIÓN DE ACCIONES TÁCTICAS (Exploración y Construcción) ---
+    # --- V15.0 & V16.0 & V21.0: SECCIÓN DE ACCIONES TÁCTICAS ---
     if unit.status != UnitStatus.TRANSIT and unit.location_sector_id and unit.location_planet_id:
         sectors = get_planet_sectors_status(unit.location_planet_id, player_id)
         current_sector = next((s for s in sectors if s['id'] == unit.location_sector_id), None)
         
         is_known = current_sector.get('is_discovered', False) if current_sector else False
-        is_orbital = current_sector.get('sector_type') == 'Orbital' if current_sector else False
+        is_orbital = current_sector.get('sector_type') == SECTOR_TYPE_ORBITAL if current_sector else False
 
         st.markdown("### 🔭 Acciones Tácticas")
         can_act = unit.local_moves_count < limit_count
@@ -932,7 +941,6 @@ def render_movement_console():
                             st.error(f"Error crítico: {e}")
             
             # 2. Construcción (Puesto de Avanzada)
-            # Solo si es conocido, no es orbital, y está vacío (buildings_count == 0)
             elif current_sector and is_known and not is_orbital:
                 # Verificar ocupación localmente (la lógica fuerte está en el backend)
                 buildings_here = current_sector.get('buildings_count', 0)
@@ -951,6 +959,21 @@ def render_movement_console():
                                 st.error(res["error"])
                 else:
                     st.caption("✅ Sector ocupado/reclamado.")
+
+            # 3. V21.0 Construcción Orbital (Estaciones)
+            elif current_sector and is_known and is_orbital:
+                st.info("Espacio orbital libre para desarrollo de infraestructura estelar.")
+                st.caption(f"Costo: {ORBITAL_STATION_CREDITS} CR, {ORBITAL_STATION_MATERIALS} Materiales.")
+                
+                if st.button("🛰️ Construir Estación Orbital", type="primary", use_container_width=True):
+                     with st.spinner("Desplegando módulos orbitales..."):
+                         res = build_orbital_station(unit_id, unit.location_sector_id)
+                         if res["success"]:
+                             st.success(res["message"])
+                             st.balloons()
+                             st.rerun()
+                         else:
+                             st.error(res["error"])
 
     movement_result: Optional[Tuple[DestinationData, MovementType, bool]] = None
 
