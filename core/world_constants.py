@@ -632,7 +632,7 @@ SECTOR_SLOTS_CONFIG = {
     SECTOR_TYPE_URBAN: 3,        # Urbano: 3 slots (Ajustado V7.6)
     SECTOR_TYPE_INHOSPITABLE: 0, # Inhóspito: 0 slots
     SECTOR_TYPE_ORBITAL: 1,      # Orbital: 1 slot (V6.4)
-    SECTOR_TYPE_STELLAR: 3,      # Estelar: 3 slots (V8.0 - Megaestructuras)
+    SECTOR_TYPE_STELLAR: 1,      # Estelar: 1 slot (Ajuste V8.0 - Megaestructuras Únicas)
     # Mapeo dinámico de yacimientos de recursos (Todos 2 slots)
     **{name: 2 for name in SECTOR_NAMES_BY_CATEGORY.values()},
     # Mapeo dinámico de sectores inhóspitos por bioma (Todos 0 slots)
