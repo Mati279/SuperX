@@ -17,6 +17,7 @@ Refactor V20.0: Visibilidad global de Sectores Urbanos (Fow Lift).
 Refactor V20.1: Excepción de construcción orbital (No requiere comando previo) y restricción civil para despliegue táctico.
 Refactor V21.0: Ajuste de Permisos de Construcción (Soberanía Planetaria).
 Refactor V21.1: Debug Hook para construcción forzada de Bases en zonas hostiles.
+Refactor V21.2: Integración de Estaciones Orbitales (Stellar Buildings) en visualización y gestión.
 """
 
 import streamlit as st
@@ -64,13 +65,14 @@ def show_structure_management_modal(building: dict, asset_id: int, player_id: in
     Modal unificado para la gestión de estructuras.
     Maneja tanto edificios estándar como Bases Militares virtuales.
     V19.0: Soporta asset_id None para bases militares de ocupación.
+    V21.2: Soporte para Estaciones Orbitales (stellar_buildings).
     """
     b_type = building.get('building_type')
     is_virtual_base = building.get('is_virtual', False)
 
     # 1. Gestión de Base Militar (Integración de base_management)
     #    Solo requiere sector_id y planet_id, asset_id puede ser None
-    if is_virtual_base or b_type == 'military_base':
+    if is_virtual_base and b_type == 'military_base' or b_type == 'military_base':
         sector_id = building.get('sector_id')
         if not sector_id:
             st.error("Error: sector_id no disponible para esta base.")
@@ -92,7 +94,23 @@ def show_structure_management_modal(building: dict, asset_id: int, player_id: in
                  st.error(f"Error al desmantelar: {e}")
         return
 
-    # 2. Gestión de Edificio Estándar
+    # 2. Gestión de Estación Orbital (Stellar Building)
+    if b_type == 'orbital_station' or b_type == 'Orbital Station':
+         st.header("Estación Orbital")
+         st.info("Estructura de mando y control orbital. Permite la construcción en superficie y defiende el espacio inmediato.")
+         
+         st.divider()
+         if st.button("🚨 Desmantelar Estación", type="primary", key=f"nuke_orb_{building['id']}"):
+             try:
+                 # Lógica específica para stellar_buildings
+                 get_supabase().table("stellar_buildings").delete().eq("id", building['id']).execute()
+                 st.toast("Estación Orbital desmantelada.")
+                 st.rerun()
+             except Exception as e:
+                 st.error(f"Error al desmantelar: {e}")
+         return
+
+    # 3. Gestión de Edificio Estándar
     b_def = BUILDING_TYPES.get(b_type, {})
     name = b_def.get("name", b_type)
     tier = building.get('building_tier', 1)
@@ -263,6 +281,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     V20.1: Excepción de construcción orbital (No requiere comando previo) y restricción civil para despliegue táctico.
     V21.0: Ajuste de Permisos de Construcción (Soberanía Planetaria).
     V21.1: Debug Hook para construcción forzada.
+    V21.2: Detección y renderizado de Estructuras Estelares (Orbital Stations).
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -383,8 +402,36 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
         except Exception as e:
             if debug_mode: st.error(f"Error fetching base: {e}")
 
+    # 1.5. Chequeo de Estructura Estelar (Orbital) - NEW V21.2
+    # Detecta estaciones orbitales en la tabla stellar_buildings
+    detected_stellar_building = None
+    if is_orbital:
+        try:
+            # Query stellar_buildings
+            # Asumimos una por sector orbital para simplificación visual por ahora
+            res = get_supabase().table("stellar_buildings").select("*").eq("sector_id", sector['id']).maybe_single().execute()
+            if res.data:
+                d = res.data
+                # Normalización de nombre: en DB puede estar como "Orbital Station", mapeamos a snake_case
+                b_type_raw = d.get('building_type', 'Orbital Station')
+                b_type_norm = 'orbital_station' if b_type_raw in ['Orbital Station', 'orbital_station'] else b_type_raw
+
+                detected_stellar_building = {
+                    'id': d['id'],
+                    'building_type': b_type_norm,
+                    'is_virtual': True, # Tratamiento virtual (no está en planet_buildings)
+                    'sector_id': sector['id'],
+                    'player_id': d['player_id'],
+                    'building_tier': 1,
+                    'custom_name': "Estación Orbital",
+                    'built_at_tick': d.get('built_at_tick', 0),
+                    'is_active': d.get('is_active', True)
+                }
+        except Exception as e:
+             if debug_mode: st.error(f"Error fetching stellar building: {e}")
+
     # 2. Determinar si hay estructuras que mostrar
-    has_structures = bool(sector_buildings) or detected_base is not None
+    has_structures = bool(sector_buildings) or detected_base is not None or detected_stellar_building is not None
 
     # Flag para controlar si se permite construcción civil
     has_operational_command = False
@@ -405,7 +452,8 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
             # Verificar si es estructura de comando operativa (V19.1)
             # Solo Outpost, HQ o Base Militar completadas habilitan construcción civil
             # V20.1: Orbital Station también cuenta como comando
-            if not is_under_construction and b_type in ['outpost', 'hq', 'military_base', 'orbital_station'] and str(b.get('player_id')) == str(player_id):
+            # V21.2: Normalización de nombre Orbital Station
+            if not is_under_construction and b_type in ['outpost', 'hq', 'military_base', 'orbital_station', 'Orbital Station'] and str(b.get('player_id')) == str(player_id):
                  has_operational_command = True
 
             # Layout de fila: Nombre + Estado | Botón Gestión
@@ -457,6 +505,38 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
             else:
                 # Base enemiga: mostrar indicador visual sin botón de gestión
                 with c2:
+                    st.caption("👁️")
+
+        # 2c. Renderizar Estructura Estelar Detectada (V21.2)
+        if detected_stellar_building:
+            sb = detected_stellar_building
+            sb_name = sb.get('custom_name')
+            sb_owner_id = sb.get('player_id')
+            sb_id = sb['id']
+            sb_built_at = sb.get('built_at_tick', 0)
+            
+            is_sb_constructing = sb_built_at > current_tick
+            
+            # Check comando operativo: Estación Orbital operativa habilita construcción civil
+            if not is_sb_constructing and str(sb_owner_id) == str(player_id):
+                has_operational_command = True
+            
+            c1, c2 = st.columns([0.8, 0.2])
+            with c1:
+                if is_sb_constructing:
+                     ticks_left = sb_built_at - current_tick
+                     st.markdown(f"🚧 *Construyendo Estación Orbital* (T-{ticks_left})")
+                else:
+                    st.markdown(f"🛰️ **{sb_name}**")
+                    st.caption("Operativa • Control Orbital")
+            
+            # Botón de Gestión
+            if str(sb_owner_id) == str(player_id):
+                with c2:
+                    if st.button("⚙️", key=f"mng_sb_btn_{sector['id']}_{sb_id}", help="Gestionar Estación"):
+                         show_structure_management_modal(sb, asset_id, player_id, planet_id)
+            else:
+                 with c2:
                     st.caption("👁️")
 
     else:
@@ -553,8 +633,3 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                             if new_struct:
                                 st.toast(f"Construcción de {BUILDING_TYPES[selected_type]['name']} iniciada.")
                                 st.rerun()
-                            else:
-                                st.error("Error en la construcción.")
-
-        else:
-             st.warning("⛔ Sector controlado por otra facción.")
