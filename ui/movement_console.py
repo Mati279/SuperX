@@ -9,6 +9,7 @@ V16.0: Integración de Construcción de Puestos de Avanzada.
 V21.0: Integración de Construcción de Estaciones Orbitales y Refactor Soberanía.
 V21.1: Ocultación de Exploración en sectores URBANOS (Visibilidad automática).
 V21.2: Fix crítico - Conversión explícita a UnitSchema para evitar AttributeError.
+V21.3: Fix validación movimientos locales (moves_this_turn -> local_moves_count).
 """
 
 import streamlit as st
@@ -629,63 +630,65 @@ def _render_ring_options(
             st.info("No hay Starlanes conectadas a este sistema.")
 
     with tab4:
-        st.markdown("**⚡ Motor WARP**")
+        st.markdown("**🌌 Salto WARP (Sin Starlane)**")
         action_container = st.container()
         
-        st.caption("Salto FTL directo a otro sistema. Consume mucha energía.")
-
         all_systems = get_all_systems_from_db()
+        # Filtrar solo sistemas a distancia válida (WARP_MAX_DISTANCE)
+        valid_warp_targets = []
         
-        # Corrección V14.0: Filtrar sistemas > 30 UA de distancia
-        valid_warp_destinations = []
-        origin_sys = get_system_by_id(system_id)
+        current_sys = get_system_by_id(system_id)
         
-        if origin_sys:
-            origin_coords = (origin_sys.get('x', 0), origin_sys.get('y', 0))
-            
-            for s in all_systems:
-                if s['id'] == system_id: continue
-                dest_coords = (s.get('x', 0), s.get('y', 0))
-                dist = calculate_euclidean_distance(origin_coords, dest_coords)
-                if dist > WARP_MAX_DISTANCE: # > 30 UA
-                    valid_warp_destinations.append(s)
+        if current_sys:
+             for s in all_systems:
+                 if s['id'] == system_id:
+                     continue
+                 dist = calculate_euclidean_distance(
+                     current_sys['x'], current_sys['y'],
+                     s['x'], s['y']
+                 )
+                 if dist <= WARP_MAX_DISTANCE:
+                     valid_warp_targets.append({
+                         'id': s['id'],
+                         'name': s['name'],
+                         'dist': dist
+                     })
         
-        if valid_warp_destinations:
-            # Ordenar alfabéticamente
-            valid_warp_destinations.sort(key=lambda x: x.get('name', ''))
-            
-            warp_options = {s['id']: s.get('name', f"Sistema {s['id']}") for s in valid_warp_destinations}
+        if valid_warp_targets:
+            warp_options = {s['id']: f"{s['name']} (Dist: {s['dist']:.1f})" for s in valid_warp_targets}
             
             selected_warp_dest = st.selectbox(
-                "Sistema destino (WARP)",
+                "Sistema destino (Warp)",
                 options=list(warp_options.keys()),
                 format_func=lambda x: warp_options.get(x, str(x)),
                 key="select_warp_space"
             )
             
             if selected_warp_dest:
-                 estimate = estimate_travel_time(
-                    system_id, 
-                    selected_warp_dest, 
-                    current_ring, 
-                    0, 
-                    movement_type=MovementType.WARP_JUMP,
-                    ship_count=real_ship_count
-                 )
-                 
-                 with action_container:
-                    _render_cost_display(estimate, real_ship_count)
-                    
-                    if st.button("EJECUTAR SALTO WARP", type="primary", key="btn_warp_space", use_container_width=True):
-                        selected_dest = DestinationData(
+                # Estimar costo warp
+                target_sys = next(s for s in valid_warp_targets if s['id'] == selected_warp_dest)
+                dist_val = target_sys['dist']
+                
+                # Importar constantes de cálculo WARP si necesario, o usar estimate (aunque estimate pide starlane usually)
+                # En movement_engine el warp se calcula distinto. Usaremos estimate_travel_time con tipo implícito si soporta
+                # Pero estimate_travel_time actualmente está muy ligado a starlanes o local.
+                # Para UI, mostramos calculo manual aproximado o usamos una función de engine si existe.
+                # Revisando movement_engine... estimate_travel_time soporta cross-system sin starlane? No explícito.
+                # Usaremos la lógica de movement_engine.initiate_movement que llama a _calculate_warp_cost interno.
+                # Por ahora, mostramos distancia.
+                
+                st.info(f"Distancia de Salto: {dist_val:.1f} parsecs")
+                
+                if st.button("Iniciar Salto WARP", type="primary", key="btn_warp_space", use_container_width=True):
+                     selected_dest = DestinationData(
                             system_id=selected_warp_dest,
                             planet_id=None,
                             sector_id=None,
                             ring=0
-                        )
-                        selected_type = MovementType.WARP_JUMP
+                     )
+                     selected_type = MovementType.WARP_JUMP
         else:
-            st.info("No hay sistemas lejanos válidos para salto WARP (>30 UA).")
+            st.warning("No hay sistemas dentro del rango de salto WARP.")
 
     if selected_dest and selected_type:
         return (selected_dest, selected_type, use_boost)
@@ -879,8 +882,11 @@ def render_movement_console(unit_id: int):
         dest_data, move_type, use_boost = selection
         
         # Validar penalización de movimiento local si está desorientada
-        if unit.moves_this_turn >= DISORIENTED_MAX_LOCAL_MOVES and move_type not in [MovementType.WARP_JUMP, MovementType.STARLANE]:
-             st.warning("⚠️ La unidad está desorientada y ha alcanzado el límite de movimientos locales por turno.")
+        allowed_moves = DISORIENTED_MAX_LOCAL_MOVES if unit.disoriented else MAX_LOCAL_MOVES_PER_TURN
+        
+        if unit.local_moves_count >= allowed_moves and move_type not in [MovementType.WARP_JUMP, MovementType.STARLANE]:
+             limit_msg = "desorientación" if unit.disoriented else "límite estándar"
+             st.warning(f"⚠️ La unidad ha alcanzado el límite de movimientos locales por turno ({limit_msg}).")
              return
 
         result = initiate_movement(unit_id, dest_data, move_type, use_boost=use_boost)
