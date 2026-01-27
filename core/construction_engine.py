@@ -10,6 +10,7 @@ Refactorizado V20.1: Implementación de Construcción Orbital Táctica.
 Refactorizado V21.0: Implementación de Estaciones Orbitales (Stellar Buildings).
 Refactorizado V21.2: Soporte para Modo Debug (Bypass Subyugación) en Bases Militares.
 Refactorizado V22.0: Homogeneización de firmas (player_id explícito) en Orbital Station.
+Refactorizado V22.1: Implementación de Construcción Diferida y Estandarización de Errores (message).
 """
 
 from typing import Dict, Any, Optional
@@ -51,28 +52,32 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
     - PROHIBIDO en sectores 'URBAN'.
     - PROHIBIDO en CUALQUIER sector del planeta si el planeta tiene al menos un sector 'URBAN' (Soberanía Centralizada).
     - Soberanía: El jugador NO debe ser ya el dueño del planeta.
+    
+    Actualización V22.1 (Diferido):
+    - Tiempo de construcción: 1 Tick.
+    - Persiste construction_end_tick = current_tick + 1.
     """
     db = get_supabase()
     
     # 1. Validar Unidad y Fatiga
     unit_data = get_unit_by_id(unit_id)
     if not unit_data:
-        return {"success": False, "error": "Unidad no encontrada."}
+        return {"success": False, "message": "Unidad no encontrada."}
     
     unit = UnitSchema.from_dict(unit_data)
     
     if unit.player_id != player_id:
-        return {"success": False, "error": "Error de autorización."}
+        return {"success": False, "message": "Error de autorización."}
         
     if unit.status == UnitStatus.TRANSIT:
-        return {"success": False, "error": "La unidad está en tránsito."}
+        return {"success": False, "message": "La unidad está en tránsito."}
     
     if unit.status == UnitStatus.CONSTRUCTING:
-         return {"success": False, "error": "La unidad ya está ocupada construyendo."}
+         return {"success": False, "message": "La unidad ya está ocupada construyendo."}
         
     limit = 1 if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
     if unit.local_moves_count >= limit:
-        return {"success": False, "error": "La unidad está fatigada y no puede construir este turno."}
+        return {"success": False, "message": "La unidad está fatigada y no puede construir este turno."}
 
     # 1.5 Validar Soberanía Planetaria Existente
     try:
@@ -87,14 +92,14 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
             if surface_owner == player_id:
                 return {
                     "success": False, 
-                    "error": "Tu facción ya controla la soberanía de este planeta. Construye infraestructura civil directamente."
+                    "message": "Tu facción ya controla la soberanía de este planeta. Construye infraestructura civil directamente."
                 }
     except Exception as e:
-        return {"success": False, "error": f"Error verificando soberanía planetaria: {e}"}
+        return {"success": False, "message": f"Error verificando soberanía planetaria: {e}"}
 
     # 2. Validar Ubicación
     if unit.location_sector_id != sector_id:
-        return {"success": False, "error": "La unidad no está en el sector objetivo."}
+        return {"success": False, "message": "La unidad no está en el sector objetivo."}
 
     # --- REGLAS V20.0: RESTRICCIONES URBANAS ---
     
@@ -103,7 +108,7 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
     if target_sector_res.data and target_sector_res.data.get("sector_type") == "URBAN":
         return {
             "success": False, 
-            "error": "🚫 No se pueden construir Puestos de Avanzada en sectores URBANOS. Debes subyugar la población y construir una Base Militar."
+            "message": "🚫 No se pueden construir Puestos de Avanzada en sectores URBANOS. Debes subyugar la población y construir una Base Militar."
         }
 
     # B. Verificar si el planeta tiene ALGÚN sector URBANO (Bloqueo Planetario)
@@ -116,7 +121,7 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
     if urban_check.data and len(urban_check.data) > 0:
         return {
             "success": False,
-            "error": "🚫 Planeta Habitado: La soberanía se decide en los Centros Urbanos. No puedes reclamar territorio salvaje mediante Puestos de Avanzada."
+            "message": "🚫 Planeta Habitado: La soberanía se decide en los Centros Urbanos. No puedes reclamar territorio salvaje mediante Puestos de Avanzada."
         }
 
     # 3. Validar Estado del Sector (Ocupación)
@@ -126,7 +131,7 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
         .execute()
         
     if buildings_check.data and len(buildings_check.data) > 0:
-        return {"success": False, "error": "El sector ya tiene estructuras."}
+        return {"success": False, "message": "El sector ya tiene estructuras."}
 
     # 4. Validar Recursos
     finances = get_player_finances(player_id)
@@ -136,7 +141,7 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
     if current_credits < OUTPOST_COST_CREDITS or current_materials < OUTPOST_COST_MATERIALS:
         return {
             "success": False, 
-            "error": f"Recursos insuficientes. Requiere {OUTPOST_COST_CREDITS} CR y {OUTPOST_COST_MATERIALS} Materiales."
+            "message": f"Recursos insuficientes. Requiere {OUTPOST_COST_CREDITS} CR y {OUTPOST_COST_MATERIALS} Materiales."
         }
 
     # --- EJECUCIÓN ---
@@ -153,7 +158,7 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
         # B. Insertar Edificio
         world = get_world_state()
         current_tick = world.get("current_tick", 1)
-        target_tick = current_tick + 1 
+        target_tick = current_tick + 1 # Construcción rápida (1 turno)
         
         planet_id = unit.location_planet_id
         
@@ -192,10 +197,11 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
         
         db.table("planet_buildings").insert(building_data).execute()
 
-        # C. Fatiga
+        # C. Fatiga y Estado Diferido
         db.table("units").update({
             "status": UnitStatus.CONSTRUCTING,
-            "local_moves_count": MAX_LOCAL_MOVES_PER_TURN
+            "local_moves_count": MAX_LOCAL_MOVES_PER_TURN,
+            "construction_end_tick": target_tick
         }).eq("id", unit_id).execute()
 
         # D. Actualizar Soberanía
@@ -208,7 +214,7 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
 
     except Exception as e:
         log_event(f"Error crítico construyendo outpost: {e}", player_id, is_error=True)
-        return {"success": False, "error": f"Error del sistema: {e}"}
+        return {"success": False, "message": f"Error del sistema: {e}"}
 
 def resolve_base_construction(unit_id: Optional[int], sector_id: int, player_id: int, bypass_subjugation: bool = False) -> Dict[str, Any]:
     """
@@ -227,7 +233,7 @@ def resolve_base_construction(unit_id: Optional[int], sector_id: int, player_id:
     sector_res = db.table("sectors").select("sector_type, is_subjugated, planet_id").eq("id", sector_id).maybe_single().execute()
     
     if not sector_res.data:
-        return {"success": False, "error": "Sector no encontrado."}
+        return {"success": False, "message": "Sector no encontrado."}
     
     sector_data = sector_res.data
     location_planet_id = sector_data.get("planet_id")
@@ -239,47 +245,47 @@ def resolve_base_construction(unit_id: Optional[int], sector_id: int, player_id:
     if unit_id is not None:
         unit_data = get_unit_by_id(unit_id)
         if not unit_data:
-            return {"success": False, "error": "Unidad no encontrada."}
+            return {"success": False, "message": "Unidad no encontrada."}
         
         unit = UnitSchema.from_dict(unit_data)
         unit_name = unit.name
         
         if unit.player_id != player_id:
-            return {"success": False, "error": "Error de autorización."}
+            return {"success": False, "message": "Error de autorización."}
             
         if unit.status == UnitStatus.TRANSIT:
-            return {"success": False, "error": "La unidad está en tránsito."}
+            return {"success": False, "message": "La unidad está en tránsito."}
         
         if unit.status == UnitStatus.CONSTRUCTING:
-             return {"success": False, "error": "La unidad ya está ocupada construyendo."}
+             return {"success": False, "message": "La unidad ya está ocupada construyendo."}
             
         limit = 1 if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
         if unit.local_moves_count >= limit:
-            return {"success": False, "error": "La unidad está fatigada y no puede construir este turno."}
+            return {"success": False, "message": "La unidad está fatigada y no puede construir este turno."}
 
         # 2. Validar Ubicación Física de la Unidad
         if unit.location_sector_id != sector_id:
-            return {"success": False, "error": "La unidad no está en el sector objetivo."}
+            return {"success": False, "message": "La unidad no está en el sector objetivo."}
     else:
         # Modo Debug / Bypass Unit
         if not bypass_subjugation:
-            return {"success": False, "error": "ID de unidad requerido para construcción estándar."}
+            return {"success": False, "message": "ID de unidad requerido para construcción estándar."}
         
     # 3. Validar Tipo de Sector y Subyugación (V20.0)
     if sector_data.get("sector_type") != "URBAN":
-        return {"success": False, "error": "Las Bases Militares solo pueden construirse en sectores URBANOS."}
+        return {"success": False, "message": "Las Bases Militares solo pueden construirse en sectores URBANOS."}
 
     # REGLA V20.0: Check de Subyugación (Con Bypass)
     if not bypass_subjugation and not sector_data.get("is_subjugated", False):
         return {
             "success": False, 
-            "error": "🚫 Sector Urbano hostil. Debes SUBYUGAR la población local antes de establecer una Base Militar."
+            "message": "🚫 Sector Urbano hostil. Debes SUBYUGAR la población local antes de establecer una Base Militar."
         }
 
     # 4. Validar Unicidad (No debe existir otra base en el sector)
     base_check = db.table("bases").select("id").eq("sector_id", sector_id).maybe_single().execute()
     if base_check.data:
-        return {"success": False, "error": "Ya existe una Base Militar en este sector."}
+        return {"success": False, "message": "Ya existe una Base Militar en este sector."}
 
     # 5. Validar Recursos (Incluso en debug, cobramos para mantener economía consistente, o se podría skippear)
     # De momento se cobra siempre
@@ -290,7 +296,7 @@ def resolve_base_construction(unit_id: Optional[int], sector_id: int, player_id:
     if current_credits < BASE_COST_CREDITS or current_materials < BASE_COST_MATERIALS:
         return {
             "success": False, 
-            "error": f"Recursos insuficientes. Requiere {BASE_COST_CREDITS} CR y {BASE_COST_MATERIALS} Materiales."
+            "message": f"Recursos insuficientes. Requiere {BASE_COST_CREDITS} CR y {BASE_COST_MATERIALS} Materiales."
         }
 
     # --- EJECUCIÓN ---
@@ -334,7 +340,10 @@ def resolve_base_construction(unit_id: Optional[int], sector_id: int, player_id:
         if unit_id is not None:
             db.table("units").update({
                 "status": UnitStatus.CONSTRUCTING,
-                "local_moves_count": MAX_LOCAL_MOVES_PER_TURN
+                "local_moves_count": MAX_LOCAL_MOVES_PER_TURN,
+                # Las bases son complejas, podríamos diferir más, pero V19.0 no especificaba tiempo extra para bases
+                # Asumimos 1 ciclo estándar
+                "construction_end_tick": target_tick
             }).eq("id", unit_id).execute()
 
         # D. Actualizar Soberanía
@@ -348,7 +357,7 @@ def resolve_base_construction(unit_id: Optional[int], sector_id: int, player_id:
 
     except Exception as e:
         log_event(f"Error crítico construyendo base militar: {e}", player_id, is_error=True)
-        return {"success": False, "error": f"Error del sistema: {e}"}
+        return {"success": False, "message": f"Error del sistema: {e}"}
 
 def resolve_orbital_construction(unit_id: int, sector_id: int, player_id: int) -> Dict[str, Any]:
     """
@@ -363,42 +372,42 @@ def build_orbital_station(unit_id: int, sector_id: int, player_id: int) -> Dict[
     V21.0: Construye una Estación Orbital en un sector espacial (Orbital o Deep Space).
     Registra la construcción en 'stellar_buildings'.
     
-    Requisitos:
-    - Sector tipo 'ORBITAL' o similar.
-    - Costo: 800 CR, 30 MAT.
-    - Mensaje narrativo generado por IA.
+    Actualización V22.1 (Diferido):
+    - Tiempo de construcción: 2 Ticks (Proyecto de envergadura).
+    - Inicia con is_active=False.
+    - Bloquea unidad con status=CONSTRUCTING por 2 ciclos.
     """
     db = get_supabase()
     
     # 1. Recuperar Unidad y Datos
     unit_data = get_unit_by_id(unit_id)
     if not unit_data:
-        return {"success": False, "error": "Unidad no encontrada."}
+        return {"success": False, "message": "Unidad no encontrada."}
     
     unit = UnitSchema.from_dict(unit_data)
     
     # Validación de Seguridad V22.0
     if unit.player_id != player_id:
-        return {"success": False, "error": "Error de autorización."}
+        return {"success": False, "message": "Error de autorización."}
     
     # 2. Validaciones de Unidad (Estado y Movimiento)
     if unit.status == UnitStatus.TRANSIT:
-        return {"success": False, "error": "La unidad está en tránsito."}
+        return {"success": False, "message": "La unidad está en tránsito."}
     
     if unit.status == UnitStatus.CONSTRUCTING:
-         return {"success": False, "error": "La unidad ya está ocupada construyendo."}
+         return {"success": False, "message": "La unidad ya está ocupada construyendo."}
         
     limit = 1 if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
     if unit.local_moves_count >= limit:
-        return {"success": False, "error": "La unidad está fatigada y no puede construir este turno."}
+        return {"success": False, "message": "La unidad está fatigada y no puede construir este turno."}
     
     if unit.location_sector_id != sector_id:
-        return {"success": False, "error": "La unidad no está en el sector objetivo."}
+        return {"success": False, "message": "La unidad no está en el sector objetivo."}
 
     # 3. Validar Tipo de Sector
     sector_res = db.table("sectors").select("sector_type, name").eq("id", sector_id).maybe_single().execute()
     if not sector_res.data:
-        return {"success": False, "error": "Sector no encontrado."}
+        return {"success": False, "message": "Sector no encontrado."}
     
     sector_info = sector_res.data
     sector_type = sector_info.get("sector_type", "")
@@ -406,17 +415,16 @@ def build_orbital_station(unit_id: int, sector_id: int, player_id: int) -> Dict[
     # Permitir 'Orbital' o 'Deep Space'
     allowed_types = [SECTOR_TYPE_ORBITAL, "Deep Space", "Espacio Profundo"]
     if sector_type not in allowed_types:
-        return {"success": False, "error": f"Las Estaciones Orbitales requieren espacio abierto (Orbital/Deep Space). Actual: {sector_type}"}
+        return {"success": False, "message": f"Las Estaciones Orbitales requieren espacio abierto (Orbital/Deep Space). Actual: {sector_type}"}
 
     # 4. Validar Existencia Previa (Stellar Buildings)
     existing = db.table("stellar_buildings")\
         .select("id")\
         .eq("sector_id", sector_id)\
-        .eq("is_active", True)\
-        .execute()
+        .execute() # Validamos incluso inactivas para no superponer obras
         
     if existing.data and len(existing.data) > 0:
-        return {"success": False, "error": "Ya existe una estructura estelar activa en este sector."}
+        return {"success": False, "message": "Ya existe una estructura estelar (o una obra en curso) en este sector."}
 
     # 5. Validar Recursos
     finances = get_player_finances(player_id)
@@ -426,24 +434,28 @@ def build_orbital_station(unit_id: int, sector_id: int, player_id: int) -> Dict[
     if curr_cred < ORBITAL_STATION_CREDITS or curr_mat < ORBITAL_STATION_MATERIALS:
         return {
             "success": False, 
-            "error": f"Recursos insuficientes. Requiere {ORBITAL_STATION_CREDITS} CR y {ORBITAL_STATION_MATERIALS} Materiales."
+            "message": f"Recursos insuficientes. Requiere {ORBITAL_STATION_CREDITS} CR y {ORBITAL_STATION_MATERIALS} Materiales."
         }
 
-    # --- EJECUCIÓN ---
+    # --- EJECUCIÓN DIFERIDA V22.1 ---
     try:
+        world = get_world_state()
+        current_tick = world.get("current_tick", 1)
+        target_tick = current_tick + 2  # Construcción orbital toma 2 ciclos
+        
         # A. Descontar Recursos
         update_player_resources(player_id, {
             "creditos": curr_cred - ORBITAL_STATION_CREDITS,
             "materiales": curr_mat - ORBITAL_STATION_MATERIALS
         })
         
-        # B. Insertar en Stellar Buildings
+        # B. Insertar en Stellar Buildings (INACTIVO)
         stellar_data = {
             "sector_id": sector_id,
             "player_id": player_id,
             "building_type": "Orbital Station",
-            "is_active": True
-            # created_at es default now()
+            "is_active": False, # Se activa en Phase 3.7 cuando built_at_tick <= current_tick
+            "built_at_tick": target_tick
         }
         
         db.table("stellar_buildings").insert(stellar_data).execute()
@@ -451,18 +463,19 @@ def build_orbital_station(unit_id: int, sector_id: int, player_id: int) -> Dict[
         # C. Actualizar Estado Unidad
         db.table("units").update({
             "status": UnitStatus.CONSTRUCTING,
-            "local_moves_count": MAX_LOCAL_MOVES_PER_TURN
+            "local_moves_count": MAX_LOCAL_MOVES_PER_TURN,
+            "construction_end_tick": target_tick
         }).eq("id", unit_id).execute()
         
         # D. Generar Log Narrativo con IA (Gemini)
-        narrative_log = f"Estación Orbital iniciada en {sector_info.get('name')}."
+        narrative_log = f"Construcción de Estación Orbital iniciada en {sector_info.get('name')} (ETA: 2 ciclos)."
         try:
             container = get_service_container()
             if container.is_ai_available():
                 prompt = (
                     f"Genera un mensaje de registro militar breve (1 frase) confirmando el inicio de la construcción "
                     f"de una Estación Orbital en el sector {sector_info.get('name')} por la unidad {unit.name}. "
-                    f"Estilo: Sci-fi, táctico."
+                    f"Menciona que la obra tardará 2 ciclos solares. Estilo: Sci-fi, ingenieril."
                 )
                 
                 # Configuración explícita para Gemini
@@ -486,4 +499,4 @@ def build_orbital_station(unit_id: int, sector_id: int, player_id: int) -> Dict[
 
     except Exception as e:
         log_event(f"Error crítico en build_orbital_station: {e}", player_id, is_error=True)
-        return {"success": False, "error": f"Error del sistema: {e}"}
+        return {"success": False, "message": f"Error del sistema: {e}"}

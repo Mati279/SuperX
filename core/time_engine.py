@@ -2,6 +2,7 @@
 # V10.0: Añadidas fases 1.5 (Llegadas de Tránsito) y 2.5 (Detección de Encuentros)
 # V10.4: Añadida fase 3.5 (Actualización Diferida de Soberanía)
 # V19.0: Reset de unidades CONSTRUCTING en fase de limpieza.
+# V22.1: Nueva fase 3.7 (Activación Estelar) y limpieza selectiva de construcción.
 from datetime import datetime, time
 import pytz
 import random
@@ -173,6 +174,9 @@ def _execute_game_logic_tick(execution_time: datetime):
         # 3.6 V11.0: Fase de Mejora de Bases
         _phase_base_upgrades(current_tick)
 
+        # 3.7 V22.1: Fase de Activación de Estructuras Estelares
+        _phase_stellar_activation(current_tick)
+
         # 4. Fase Macro económica (MMFR)
         _phase_macroeconomics()
 
@@ -181,7 +185,7 @@ def _execute_game_logic_tick(execution_time: datetime):
         # 6. Fase de Resolución de Misiones y Eventos de Personaje (MRG)
         _phase_mission_resolution()
 
-        # 7. Fase de Limpieza y Auditoría
+        # 7. Fase de Limpieza y Auditoría (Incluye liberación de unidades)
         _phase_cleanup_and_audit()
 
         # 7.5 V16.0: Fase de Supervivencia de Tropas
@@ -612,6 +616,45 @@ def _phase_base_upgrades(current_tick: int):
         logger.error(f"Error en fase de mejoras de bases: {e}")
 
 
+def _phase_stellar_activation(current_tick: int):
+    """
+    Fase 3.7: Activación de Estructuras Estelares Diferidas (Orbital Stations).
+    Busca estructuras inactivas cuyo built_at_tick <= current_tick y las activa.
+    """
+    log_event("running phase 3.7: Activación Estelar...")
+    try:
+        db = _get_db()
+        
+        # 1. Buscar edificios listos para activar
+        ready_buildings = db.table("stellar_buildings")\
+            .select("id, sector_id, player_id, building_type")\
+            .eq("is_active", False)\
+            .lte("built_at_tick", current_tick)\
+            .execute()
+            
+        if not ready_buildings.data:
+            return
+
+        # 2. Activar masivamente
+        updates_count = 0
+        for b in ready_buildings.data:
+            bid = b['id']
+            pid = b['player_id']
+            btype = b['building_type']
+            
+            # Update single row to safe concurrency
+            res = db.table("stellar_buildings").update({"is_active": True}).eq("id", bid).execute()
+            if res.data:
+                updates_count += 1
+                log_event(f"✨ Estructura '{btype}' operativa en sector {b['sector_id']}.", pid)
+        
+        if updates_count > 0:
+            log_event(f"🚀 {updates_count} estructuras estelares han entrado en línea.")
+            
+    except Exception as e:
+        logger.error(f"Error en fase de activación estelar: {e}")
+
+
 def _phase_macroeconomics():
     """Fase 4: Economía Macro (MMFR)."""
     log_event("running phase 4: Macroeconomía (MMFR)...")
@@ -676,16 +719,16 @@ def _phase_cleanup_and_audit():
         current_tick = get_world_state().get('current_tick', 1)
         for player in get_all_players(): expire_old_candidates(player['id'], current_tick)
         
-        # V19.0: Reset de Unidades Constructoras
-        # Las unidades que terminaron de construir (ciclo completado) vuelven a estar disponibles.
-        # No usamos Enum aquí para evitar circular import si core/models importa algo que importe time_engine
+        # V19.0 / V22.1: Reset de Unidades Constructoras
+        # Solo liberamos unidades cuyo tiempo de construcción haya finalizado (construction_end_tick <= current_tick)
         res = db.table("units").update({
-            "status": "GROUND",
-            # No reseteamos moves aquí, eso se maneja si el tick resetea moves globales o en la lógica de refresco
-        }).eq("status", "CONSTRUCTING").execute()
+            "status": "GROUND", 
+            # NOTA: Se devuelve a GROUND por defecto. 
+            # Si estaba en espacio, el sistema de movimiento debería manejarlo en el siguiente tick o refresh.
+        }).eq("status", "CONSTRUCTING").lte("construction_end_tick", current_tick).execute()
         
         if res.data and len(res.data) > 0:
-            log_event(f"🔨 {len(res.data)} unidades de construcción han vuelto al servicio activo.")
+            log_event(f"🔨 {len(res.data)} unidades de construcción han completado tareas y vuelven al servicio activo.")
 
     except Exception as e:
         logger.error(f"Error en limpieza: {e}")

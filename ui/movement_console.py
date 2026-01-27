@@ -11,7 +11,7 @@ V21.1: Ocultación de Exploración en sectores URBANOS (Visibilidad automática)
 V21.2: Fix crítico - Conversión explícita a UnitSchema para evitar AttributeError.
 V21.3: Fix validación movimientos locales (moves_this_turn -> local_moves_count).
 V22.0: Refactor integral de firmas de funciones y limpieza de UI.
-V22.1: Sincronización con MovementEngine V16.1 (MovementResult.message y corrección de Enum WARP).
+V22.1: Sincronización con MovementEngine V16.1 y Robustez en UI de Construcción.
 """
 
 import streamlit as st
@@ -726,6 +726,10 @@ def render_movement_console(unit_id: int):
     if unit.status == UnitStatus.TRANSIT:
         st.info("🚀 La unidad está actualmente en tránsito.")
         return
+        
+    if unit.status == UnitStatus.CONSTRUCTING:
+        st.info(f"🚧 La unidad está realizando operaciones de construcción (Finaliza en Tick {unit_dict.get('construction_end_tick', '?')}).")
+        return
 
     # 4. Acciones Tácticas (Exploración, Construcción, Sigilo)
     st.divider()
@@ -832,11 +836,11 @@ def render_movement_console(unit_id: int):
                 if st.button("🏗️ Construir Puesto", use_container_width=True, help=f"Costo: {OUTPOST_COST_CREDITS} CR / {OUTPOST_COST_MATERIALS} MAT"):
                     # Refactor: Pasar sector explícitamente
                     result = resolve_outpost_construction(unit_id, unit.location_sector_id, player_id)
-                    if result['success']:
-                        st.success(result['message'])
+                    if result.get('success'):
+                        st.success(result.get('message', 'Construcción iniciada.'))
                         st.rerun()
                     else:
-                        st.error(result['message'])
+                        st.error(result.get('message', result.get('error', 'Error desconocido')))
             elif unit.location_sector_id and loc_info.get('sector') != SECTOR_TYPE_ORBITAL:
                  st.button("🏗️ Construir Puesto", disabled=True, use_container_width=True, help=outpost_reason)
 
@@ -846,11 +850,11 @@ def render_movement_console(unit_id: int):
                  if st.button("🛰️ Estación Orbital", use_container_width=True, help=f"Costo: {ORBITAL_STATION_CREDITS} CR / {ORBITAL_STATION_MATERIALS} MAT"):
                     # Refactor: Pasar sector explícitamente
                     result = build_orbital_station(unit_id, unit.location_sector_id, player_id)
-                    if result['success']:
-                        st.success(result['message'])
+                    if result.get('success'):
+                        st.success(result.get('message', 'Construcción Orbital iniciada.'))
                         st.rerun()
                     else:
-                        st.error(result['message'])
+                        st.error(result.get('message', result.get('error', 'Error desconocido')))
             elif unit.location_sector_id and loc_info.get('sector') == SECTOR_TYPE_ORBITAL:
                   st.button("🛰️ Estación Orbital", disabled=True, use_container_width=True, help=orbital_reason)
 
