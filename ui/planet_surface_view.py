@@ -9,6 +9,7 @@ Refactor V16.0: Soporte para visualización de "En Construcción" y Puestos de A
 Refactor V17.0: Consolidación de gestión de edificios mediante modal único. Integración de bases militares.
 Refactor V17.1 (Fix): Corrección de detección de soberanía basada en Planet Owner IDs.
 Refactor V18.0: Eliminación de construcción manual de Bases Militares (delegado a Unidades). Unificación de UI.
+Refactor V18.1 (Fix): Inyección de botón de gestión para Bases Militares detectadas fuera de la lista de edificios estándar.
 """
 
 import streamlit as st
@@ -70,7 +71,7 @@ def show_structure_management_modal(building: dict, asset_id: int, player_id: in
              try:
                  db = get_supabase()
                  # Nota: building['id'] aquí corresponde al ID real de la base en la tabla 'bases'
-                 # gracias a la inyección virtual en el repositorio.
+                 # gracias a la inyección virtual.
                  db.table("bases").delete().eq("id", building['id']).execute()
                  st.toast("Base Militar desmantelada. Soberanía perdida.")
                  st.rerun()
@@ -241,11 +242,8 @@ def _render_sectors_management(planet: dict, asset: dict, player_id: int, debug_
 def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id: int, debug_mode: bool, planet: dict):
     """
     Renderiza una tarjeta individual para un sector específico.
-    V10.0: Eliminación de acciones de exploración y puestos de avanzada debug.
-    V16.0: Soporte visual para 'En Construcción' y habilitación de menú si existe Outpost.
     V17.0: Reemplazo de botones directos por Modal de Gestión (Gear Icon).
-    V17.1: Fix lógica soberanía. Prioridad a planet['owner_id'] sobre lista de edificios.
-    V18.0: Eliminado botón de construcción manual de Bases Militares (Acción delegada a Unidades).
+    V18.1: Fix para visualizar botón de gestión en bases militares que no aparecen en la lista de edificios.
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -278,11 +276,10 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     
     st.markdown(f"### {icon} {s_type}")
     
-    # --- PROPIEDAD DEL SECTOR (LÓGICA CORREGIDA V17.1) ---
+    # --- PROPIEDAD DEL SECTOR ---
     sector_buildings = [b for b in buildings if b.get('sector_id') == sector['id']]
     
-    # Determinamos el dueño efectivo basándonos en la tabla PLANETS, 
-    # que es la fuente de verdad (calculada por sovereignty.py)
+    # Determinamos el dueño efectivo basándonos en la tabla PLANETS
     current_sector_owner_id = None
     
     if is_orbital:
@@ -297,16 +294,15 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
         color = "green" if current_sector_owner_id == player_id else "orange"
         st.caption(f"Propiedad de: :{color}[**{faction_name}**]")
     else:
-        # Si sovereignty dice None, verificamos si hay edificios (Outposts neutrales, etc)
+        # Si sovereignty dice None, verificamos si hay edificios
         if sector_buildings:
-            # Caso raro: Edificio existe pero sovereignty es None (posible conflicto o anarquía)
             b_owner = sector_buildings[0].get('player_id')
             f_name = _get_faction_name_by_player(b_owner)
             st.caption(f"Ocupado por: :gray[**{f_name}**]")
         else:
             st.caption("Sector No Reclamado")
 
-    # Obtener tick actual para verificar construcciones en progreso
+    # Obtener tick actual
     world_state = get_world_state()
     current_tick = world_state.get('current_tick', 1)
 
@@ -336,11 +332,8 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     if sector_buildings:
         st.markdown("**Estructuras:**")
         for b in sector_buildings:
-            # Determinación de nombre: Prioridad a custom_name (base militar), luego config, luego tipo
             b_type = b['building_type']
             b_def = BUILDING_TYPES.get(b_type, {})
-            
-            # Nombre visual
             name = b.get("custom_name") or b_def.get("name", b_type)
             
             # Verificar si está en construcción
@@ -364,27 +357,59 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                         show_structure_management_modal(b, asset_id, player_id, planet_id)
 
     else:
+        # Caso especial: Slot ocupado pero no hay edificios visibles en planet_buildings
+        # Típicamente una BASE MILITAR (que vive en tabla 'bases')
         if used > 0 and not sector_buildings:
-            # Caso especial: Slot ocupado pero no hay edificios visibles en planet_buildings
-            # Típicamente una BASE MILITAR (que vive en tabla 'bases')
+            
+            # Intentar recuperar la base real para habilitar gestión
+            base_obj = None
             if current_sector_owner_id == player_id:
+                try:
+                    # Fetch al vuelo para obtener ID real para el modal
+                    res = get_supabase().table("bases").select("id, custom_name, level, player_id").eq("sector_id", sector['id']).maybe_single().execute()
+                    if res.data:
+                        d = res.data
+                        base_obj = {
+                            'id': d['id'],
+                            'building_type': 'military_base',
+                            'is_virtual': True,
+                            'sector_id': sector['id'],
+                            'player_id': d['player_id'],
+                            'building_tier': d.get('level', 1),
+                            'custom_name': d.get('custom_name')
+                        }
+                except Exception as e:
+                     if debug_mode: st.error(f"Error fetching base: {e}")
+
+            if base_obj:
+                # Renderizado con botón de gestión habilitado
+                c1, c2 = st.columns([0.8, 0.2])
+                with c1:
+                     name = base_obj.get('custom_name') or "Base Militar"
+                     st.markdown(f"🛡️ **{name}**")
+                     st.caption(f"Nivel {base_obj['building_tier']} • Operativa")
+                
+                with c2:
+                     if st.button("⚙️", key=f"mng_base_v_{base_obj['id']}", help="Gestionar Base"):
+                         show_structure_management_modal(base_obj, asset_id, player_id, planet_id)
+            
+            elif current_sector_owner_id == player_id:
+                 # Fallback visual si falla la carga
                  st.info("🛡️ Base Militar Operativa")
             else:
                  st.warning("🛡️ Instalación Militar Detectada")
+
         else:
             st.caption("No hay estructuras en este sector.")
 
     # --- DEFINICIONES DE PROPIEDAD Y PERMISOS ---
-    is_sector_empty = (used == 0) # Usamos 'used' en lugar de lista buildings por si hay bases
-    # Lógica corregida: Es mi sector si la soberanía planetaria lo dice, no solo los edificios
+    is_sector_empty = (used == 0)
     is_my_sector = (current_sector_owner_id == player_id)
 
     # --- PANEL DE CONSTRUCCIÓN (Solo si es dueño) ---
     
     if asset_id and used < total:
         if is_sector_empty and not is_my_sector:
-             # Si está vacío y no es mío, verificar si puedo reclamarlo (solo via unidades o outpost)
-             # En la UI actual, los Outposts se construyen con unidades en el mapa, no aqui.
              st.caption("🔒 Sector libre. Utiliza una unidad para establecer un Puesto de Avanzada.")
 
         elif is_my_sector:
@@ -401,12 +426,9 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                 for t in available_types:
                     b_def = BUILDING_TYPES[t]
                     allowed = b_def.get("allowed_terrain")
-                    # No mostrar Outpost en este menú (se construye vía unidad)
-                    if t == "outpost":
-                        continue
-                    # Bases militares se construyen desde panel dedicado (ahora delegadas a unidades)
-                    if t == "military_base":
-                        continue
+                    
+                    if t == "outpost": continue
+                    if t == "military_base": continue # Bases se construyen via unidades
                         
                     if not allowed or s_type in allowed:
                          filtered_types.append(t)
