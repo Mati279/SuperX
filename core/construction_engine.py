@@ -4,6 +4,7 @@ Motor de Construcción.
 Maneja la lógica de construcción de puestos de avanzada y estructuras tácticas
 iniciadas por unidades en el terreno.
 Refactorizado V19.0: Actualización de estado de unidad a CONSTRUCTING.
+Refactorizado V19.1: Restricción de soberanía para Puestos de Avanzada.
 """
 
 from typing import Dict, Any, Optional
@@ -32,6 +33,7 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
     Validaciones:
     - Unidad pertenece al jugador y tiene movimientos.
     - Sector explorado y vacío.
+    - Soberanía: El jugador NO debe ser ya el dueño del planeta.
     - Recursos suficientes.
     
     Efectos:
@@ -62,6 +64,27 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
     limit = 1 if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
     if unit.local_moves_count >= limit:
         return {"success": False, "error": "La unidad está fatigada y no puede construir este turno."}
+
+    # 1.5 Validar Soberanía Planetaria (NUEVO V19.1)
+    # Si el jugador ya controla el planeta, no necesita (ni debe) construir outposts.
+    try:
+        planet_check = db.table("planets")\
+            .select("surface_owner_id")\
+            .eq("id", unit.location_planet_id)\
+            .maybe_single()\
+            .execute()
+            
+        if planet_check.data:
+            surface_owner = planet_check.data.get("surface_owner_id")
+            if surface_owner == player_id:
+                return {
+                    "success": False, 
+                    "error": "Tu facción ya controla la soberanía de este planeta. No requieres Puestos de Avanzada adicionales; construye infraestructura directamente."
+                }
+    except Exception as e:
+        # Si falla la verificación de soberanía, logueamos pero permitimos continuar por seguridad,
+        # o fallamos si es crítico. En este caso, fallamos seguro.
+        return {"success": False, "error": f"Error verificando soberanía planetaria: {e}"}
 
     # 2. Validar Ubicación
     if unit.location_sector_id != sector_id:
@@ -251,7 +274,7 @@ def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> D
         })
 
         # B. Insertar Base en tabla 'bases'
-        # Usamos el tick actual + 1 para created_at_tick para diferir la soberanía
+        # Usamos el tick actual + 1 para created_at_tick para diferir la finalización
         world = get_world_state()
         current_tick = world.get("current_tick", 1)
         target_tick = current_tick + 1
@@ -272,7 +295,6 @@ def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> D
         
         if not insert_res.data:
             # Rollback manual de recursos si falla insert (básico)
-            # Idealmente usaríamos transacciones RPC, pero por ahora revertimos
             update_player_resources(player_id, {
                 "creditos": current_credits,
                 "materiales": current_materials
