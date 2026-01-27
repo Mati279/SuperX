@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from core.mrg_engine import resolve_action, MRGResult, ResultType
 from core.models import UnitSchema, UnitStatus
-from core.mrg_constants import DIFFICULTY_STANDARD
+from core.mrg_constants import DIFFICULTY_CHALLENGING
 from core.movement_constants import MAX_LOCAL_MOVES_PER_TURN
 # Importación para actualización de habilidades
 from core.unit_engine import calculate_and_update_unit_skills
@@ -125,7 +125,7 @@ def resolve_sector_exploration(
     # IMPORTANTE: Usamos el skill_exploracion de la UNIDAD (calculado desde sus miembros)
     # NO el stat individual del líder o personaje
     merit_points = unit_skill_exploracion
-    difficulty = DIFFICULTY_STANDARD  # 50
+    difficulty = DIFFICULTY_CHALLENGING  # 75
 
     action_desc = f"Exploración de Sector {sector_id} por {unit.name}"
 
