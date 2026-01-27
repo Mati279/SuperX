@@ -1,45 +1,26 @@
-# data/planet_repository.py
+# data/planets/__init__.py
 """
-BARREL DE EXPORTACIÓN - Repositorio de Planetas y Edificios.
+Paquete de Gestión de Planetas.
+Estructura modular para mantener el principio de responsabilidad única.
 
-Este archivo actúa como proxy de compatibilidad hacia atrás.
-Toda la lógica ha sido refactorizada en el paquete 'data.planets'.
-
-Estructura del paquete:
-    data/planets/
-    ├── __init__.py      # Exportaciones del paquete
-    ├── core.py          # Consultas básicas (get_planet_by_id, etc.)
-    ├── assets.py        # Gestión de planet_assets
-    ├── sectors.py       # Gestión de sectores y Fog of War
-    ├── buildings.py     # Construcción y demolición
-    ├── sovereignty.py   # Motores de soberanía y seguridad
-    └── genesis.py       # Inicialización (Protocolo Génesis)
-
-USO:
-    Las importaciones existentes como:
-        from data.planet_repository import get_planet_by_id
-
-    Siguen funcionando sin cambios gracias a este barrel.
-
-    Para nuevas importaciones, se recomienda usar el paquete directamente:
-        from data.planets import get_planet_by_id
-        # O de forma más específica:
-        from data.planets.core import get_planet_by_id
+Módulos:
+    - core: Consultas básicas a la tabla mundial 'planets'
+    - assets: Gestión de planet_assets (colonización, población)
+    - sectors: Gestión de sectores y Fog of War
+    - buildings: Construcción y demolición de edificios
+    - sovereignty: Motores de cálculo de soberanía y seguridad
+    - genesis: Funciones de inicialización (Protocolo Génesis)
 """
 
-# =============================================================================
-# RE-EXPORTACIÓN COMPLETA DEL PAQUETE 'planets'
-# =============================================================================
-
-# --- CORE: Consultas básicas a la tabla mundial 'planets' ---
-from .planets.core import (
+# Core
+from .core import (
     _get_db,
     get_planet_by_id,
     get_all_colonized_system_ids,
 )
 
-# --- ASSETS: Gestión de planet_assets (colonización, población) ---
-from .planets.assets import (
+# Assets
+from .assets import (
     get_planet_asset,
     get_planet_asset_by_id,
     get_all_player_planets,
@@ -53,16 +34,16 @@ from .planets.assets import (
     get_base_slots_info,
 )
 
-# --- SECTORS: Gestión de sectores y Fog of War ---
-from .planets.sectors import (
+# Sectors
+from .sectors import (
     get_planet_sectors_status,
     get_sector_by_id,
     get_sector_details,
     grant_sector_knowledge,
 )
 
-# --- BUILDINGS: Construcción y demolición de edificios ---
-from .planets.buildings import (
+# Buildings
+from .buildings import (
     get_planet_buildings,
     build_structure,
     demolish_building,
@@ -70,8 +51,8 @@ from .planets.buildings import (
     batch_update_building_status,
 )
 
-# --- SOVEREIGNTY: Motores de cálculo de soberanía y seguridad ---
-from .planets.sovereignty import (
+# Sovereignty
+from .sovereignty import (
     update_planet_sovereignty,
     recalculate_system_ownership,
     recalculate_system_security,
@@ -81,17 +62,13 @@ from .planets.sovereignty import (
     update_planet_security_data,
 )
 
-# --- GENESIS: Funciones de inicialización (Protocolo Génesis) ---
-from .planets.genesis import (
+# Genesis
+from .genesis import (
     initialize_planet_sectors,
     claim_genesis_sector,
     add_initial_building,
     initialize_player_base,
 )
-
-# =============================================================================
-# LISTADO EXPLÍCITO DE EXPORTACIONES PÚBLICAS
-# =============================================================================
 
 __all__ = [
     # Core
