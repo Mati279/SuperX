@@ -10,6 +10,7 @@ V21.0: Integración de Construcción de Estaciones Orbitales y Refactor Soberan�
 V21.1: Ocultación de Exploración en sectores URBANOS (Visibilidad automática).
 V21.2: Fix crítico - Conversión explícita a UnitSchema para evitar AttributeError.
 V21.3: Fix validación movimientos locales (moves_this_turn -> local_moves_count).
+V22.0: Refactor integral de firmas de funciones y limpieza de UI.
 """
 
 import streamlit as st
@@ -665,19 +666,7 @@ def _render_ring_options(
             )
             
             if selected_warp_dest:
-                # Estimar costo warp
-                target_sys = next(s for s in valid_warp_targets if s['id'] == selected_warp_dest)
-                dist_val = target_sys['dist']
-                
-                # Importar constantes de cálculo WARP si necesario, o usar estimate (aunque estimate pide starlane usually)
-                # En movement_engine el warp se calcula distinto. Usaremos estimate_travel_time con tipo implícito si soporta
-                # Pero estimate_travel_time actualmente está muy ligado a starlanes o local.
-                # Para UI, mostramos calculo manual aproximado o usamos una función de engine si existe.
-                # Revisando movement_engine... estimate_travel_time soporta cross-system sin starlane? No explícito.
-                # Usaremos la lógica de movement_engine.initiate_movement que llama a _calculate_warp_cost interno.
-                # Por ahora, mostramos distancia.
-                
-                st.info(f"Distancia de Salto: {dist_val:.1f} parsecs")
+                st.info(f"Distancia de Salto: {warp_options[selected_warp_dest].split('Dist: ')[1]}")
                 
                 if st.button("Iniciar Salto WARP", type="primary", key="btn_warp_space", use_container_width=True):
                      selected_dest = DestinationData(
@@ -764,8 +753,9 @@ def render_movement_console(unit_id: int):
                     explore_label = "Escanear Órbita" if is_orbital else "Explorar Sector"
         
         with col1:
+             # Refactor: Pasar sector actual a resolve_sector_exploration
              if st.button(f"🔭 {explore_label}", disabled=not can_explore, use_container_width=True, help="Realizar reconocimiento del sector actual"):
-                 result = resolve_sector_exploration(unit_id, player_id)
+                 result = resolve_sector_exploration(unit_id, unit.location_sector_id, player_id)
                  if result:
                      # Renderizar resultado visual in-place
                      render_exploration_result_view(result)
@@ -779,12 +769,13 @@ def render_movement_console(unit_id: int):
         
         with col2:
             if st.button(f"👻 {stealth_label}", type=stealth_btn_type, use_container_width=True):
-                success, msg = toggle_stealth_mode(unit_id, not is_stealth)
-                if success:
-                    st.toast(msg)
+                # Refactor: Firma nueva toggle_stealth_mode(unit_id, player_id) y manejo de dict
+                res = toggle_stealth_mode(unit_id, player_id)
+                if res.get('success'):
+                    st.toast(res.get('message', "Estado de sigilo actualizado."))
                     st.rerun()
                 else:
-                    st.error(msg)
+                    st.error(res.get('error', "Error al cambiar sigilo."))
         
         # C) Construcción Táctica (Puestos de Avanzada / Estaciones Orbitales)
         st.markdown("---")
@@ -838,7 +829,8 @@ def render_movement_console(unit_id: int):
             # Botón Puesto de Avanzada
             if can_build_outpost:
                 if st.button("🏗️ Construir Puesto", use_container_width=True, help=f"Costo: {OUTPOST_COST_CREDITS} CR / {OUTPOST_COST_MATERIALS} MAT"):
-                    result = resolve_outpost_construction(unit_id, player_id)
+                    # Refactor: Pasar sector explícitamente
+                    result = resolve_outpost_construction(unit_id, unit.location_sector_id, player_id)
                     if result['success']:
                         st.success(result['message'])
                         st.rerun()
@@ -851,7 +843,8 @@ def render_movement_console(unit_id: int):
             # Botón Estación Orbital
             if can_build_orbital:
                  if st.button("🛰️ Estación Orbital", use_container_width=True, help=f"Costo: {ORBITAL_STATION_CREDITS} CR / {ORBITAL_STATION_MATERIALS} MAT"):
-                    result = build_orbital_station(unit_id, player_id)
+                    # Refactor: Pasar sector explícitamente
+                    result = build_orbital_station(unit_id, unit.location_sector_id, player_id)
                     if result['success']:
                         st.success(result['message'])
                         st.rerun()
@@ -884,12 +877,14 @@ def render_movement_console(unit_id: int):
         # Validar penalización de movimiento local si está desorientada
         allowed_moves = DISORIENTED_MAX_LOCAL_MOVES if unit.disoriented else MAX_LOCAL_MOVES_PER_TURN
         
+        # Validación de movimientos locales usando move_type para filtrar WARP/STARLANE
         if unit.local_moves_count >= allowed_moves and move_type not in [MovementType.WARP_JUMP, MovementType.STARLANE]:
              limit_msg = "desorientación" if unit.disoriented else "límite estándar"
              st.warning(f"⚠️ La unidad ha alcanzado el límite de movimientos locales por turno ({limit_msg}).")
              return
 
-        result = initiate_movement(unit_id, dest_data, move_type, use_boost=use_boost)
+        # Refactor: initiate_movement con firma nueva (sin move_type, con player_id y current_tick)
+        result = initiate_movement(unit_id, dest_data, player_id, current_tick, use_boost=use_boost)
         
         if result.success:
             st.success(f"Movimiento iniciado: {result.message}")
