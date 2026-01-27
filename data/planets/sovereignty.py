@@ -1,4 +1,4 @@
-# data/planets/sovereignty.py
+# data/planets/sovereignty.py (Completo)
 """
 Motores de Cálculo de Soberanía, Control de Sistemas y Seguridad Galáctica.
 Actualizado v9.1.0: Implementación de Seguridad de Sistema (Recálculo automático en cascada).
@@ -6,6 +6,7 @@ Actualizado v9.2.0: Reglas de Soberanía Conflictiva y Excepción de Construcci�
 Actualizado v10.4: Soberanía Diferida (Filtro por built_at_tick).
 Refactor v11.0: INTEGRACIÓN DE SISTEMA DE BASES MILITARES (Tabla 'bases').
 Corrección v6.1: Fix crítico de tipos en seguridad (soporte Dict/Float).
+Refactor V19.0: Soberanía Estricta. Solo estructuras TERMINADAS (built_at_tick <= current) otorgan control.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -19,10 +20,12 @@ from .core import _get_db
 def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int] = None):
     """
     Recalcula y actualiza la soberanía de superficie y orbital.
-    Refactor V11.0: Integración de tabla 'bases'.
+    Refactor V19.0: Verifica tick de finalización de estructuras para otorgar control.
     """
     try:
         db = _get_db()
+        world = get_world_state()
+        current_tick = world.get("current_tick", 1)
 
         # 0. Obtener info del planeta
         planet_info_res = db.table("planets").select("system_id, population").eq("id", planet_id).single().execute()
@@ -33,18 +36,22 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
         population = planet_info_res.data.get("population", 0.0)
 
         # 1. Obtener Bases Militares (Nueva Lógica de Soberanía Civil/Militar)
+        # V19.0: Filtrar bases que ya estén completadas (created_at_tick <= current_tick)
         bases_res = db.table("bases")\
-            .select("player_id, sector_id")\
+            .select("player_id, sector_id, created_at_tick")\
             .eq("planet_id", planet_id)\
             .execute()
 
-        bases = bases_res.data if bases_res and bases_res.data else []
+        raw_bases = bases_res.data if bases_res and bases_res.data else []
+        # Filtro estricto de finalización
+        bases = [b for b in raw_bases if b.get('created_at_tick', 999999) <= current_tick]
 
         base_owner_id = bases[0]["player_id"] if bases else None
 
         # 2. Obtener Edificios (Para Outposts y Estaciones Orbitales)
         assets_res = db.table("planet_assets").select("id, player_id").eq("planet_id", planet_id).execute()
 
+        # Si no hay bases completadas ni assets, resetear soberanía
         if not bases and (not assets_res or not assets_res.data):
             db.table("planets").update({"surface_owner_id": None, "orbital_owner_id": enemy_fleet_owner_id}).eq("id", planet_id).execute()
             if system_id:
@@ -58,16 +65,14 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
         # Consultar edificios relevantes en planet_buildings
         buildings = []
         if asset_ids:
-            # --- V10.4: Filtrar edificios en construcción ---
-            world = get_world_state()
-            current_tick = world.get("current_tick", 1)
-
+            # --- V10.4 / V19.0: Filtrar edificios completados ---
             buildings_res = db.table("planet_buildings")\
                 .select("building_type, planet_asset_id, is_active, built_at_tick")\
                 .in_("planet_asset_id", asset_ids)\
                 .execute()
 
             raw_buildings = buildings_res.data if buildings_res and buildings_res.data else []
+            # Filtro estricto de finalización
             buildings = [b for b in raw_buildings if b.get("built_at_tick", 0) <= current_tick]
 
         outpost_owners = set()

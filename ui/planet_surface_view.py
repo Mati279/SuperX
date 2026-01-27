@@ -12,10 +12,7 @@ Refactor V18.0: Eliminación de construcción manual de Bases Militares (delegad
 Refactor V18.1 (Fix): Inyección de botón de gestión para Bases Militares detectadas fuera de la lista de edificios estándar.
 Refactor V18.2 (Fix): Corrección de visibilidad del botón de gestión (gear icon) independiente del asset_id y propiedad del sector.
 Refactor V19.0 (Fix): Lógica unificada en _render_sector_card para detección independiente de bases militares.
-    - Chequeo de tabla 'bases' separado de sector_buildings para detectar bases de ocupación.
-    - Casting explícito de player_id para comparación segura.
-    - Keys únicas para botones de gestión: mng_btn_{sector_id}_{building_id}, mng_base_btn_{sector_id}_{base_id}.
-    - Modal robusto que funciona con asset_id=None para bases militares.
+Refactor V19.1: Restricción de construcción civil. Solo permitida si hay estructura de comando OPERATIVA en el sector.
 """
 
 import streamlit as st
@@ -256,6 +253,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     V17.0: Reemplazo de botones directos por Modal de Gestión (Gear Icon).
     V18.1: Fix para visualizar botón de gestión en bases militares que no aparecen en la lista de edificios.
     V18.2: Fix de visibilidad de botón independiente del asset_id o propiedad del sector.
+    V19.1: Restricción de construcción civil basada en presencia de Estructura de Comando operativa.
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -351,7 +349,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
 
     if not base_already_in_buildings:
         try:
-            res = get_supabase().table("bases").select("id, name, tier, player_id").eq("sector_id", sector['id']).maybe_single().execute()
+            res = get_supabase().table("bases").select("id, name, tier, player_id, created_at_tick").eq("sector_id", sector['id']).maybe_single().execute()
             if res.data:
                 d = res.data
                 detected_base = {
@@ -361,13 +359,17 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                     'sector_id': sector['id'],
                     'player_id': d['player_id'],
                     'building_tier': d.get('tier', 1),
-                    'custom_name': d.get('name')
+                    'custom_name': d.get('name'),
+                    'created_at_tick': d.get('created_at_tick', 0)
                 }
         except Exception as e:
             if debug_mode: st.error(f"Error fetching base: {e}")
 
     # 2. Determinar si hay estructuras que mostrar
     has_structures = bool(sector_buildings) or detected_base is not None
+
+    # Flag para controlar si se permite construcción civil
+    has_operational_command = False
 
     if has_structures:
         st.markdown("**Estructuras:**")
@@ -381,6 +383,11 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
             # Verificar si está en construcción
             built_at = b.get('built_at_tick', 0)
             is_under_construction = built_at > current_tick
+
+            # Verificar si es estructura de comando operativa (V19.1)
+            # Solo Outpost, HQ o Base Militar completadas habilitan construcción civil
+            if not is_under_construction and b_type in ['outpost', 'hq', 'military_base'] and str(b.get('player_id')) == str(player_id):
+                 has_operational_command = True
 
             # Layout de fila: Nombre + Estado | Botón Gestión
             c1, c2 = st.columns([0.8, 0.2])
@@ -407,11 +414,21 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
             base_name = detected_base.get('custom_name') or "Base Militar"
             base_owner_id = detected_base.get('player_id')
             base_id = detected_base['id']
+            base_created_at = detected_base.get('created_at_tick', 0)
+            
+            is_base_constructing = base_created_at > current_tick
+
+            # Check comando operativo V19.1
+            if not is_base_constructing and str(base_owner_id) == str(player_id):
+                has_operational_command = True
 
             c1, c2 = st.columns([0.8, 0.2])
             with c1:
-                st.markdown(f"🛡️ **{base_name}**")
-                st.caption(f"Nivel {detected_base['building_tier']} • Operativa")
+                if is_base_constructing:
+                     st.markdown(f"🚧 *Construyendo Base* (T-{base_created_at - current_tick})")
+                else:
+                    st.markdown(f"🛡️ **{base_name}**")
+                    st.caption(f"Nivel {detected_base['building_tier']} • Operativa")
 
             # Botón de gestión solo si es del jugador actual (casting explícito)
             if str(base_owner_id) == str(player_id):
@@ -445,51 +462,56 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
              st.caption("🔒 Sector libre. Utiliza una unidad para establecer un Puesto de Avanzada.")
 
         elif is_my_sector:
-             with st.expander("🏗️ Construir"):
-                available_types = list(BUILDING_TYPES.keys())
-                
-                # Regla de Negocio: Evitar múltiples HQ
-                has_hq = any(b['building_type'] == 'hq' for b in buildings)
-                if has_hq and 'hq' in available_types:
-                    available_types.remove('hq')
-                
-                # Filtrar por terreno
-                filtered_types = []
-                for t in available_types:
-                    b_def = BUILDING_TYPES[t]
-                    allowed = b_def.get("allowed_terrain")
+             # V19.1: Check de Estructura de Comando Operativa
+             if has_operational_command:
+                 with st.expander("🏗️ Construir"):
+                    available_types = list(BUILDING_TYPES.keys())
                     
-                    if t == "outpost": continue
-                    if t == "military_base": continue # Bases se construyen via unidades
+                    # Regla de Negocio: Evitar múltiples HQ
+                    has_hq = any(b['building_type'] == 'hq' for b in buildings)
+                    if has_hq and 'hq' in available_types:
+                        available_types.remove('hq')
+                    
+                    # Filtrar por terreno
+                    filtered_types = []
+                    for t in available_types:
+                        b_def = BUILDING_TYPES[t]
+                        allowed = b_def.get("allowed_terrain")
                         
-                    if not allowed or s_type in allowed:
-                         filtered_types.append(t)
-                
-                selected_type = st.selectbox(
-                    "Tipo de Edificio",
-                    filtered_types,
-                    format_func=lambda x: BUILDING_TYPES[x]['name'],
-                    key=f"sel_build_{sector['id']}"
-                )
-                
-                if selected_type:
-                    st.info(BUILDING_TYPES[selected_type]['description'])
-                    cost = BUILDING_TYPES[selected_type].get("material_cost", 0)
-                    st.caption(f"Costo: {cost} Materiales")
-                
-                    if st.button("Confirmar Construcción", key=f"btn_b_{sector['id']}", use_container_width=True):
-                        new_struct = build_structure(
-                            planet_asset_id=asset_id,
-                            player_id=player_id,
-                            building_type=selected_type,
-                            sector_id=sector['id']
-                        )
-                        
-                        if new_struct:
-                            st.toast(f"Construcción de {BUILDING_TYPES[selected_type]['name']} iniciada.")
-                            st.rerun()
-                        else:
-                            st.error("Error en la construcción.")
+                        if t == "outpost": continue
+                        if t == "military_base": continue # Bases se construyen via unidades
+                            
+                        if not allowed or s_type in allowed:
+                             filtered_types.append(t)
+                    
+                    selected_type = st.selectbox(
+                        "Tipo de Edificio",
+                        filtered_types,
+                        format_func=lambda x: BUILDING_TYPES[x]['name'],
+                        key=f"sel_build_{sector['id']}"
+                    )
+                    
+                    if selected_type:
+                        st.info(BUILDING_TYPES[selected_type]['description'])
+                        cost = BUILDING_TYPES[selected_type].get("material_cost", 0)
+                        st.caption(f"Costo: {cost} Materiales")
+                    
+                        if st.button("Confirmar Construcción", key=f"btn_b_{sector['id']}", use_container_width=True):
+                            new_struct = build_structure(
+                                planet_asset_id=asset_id,
+                                player_id=player_id,
+                                building_type=selected_type,
+                                sector_id=sector['id']
+                            )
+                            
+                            if new_struct:
+                                st.toast(f"Construcción de {BUILDING_TYPES[selected_type]['name']} iniciada.")
+                                st.rerun()
+                            else:
+                                st.error("Error en la construcción.")
+             else:
+                 # Mensaje informativo si no hay comando operativo
+                 st.info("⚠️ Se requiere una estructura de comando operativa (Puesto de Avanzada o Base) en este sector para iniciar obras civiles.", icon="🏗️")
 
         else:
              st.warning("⛔ Sector controlado por otra facción.")

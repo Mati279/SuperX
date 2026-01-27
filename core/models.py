@@ -20,6 +20,7 @@ Actualizado V15.1: Soporte para 'ring' en CommanderData y CharacterLocation.
 Actualizado V15.2: Fix Validación CommanderData (Ring Nullable).
 Actualizado V15.3: Fix Resolución Nombres Ubicación Espacial (Fix entidades desaparecidas).
 Actualizado V17.0: Habilidades Colectivas de Unidad (Unit Skills).
+Actualizado V19.0: Estado de Unidad CONSTRUCTING para bloqueo durante obras.
 """
 
 from typing import Dict, Any, Optional, List, Union
@@ -92,6 +93,7 @@ class UnitStatus(str, Enum):
     TRANSIT = "TRANSIT"   # Viajando entre nodos (genera upkeep logístico)
     STEALTH_MODE = "STEALTH_MODE"  # V14.0: Modo sigilo activo (detección más difícil)
     HIDDEN = "HIDDEN"     # V14.0: Oculto/No detectado (puede escapar automáticamente)
+    CONSTRUCTING = "CONSTRUCTING" # V19.0: Unidad ocupada construyendo infraestructuras
 
 class TroopType(str, Enum):
     """Tipos de tropas estándar."""
@@ -725,6 +727,7 @@ class UnitSchema(BaseModel):
     Capacidad máxima: 8 slots. Mínimo 1 Character (líder).
     V14.0: Añadidos estados STEALTH_MODE, HIDDEN y flag disoriented.
     V17.0: Añadidas Habilidades Colectivas de Unidad.
+    V19.0: Estado CONSTRUCTING.
     """
     model_config = ConfigDict(extra='allow')
 

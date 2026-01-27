@@ -3,6 +3,7 @@
 Motor de Construcción.
 Maneja la lógica de construcción de puestos de avanzada y estructuras tácticas
 iniciadas por unidades en el terreno.
+Refactorizado V19.0: Actualización de estado de unidad a CONSTRUCTING.
 """
 
 from typing import Dict, Any, Optional
@@ -36,7 +37,7 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
     Efectos:
     - Descuento de recursos.
     - Creación de edificio (Time: Current Tick + 1).
-    - Fatiga de unidad.
+    - Fatiga de unidad (Se bloquea en estado CONSTRUCTING).
     - Actualización de soberanía (Diferida hasta finalización).
     """
     db = get_supabase()
@@ -53,6 +54,9 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
         
     if unit.status == UnitStatus.TRANSIT:
         return {"success": False, "error": "La unidad está en tránsito."}
+    
+    if unit.status == UnitStatus.CONSTRUCTING:
+         return {"success": False, "error": "La unidad ya está ocupada construyendo."}
         
     # Limite de movimientos (si está en sigilo es 1, sino MAX)
     limit = 1 if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
@@ -155,13 +159,17 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
         
         db.table("planet_buildings").insert(building_data).execute()
 
-        # C. Fatiga de Unidad
-        update_unit_moves(unit_id, unit.local_moves_count + 1)
+        # C. Fatiga y Estado de Unidad (V19.0)
+        # Se establece el estado a CONSTRUCTING y se agotan los movimientos.
+        db.table("units").update({
+            "status": UnitStatus.CONSTRUCTING,
+            "local_moves_count": MAX_LOCAL_MOVES_PER_TURN
+        }).eq("id", unit_id).execute()
 
         # D. Actualizar Soberanía
         update_planet_sovereignty(planet_id)
 
-        msg = f"Iniciada construcción de Puesto de Avanzada en Sector {sector_id} (ETA: 1 ciclo)."
+        msg = f"Unidad '{unit.name}' iniciando construcción de Puesto de Avanzada en Sector {sector_id} (ETA: 1 ciclo)."
         log_event(msg, player_id)
 
         return {"success": True, "message": msg}
@@ -194,6 +202,9 @@ def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> D
         
     if unit.status == UnitStatus.TRANSIT:
         return {"success": False, "error": "La unidad está en tránsito."}
+    
+    if unit.status == UnitStatus.CONSTRUCTING:
+         return {"success": False, "error": "La unidad ya está ocupada construyendo."}
         
     limit = 1 if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
     if unit.local_moves_count >= limit:
@@ -240,16 +251,17 @@ def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> D
         })
 
         # B. Insertar Base en tabla 'bases'
-        # Usamos el tick actual para created_at_tick
+        # Usamos el tick actual + 1 para created_at_tick para diferir la soberanía
         world = get_world_state()
         current_tick = world.get("current_tick", 1)
+        target_tick = current_tick + 1
         
         base_data = {
             "player_id": player_id,
             "planet_id": unit.location_planet_id,
             "sector_id": sector_id,
             "tier": 1,
-            "created_at_tick": current_tick,
+            "created_at_tick": target_tick, # V19.0: Se difiere la finalización
             "module_sensor_planetary": 0,
             "module_sensor_orbital": 0,
             "module_defense_ground": 0,
@@ -267,14 +279,17 @@ def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> D
             })
             raise Exception("Error DB al insertar base.")
 
-        # C. Fatiga de Unidad
-        update_unit_moves(unit_id, unit.local_moves_count + 1)
+        # C. Fatiga y Estado de Unidad (V19.0)
+        db.table("units").update({
+            "status": UnitStatus.CONSTRUCTING,
+            "local_moves_count": MAX_LOCAL_MOVES_PER_TURN
+        }).eq("id", unit_id).execute()
 
         # D. Actualizar Soberanía
         # La base militar influye fuertemente en el control del planeta
         update_planet_sovereignty(unit.location_planet_id)
 
-        msg = f"Base Militar establecida en Sector {sector_id}."
+        msg = f"Unidad '{unit.name}' estableciendo Base Militar en Sector {sector_id} (ETA: 1 ciclo)."
         log_event(msg, player_id)
 
         return {"success": True, "message": msg}

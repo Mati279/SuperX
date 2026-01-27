@@ -1,6 +1,7 @@
 # core/time_engine.py (Completo)
 # V10.0: Añadidas fases 1.5 (Llegadas de Tránsito) y 2.5 (Detección de Encuentros)
 # V10.4: Añadida fase 3.5 (Actualización Diferida de Soberanía)
+# V19.0: Reset de unidades CONSTRUCTING en fase de limpieza.
 from datetime import datetime, time
 import pytz
 import random
@@ -669,9 +670,23 @@ def _phase_cleanup_and_audit():
     """Fase 7: Limpieza y Mantenimiento."""
     log_event("running phase 7: Limpieza...")
     try:
+        db = _get_db()
+        # Limpieza de candidatos expirados
         from data.recruitment_repository import expire_old_candidates
         current_tick = get_world_state().get('current_tick', 1)
         for player in get_all_players(): expire_old_candidates(player['id'], current_tick)
+        
+        # V19.0: Reset de Unidades Constructoras
+        # Las unidades que terminaron de construir (ciclo completado) vuelven a estar disponibles.
+        # No usamos Enum aquí para evitar circular import si core/models importa algo que importe time_engine
+        res = db.table("units").update({
+            "status": "GROUND",
+            # No reseteamos moves aquí, eso se maneja si el tick resetea moves globales o en la lógica de refresco
+        }).eq("status", "CONSTRUCTING").execute()
+        
+        if res.data and len(res.data) > 0:
+            log_event(f"🔨 {len(res.data)} unidades de construcción han vuelto al servicio activo.")
+
     except Exception as e:
         logger.error(f"Error en limpieza: {e}")
 

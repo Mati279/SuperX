@@ -3,6 +3,7 @@
 Componentes visuales reutilizables para el Roster de Facción.
 Contiene: CSS injection, badges, filas de personajes/tropas/unidades.
 Extraído de ui/faction_roster.py V17.0.
+Refactor V19.0: Icono para estado CONSTRUCTING.
 """
 
 import json
@@ -260,7 +261,13 @@ def render_unit_row(
     current_count = len(members)
 
     icon = "🌌" if is_space else "🌍"
-    status_emoji = {"GROUND": "🏕️", "SPACE": "🚀", "TRANSIT": "✈️"}.get(status, "❓")
+    # V19.0: Icono para estado CONSTRUCTING
+    status_emoji = {
+        "GROUND": "🏕️", 
+        "SPACE": "🚀", 
+        "TRANSIT": "✈️",
+        "CONSTRUCTING": "🔨"
+    }.get(status, "❓")
 
     # Header dinámico con contador de movimientos
     moves_badge = f"[Movs: {local_moves}/2]" if local_moves < 2 else "[🛑 Sin Movs]"
@@ -307,15 +314,17 @@ def render_unit_row(
 
         # Botón de movimiento (solo si no está en tránsito)
         with col_move:
-            if status != "TRANSIT":
+            if status == "TRANSIT":
+                st.markdown("✈️", help="En tránsito")
+            elif status == "CONSTRUCTING":
+                st.markdown("🔨", help="Unidad en obras")
+            else:
                 if local_moves >= 2:
                     st.button("🛑", key=f"move_unit_lock_{unit_id}", disabled=True, help="Límite de movimientos diarios alcanzado")
                 else:
                     if st.button("🚀", key=f"move_unit_{unit_id}", help="Control de Movimiento"):
                         st.session_state.selected_unit_movement = unit_id
                         movement_dialog()
-            else:
-                st.markdown("✈️", help="En tránsito")
 
         # Botón de gestión
         with col_btn:
