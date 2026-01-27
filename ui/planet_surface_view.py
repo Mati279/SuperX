@@ -14,7 +14,7 @@ Refactor V18.2 (Fix): Corrección de visibilidad del botón de gestión (gear ic
 Refactor V19.0 (Fix): Lógica unificada en _render_sector_card para detección independiente de bases militares.
 Refactor V19.1: Restricción de construcción civil. Solo permitida si hay estructura de comando OPERATIVA en el sector.
 Refactor V20.0: Visibilidad global de Sectores Urbanos (Fow Lift).
-Refactor V20.1: Excepción de construcción orbital (No requiere comando previo).
+Refactor V20.1: Excepción de construcción orbital (No requiere comando previo) y restricción civil para despliegue táctico.
 """
 
 import streamlit as st
@@ -257,7 +257,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     V18.2: Fix de visibilidad de botón independiente del asset_id o propiedad del sector.
     V19.1: Restricción de construcción civil basada en presencia de Estructura de Comando operativa.
     V20.0: Visibilidad Forzada de Sectores Urbanos.
-    V20.1: Excepción de construcción orbital (No requiere comando previo).
+    V20.1: Excepción de construcción orbital (No requiere comando previo) y restricción civil para despliegue táctico.
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -399,7 +399,8 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
 
             # Verificar si es estructura de comando operativa (V19.1)
             # Solo Outpost, HQ o Base Militar completadas habilitan construcción civil
-            if not is_under_construction and b_type in ['outpost', 'hq', 'military_base'] and str(b.get('player_id')) == str(player_id):
+            # V20.1: Orbital Station también cuenta como comando
+            if not is_under_construction and b_type in ['outpost', 'hq', 'military_base', 'orbital_station'] and str(b.get('player_id')) == str(player_id):
                  has_operational_command = True
 
             # Layout de fila: Nombre + Estado | Botón Gestión
@@ -474,13 +475,18 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
         if is_sector_empty and not is_my_sector:
              if s_type == "Urbano":
                  st.caption("🔒 Zona Urbana Hostil. Requiere Subyugación y Base Militar.")
+             elif s_type == SECTOR_TYPE_ORBITAL:
+                 st.caption("🔒 Espacio Orbital Neutral. Despliega una flota para establecer control.")
              else:
                  st.caption("🔒 Sector libre. Utiliza una unidad para establecer un Puesto de Avanzada.")
 
         elif is_my_sector:
-             # V19.1: Check de Estructura de Comando Operativa
-             # V20.1: Excepción para sector orbital
-             if has_operational_command or is_orbital:
+             # V20.1: Restricción Táctica para Estaciones Orbitales
+             if s_type == SECTOR_TYPE_ORBITAL:
+                  st.info("🛰️ Despliegue Orbital: Requiere una unidad táctica en órbita para iniciar la construcción de la Estación (Costo: 800 CR / 30 MAT | Tiempo: 2 ciclos)")
+             
+             # V19.1: Check de Estructura de Comando Operativa para el resto
+             elif has_operational_command:
                  with st.expander("🏗️ Construir"):
                     available_types = list(BUILDING_TYPES.keys())
                     
@@ -496,7 +502,8 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                         allowed = b_def.get("allowed_terrain")
                         
                         if t == "outpost": continue
-                        if t == "military_base": continue # Bases se construyen via unidades
+                        if t == "military_base": continue 
+                        if t == "orbital_station": continue # Orbital Station es táctica ahora
                             
                         if not allowed or s_type in allowed:
                              filtered_types.append(t)

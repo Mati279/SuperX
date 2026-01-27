@@ -16,6 +16,7 @@ Actualizado v6.4.0: Implementación de Sector Orbital y Soberanía Espacial.
 Actualizado v7.6.0: Ajuste de Capacidad Urbana (3 Slots).
 Actualizado v8.0.0: Control del Sistema (Nivel Estelar) - Megaestructuras y Bonos de Sistema.
 Actualizado v8.1.0: Estandarización de UI de Recursos (RESOURCE_UI_CONFIG).
+Actualizado V20.1: Ajuste de costos de Estación Orbital para construcción táctica.
 """
 from typing import Dict, List
 
@@ -356,7 +357,8 @@ BUILDING_TYPES = {
     },
     "orbital_station": {
         "name": "Estación Orbital",
-        "material_cost": 500,
+        "material_cost": 30, # Ajustado V20.1
+        "credit_cost": 800,  # Agregado V20.1
         "maintenance": {"creditos": 50, "celulas_energia": 20},
         "description": "Base en órbita geoestacionaria. Controla el espacio.",
         "max_tier": 3,
