@@ -14,6 +14,7 @@ Refactor V18.2 (Fix): Corrección de visibilidad del botón de gestión (gear ic
 Refactor V19.0 (Fix): Lógica unificada en _render_sector_card para detección independiente de bases militares.
 Refactor V19.1: Restricción de construcción civil. Solo permitida si hay estructura de comando OPERATIVA en el sector.
 Refactor V20.0: Visibilidad global de Sectores Urbanos (Fow Lift).
+Refactor V20.1: Excepción de construcción orbital (No requiere comando previo).
 """
 
 import streamlit as st
@@ -256,6 +257,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     V18.2: Fix de visibilidad de botón independiente del asset_id o propiedad del sector.
     V19.1: Restricción de construcción civil basada en presencia de Estructura de Comando operativa.
     V20.0: Visibilidad Forzada de Sectores Urbanos.
+    V20.1: Excepción de construcción orbital (No requiere comando previo).
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -477,7 +479,8 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
 
         elif is_my_sector:
              # V19.1: Check de Estructura de Comando Operativa
-             if has_operational_command:
+             # V20.1: Excepción para sector orbital
+             if has_operational_command or is_orbital:
                  with st.expander("🏗️ Construir"):
                     available_types = list(BUILDING_TYPES.keys())
                     
