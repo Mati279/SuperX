@@ -15,12 +15,17 @@ import json
 import math  # Import necesario para cálculo de distancias
 from typing import Dict, Any, List, Optional, Tuple
 
+# Nueva importación para gestión de estado
+from ui.state import get_player_id
+
 from data.unit_repository import get_unit_by_id
+# Importaciones consolidadas de world_repository
 from data.world_repository import (
     get_system_by_id,
     get_planets_by_system_id,
     get_starlanes_from_db,
     get_all_systems_from_db,
+    get_world_state,
 )
 from data.planet_repository import get_planet_sectors_status, get_planet_by_id, has_urban_sector
 from core.models import UnitSchema, UnitStatus, LocationRing
@@ -38,7 +43,6 @@ from core.movement_constants import (
     WARP_MAX_DISTANCE
 )
 from core.detection_constants import DISORIENTED_MAX_LOCAL_MOVES
-from data.world_repository import get_world_state
 from services.unit_service import toggle_stealth_mode
 from core.exploration_engine import resolve_sector_exploration, ExplorationResult
 from core.mrg_engine import ResultType
@@ -692,11 +696,12 @@ def render_movement_console(unit_id: int):
     Renderiza la consola de movimiento y acciones tácticas para una unidad.
     """
     # 1. Validación de Sesión y Unidad
-    if 'player_id' not in st.session_state:
+    player_id = get_player_id()
+    
+    if not player_id:
         st.error("Sesión no válida.")
         return
 
-    player_id = st.session_state.player_id
     unit = get_unit_by_id(unit_id)
 
     if not unit or unit.player_id != player_id:
