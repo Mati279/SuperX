@@ -1,8 +1,9 @@
-# ui/base_management.py
+# ui/base_management.py (Completo)
 """
 Gestión de Bases Militares.
 Interfaz para construcción, mejora y gestión de módulos de bases.
 v1.0.0: Implementación inicial.
+v1.0.1: Fix TypeError en target_tier None.
 """
 
 import streamlit as st
@@ -100,16 +101,32 @@ def _render_base_details(base: dict, player_id: int, current_tick: int):
     base_tier = base.get("tier", 1)
     is_upgrading = base.get("upgrade_in_progress", False)
     completes_at = base.get("upgrade_completes_at_tick")
+    
+    # FIX: Manejo robusto de target_tier para evitar TypeError
     target_tier = base.get("upgrade_target_tier")
+    if target_tier is None:
+        target_tier = base_tier + 1
 
     st.markdown(f"### :shield: Base Militar Nv.{base_tier}")
 
     # Estado de mejora
     if is_upgrading and completes_at:
         ticks_remaining = completes_at - current_tick
+        
+        # Validar consistencia de datos antes de calcular progreso
+        if target_tier is not None and isinstance(target_tier, int):
+            total_time = get_base_upgrade_time(target_tier)
+        else:
+            total_time = 1 # Fallback seguro para evitar división por cero
+            
         if ticks_remaining > 0:
             st.warning(f"Mejorando a Nv.{target_tier}... Faltan {ticks_remaining} ciclo(s).")
-            st.progress(1 - (ticks_remaining / get_base_upgrade_time(target_tier)))
+            # Protección contra valores negativos o erróneos en progreso
+            try:
+                progress_val = max(0.0, min(1.0, 1 - (ticks_remaining / total_time)))
+                st.progress(progress_val)
+            except Exception:
+                st.progress(0.5) # Visual fallback
         else:
             st.info("Mejora completandose en el proximo ciclo...")
 
