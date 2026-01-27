@@ -49,6 +49,9 @@ from data.unit_repository import reset_all_movement_locks, decrement_transit_tic
 # IMPORT V10.4: Soberanía Diferida
 from data.planet_repository import update_planet_sovereignty
 
+# IMPORT V11.0: Sistema de Bases
+from core.base_engine import get_bases_pending_completion, complete_base_upgrade
+
 # Forzamos la zona horaria a Argentina (GMT-3)
 SAFE_TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
 
@@ -165,6 +168,9 @@ def _execute_game_logic_tick(execution_time: datetime):
         
         # 3.5 V10.4: Actualización de Soberanía Diferida (Construcciones Completadas)
         _phase_sovereignty_update(current_tick)
+
+        # 3.6 V11.0: Fase de Mejora de Bases
+        _phase_base_upgrades(current_tick)
 
         # 4. Fase Macro económica (MMFR)
         _phase_macroeconomics()
@@ -565,6 +571,45 @@ def _phase_sovereignty_update(current_tick: int):
 
     except Exception as e:
         logger.error(f"Error en fase de soberanía: {e}")
+
+
+def _phase_base_upgrades(current_tick: int):
+    """
+    Fase 3.6: Procesamiento de Mejoras de Bases Completadas.
+    Detecta bases cuya mejora se completa en este tick y aplica los cambios.
+    """
+    log_event("running phase 3.6: Mejoras de Bases...")
+    try:
+        # Obtener bases con mejoras pendientes de completar
+        pending_bases = get_bases_pending_completion(current_tick)
+
+        if not pending_bases:
+            return
+
+        log_event(f"🏗️ {len(pending_bases)} base(s) completando mejora...")
+
+        completed = 0
+        for base in pending_bases:
+            base_id = base.get("id")
+            if not base_id:
+                continue
+
+            target_tier = base.get("upgrade_target_tier", base.get("tier", 1) + 1)
+            player_id = base.get("player_id")
+
+            if complete_base_upgrade(base_id):
+                completed += 1
+                log_event(
+                    f"🏰 Base mejorada a Nv.{target_tier} en sector {base.get('sector_id')}",
+                    player_id
+                )
+
+        if completed > 0:
+            log_event(f"✅ {completed} base(s) mejoradas exitosamente.")
+
+    except Exception as e:
+        logger.error(f"Error en fase de mejoras de bases: {e}")
+
 
 def _phase_macroeconomics():
     """Fase 4: Economía Macro (MMFR)."""

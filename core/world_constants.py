@@ -175,37 +175,134 @@ HABITABLE_BIRTH_BIOMES = ["Templado", "Desértico", "Oceánico", "Glacial"]
 ASTEROID_BELT_CHANCE = 0.15
 
 # --- REGLAS DE BASE (MÓDULO 20) ---
+# Las bases se construyen en sectores urbanos "doblegados" (bajo soberanía del jugador)
+# Niveles 1-4. Tiempo de mejora = nivel_destino + 1 ticks.
 
-BASE_TIER_COSTS = {
-    2: {"creditos": 2000, "materiales": 1000},
-    3: {"creditos": 5000, "materiales": 2500, "tecnologia": "Expansión Modular"},
-    4: {"creditos": 10000, "materiales": 5000, "tecnologia": "Citadela Planetaria"}
+# Coste de CONSTRUCCIÓN de Base Nv.1 (inicial)
+BASE_CONSTRUCTION_COST = {
+    "creditos": 1000,
+    "materiales": 110
 }
 
-INFRASTRUCTURE_MODULES = {
-    "sensor_ground": {
-        "name": "Sensor Planetario", 
-        "cost_base": 500,
-        "desc": "Detecta incursiones terrestres y espías. +2 Seguridad."
+# Coste de MEJORA de Base (por nivel destino)
+BASE_UPGRADE_COSTS = {
+    2: {"creditos": 1500, "materiales": 150},
+    3: {"creditos": 3000, "materiales": 500},
+    4: {"creditos": 6500, "materiales": 750}
+}
+
+# Tiempo de mejora en ticks (nivel_destino + 1)
+def get_base_upgrade_time(target_level: int) -> int:
+    """Retorna el tiempo de mejora en ticks para subir a un nivel dado."""
+    return target_level + 1
+
+# Módulos desbloqueados por nivel de base
+# Cada módulo se puede mejorar hasta (nivel_base * 2)
+# Módulos nuevos arrancan en (nivel_base + 1)
+BASE_MODULES_BY_TIER = {
+    1: ["sensor_planetary", "sensor_orbital", "defense_ground", "bunker"],
+    2: ["defense_aa"],  # + 1 Slot de construcción extra
+    3: ["defense_missile", "energy_shield"],
+    4: ["planetary_shield"]  # + 1 Slot de construcción extra
+}
+
+# Slots extra otorgados por nivel de base
+BASE_EXTRA_SLOTS = {
+    1: 0,
+    2: 1,
+    3: 0,
+    4: 1
+}
+
+# Definición completa de módulos de infraestructura
+BASE_MODULES = {
+    "sensor_planetary": {
+        "name": "Sensor Planetario",
+        "cost_base": {"creditos": 300, "materiales": 50},
+        "cost_per_level": {"creditos": 150, "materiales": 25},
+        "unlock_tier": 1,
+        "desc": "Detecta incursiones terrestres y espías.",
+        "effect": {"detection_ground": 2}  # +2 por nivel
     },
     "sensor_orbital": {
-        "name": "Sensor Orbital", 
-        "cost_base": 500,
-        "desc": "Detecta flotas en órbita y bloqueos. +2 Seguridad."
-    },
-    "defense_aa": {
-        "name": "Defensa Anti-Aérea", 
-        "cost_base": 400,
-        "desc": "Mitiga bombardeos. +5 Seguridad."
+        "name": "Sensor Orbital",
+        "cost_base": {"creditos": 300, "materiales": 50},
+        "cost_per_level": {"creditos": 150, "materiales": 25},
+        "unlock_tier": 1,
+        "desc": "Detecta flotas en órbita y bloqueos.",
+        "effect": {"detection_orbital": 2}  # +2 por nivel
     },
     "defense_ground": {
-        "name": "Defensa Terrestre", 
-        "cost_base": 400,
-        "desc": "Combate ejércitos invasores. +5 Seguridad."
+        "name": "Defensas Terrestres",
+        "cost_base": {"creditos": 400, "materiales": 80},
+        "cost_per_level": {"creditos": 200, "materiales": 40},
+        "unlock_tier": 1,
+        "desc": "Combate ejércitos invasores.",
+        "effect": {"defense_ground": 5}  # +5 por nivel
     },
+    "bunker": {
+        "name": "Búnker",
+        "cost_base": {"creditos": 500, "materiales": 100},
+        "cost_per_level": {"creditos": 250, "materiales": 50},
+        "unlock_tier": 1,
+        "desc": "Protección para población civil y recursos críticos.",
+        "effect": {"population_protection": 10}  # +10% por nivel
+    },
+    "defense_aa": {
+        "name": "Defensas Anti-Aéreas",
+        "cost_base": {"creditos": 600, "materiales": 120},
+        "cost_per_level": {"creditos": 300, "materiales": 60},
+        "unlock_tier": 2,
+        "desc": "Mitiga bombardeos aéreos y atmosféricos.",
+        "effect": {"defense_air": 5}  # +5 por nivel
+    },
+    "defense_missile": {
+        "name": "Defensas Anti-Misiles",
+        "cost_base": {"creditos": 800, "materiales": 200},
+        "cost_per_level": {"creditos": 400, "materiales": 100},
+        "unlock_tier": 3,
+        "desc": "Intercepta misiles y torpedos orbitales.",
+        "effect": {"defense_missile": 8}  # +8 por nivel
+    },
+    "energy_shield": {
+        "name": "Escudo de Energía",
+        "cost_base": {"creditos": 1000, "materiales": 300},
+        "cost_per_level": {"creditos": 500, "materiales": 150},
+        "unlock_tier": 3,
+        "desc": "Escudo energético que protege el sector de la base.",
+        "effect": {"shield_sector": 15}  # +15 absorción por nivel
+    },
+    "planetary_shield": {
+        "name": "Escudo de Energía (Planetario)",
+        "cost_base": {"creditos": 2000, "materiales": 500},
+        "cost_per_level": {"creditos": 1000, "materiales": 250},
+        "unlock_tier": 4,
+        "desc": "Escudo energético que cubre todo el planeta.",
+        "effect": {"shield_planet": 25}  # +25 absorción por nivel
+    }
+}
+
+# Nivel máximo de módulo = nivel_base * 2
+def get_max_module_level(base_tier: int) -> int:
+    """Retorna el nivel máximo permitido para módulos según el tier de la base."""
+    return base_tier * 2
+
+# Nivel inicial de módulos nuevos al desbloquear = nivel_base + 1
+def get_initial_module_level(base_tier: int) -> int:
+    """Retorna el nivel inicial de un módulo recién desbloqueado."""
+    return base_tier + 1
+
+# Legacy: Mantener compatibilidad con código antiguo
+BASE_TIER_COSTS = BASE_UPGRADE_COSTS
+
+INFRASTRUCTURE_MODULES = {
+    "sensor_ground": BASE_MODULES["sensor_planetary"],
+    "sensor_orbital": BASE_MODULES["sensor_orbital"],
+    "defense_aa": BASE_MODULES["defense_aa"],
+    "defense_ground": BASE_MODULES["defense_ground"],
     "defense_orbital": {
-        "name": "Batería Orbital", 
-        "cost_base": 1000, 
+        "name": "Batería Orbital",
+        "cost_base": 1000,
         "min_base_tier": 3,
         "desc": "Artillería superficie-espacio. +10 Seguridad."
     }

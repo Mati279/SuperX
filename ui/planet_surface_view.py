@@ -21,13 +21,15 @@ from data.planet_repository import (
 from data.world_repository import get_world_state
 from core.rules import calculate_planet_habitability
 from core.world_constants import (
-    BUILDING_TYPES, 
-    PLANET_BIOMES, 
+    BUILDING_TYPES,
+    PLANET_BIOMES,
     SECTOR_TYPE_ORBITAL,
+    SECTOR_TYPE_URBAN,
     SECTOR_SLOTS_CONFIG,
     RESOURCE_UI_CONFIG
 )
 from ui.state import get_player_id
+from ui.base_management import render_base_management_panel, render_base_card_mini
 
 
 # --- Helpers de Facciones (Simplificado) ---
@@ -276,6 +278,24 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                         st.rerun()
     else:
         st.caption("No hay estructuras en este sector.")
+
+    # --- PANEL DE BASE MILITAR (Solo sectores urbanos bajo control) ---
+    is_urban_sector = s_type == "Urbano"
+    if is_urban_sector and is_my_sector:
+        st.divider()
+        # Obtener planet_id del sector
+        planet_id = sector.get("planet_id")
+        if not planet_id:
+            # Intentar obtener de la base de datos
+            try:
+                db = get_supabase()
+                sec_res = db.table("sectors").select("planet_id").eq("id", sector['id']).single().execute()
+                planet_id = sec_res.data.get("planet_id") if sec_res and sec_res.data else None
+            except:
+                pass
+
+        if planet_id:
+            render_base_management_panel(sector['id'], planet_id)
 
     # --- PANEL DE CONSTRUCCIÓN (Solo si es dueño) ---
     is_sector_empty = (not sector_buildings)
