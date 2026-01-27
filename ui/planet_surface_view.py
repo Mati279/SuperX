@@ -8,6 +8,7 @@ Ahora todas las acciones tácticas (Explorar/Colonizar) se realizan desde la Con
 Refactor V16.0: Soporte para visualización de "En Construcción" y Puestos de Avanzada.
 Refactor V17.0: Consolidación de gestión de edificios mediante modal único. Integración de bases militares.
 Refactor V17.1 (Fix): Corrección de detección de soberanía basada en Planet Owner IDs.
+Refactor V18.0: Eliminación de construcción manual de Bases Militares (delegado a Unidades). Unificación de UI.
 """
 
 import streamlit as st
@@ -65,12 +66,11 @@ def show_structure_management_modal(building: dict, asset_id: int, player_id: in
         st.divider()
         st.markdown("#### Zona de Peligro")
         if st.button("🚨 Desmantelar Base Militar", type="primary", key=f"nuke_base_{building['id']}"):
-             # Aquí usamos una lógica especial o llamamos a una función específica para destruir bases
-             # Por ahora, usamos demolish_building asumiendo que el ID de la base se maneja correctamente
-             # Ojo: demolish_building espera ID de planet_buildings, pero la base está en 'bases'.
-             # Se requiere una función específica en el backend real, pero simularé la llamada a la tabla bases
+             # Lógica específica para destruir bases (tabla 'bases')
              try:
                  db = get_supabase()
+                 # Nota: building['id'] aquí corresponde al ID real de la base en la tabla 'bases'
+                 # gracias a la inyección virtual en el repositorio.
                  db.table("bases").delete().eq("id", building['id']).execute()
                  st.toast("Base Militar desmantelada. Soberanía perdida.")
                  st.rerun()
@@ -245,6 +245,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     V16.0: Soporte visual para 'En Construcción' y habilitación de menú si existe Outpost.
     V17.0: Reemplazo de botones directos por Modal de Gestión (Gear Icon).
     V17.1: Fix lógica soberanía. Prioridad a planet['owner_id'] sobre lista de edificios.
+    V18.0: Eliminado botón de construcción manual de Bases Militares (Acción delegada a Unidades).
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -403,17 +404,13 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                     # No mostrar Outpost en este menú (se construye vía unidad)
                     if t == "outpost":
                         continue
-                    # Bases militares se construyen desde panel dedicado si no existen
+                    # Bases militares se construyen desde panel dedicado (ahora delegadas a unidades)
                     if t == "military_base":
                         continue
                         
                     if not allowed or s_type in allowed:
                          filtered_types.append(t)
                 
-                # Opción especial: Construir Base si es urbano y no hay una
-                if s_type == SECTOR_TYPE_URBAN:
-                    pass 
-                    
                 selected_type = st.selectbox(
                     "Tipo de Edificio",
                     filtered_types,
@@ -439,16 +436,6 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
                             st.rerun()
                         else:
                             st.error("Error en la construcción.")
-
-                # Botón especial para Bases Militares (si aplica)
-                if s_type == SECTOR_TYPE_URBAN:
-                    st.divider()
-                    st.caption("Proyectos Especiales")
-                    if st.button("🛡️ Proyecto: Base Militar", key=f"proj_base_{sector['id']}"):
-                        # Usamos un modal especial para la construcción inicial de la base
-                        # Truco: llamamos al modal pasando un objeto dummy para disparar el modo 'no base'
-                        dummy_base = {'building_type': 'military_base', 'is_virtual': True, 'sector_id': sector['id'], 'id': -1}
-                        show_structure_management_modal(dummy_base, asset_id, player_id, planet_id)
 
         else:
              st.warning("⛔ Sector controlado por otra facción.")
