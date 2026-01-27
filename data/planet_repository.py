@@ -44,10 +44,11 @@ Actualizado v10.0: Helper get_player_base_coordinates para Ubicación SQL.
 Actualizado v10.3: Helper get_sector_by_id para exploración táctica.
 Actualizado v10.4: Soberanía Diferida (Filtro por built_at_tick).
 Refactor v11.0: INTEGRACIÓN DE SISTEMA DE BASES MILITARES (Tabla 'bases').
-Refactor v11.1: INTEGRACIÓN UI BASES MILITARES.
-                - get_all_player_planets_with_buildings ahora inyecta bases como "virtual buildings".
-                - get_planet_sectors_status cuenta bases en slots.
-                - initialize_player_base inicia módulos en nivel 1.
+Refactor v11.2: INTEGRACIÓN UI VISUAL DE BASES.
+                - get_all_player_planets_with_buildings: Inyección de base como edificio virtual.
+                - get_planet_buildings: Inyección de base como edificio virtual.
+                - get_planet_sectors_status: Conteo de slots de base.
+                - initialize_player_base: Fix niveles iniciales (1).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -269,7 +270,7 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
     Refactor V5.7: Actualizado a 'population'.
     Fix V5.9: Corrección de nombre de columna 'sector_type'.
     Refactor V6.0: Cálculo dinámico de 'buildings_count'.
-    Actualizado V11.1: Inyección de Bases Militares como 'edificios virtuales'.
+    Actualizado V11.2: Fusión de 'planet_buildings' y 'bases' para la UI.
     """
     try:
         db = _get_db()
@@ -292,7 +293,7 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
             .execute()
         buildings = buildings_response.data if buildings_response and buildings_response.data else []
 
-        # 2. Obtener Bases Militares (V11.1 - Inyección UI)
+        # 2. Obtener Bases Militares (Tabla 'bases')
         bases_response = db.table("bases")\
             .select("*")\
             .eq("player_id", player_id)\
@@ -306,7 +307,7 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
             .execute()
         sectors_data = sectors_response.data if sectors_response and sectors_response.data else []
         
-        # Corrección de campo legacy 'slots' -> 'max_slots' e inicializar count
+        # Mapa de sectores para acceso rápido
         sector_map = {}
         for s in sectors_data:
             if 'slots' not in s and 'max_slots' in s:
@@ -328,7 +329,7 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
             building["sector_type"] = sector.get("sector_type") if sector else "Desconocido"
             building["sector_info"] = sector
             
-            # --- V6.3: Consumo Dinámico de Slots ---
+            # Consumo Dinámico de Slots
             b_type = building.get("building_type")
             consumes_slots = BUILDING_TYPES.get(b_type, {}).get("consumes_slots", True)
             
@@ -337,44 +338,39 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
             
             buildings_by_asset[aid].append(building)
 
-        # B. Procesar Bases Militares (Inyección como Edificio Virtual)
-        # Necesitamos mapear la base (que tiene planet_id) al asset correcto (que tiene id único)
+        # B. Procesar Bases Militares (Inyección Virtual)
+        # Necesitamos mapear planet_id -> asset_id
         asset_map_by_planet = {a["planet_id"]: a["id"] for a in assets}
 
         for base in bases:
             p_id = base.get("planet_id")
-            asset_id = asset_map_by_planet.get(p_id)
+            target_asset_id = asset_map_by_planet.get(p_id)
             
-            if asset_id:
-                if asset_id not in buildings_by_asset: buildings_by_asset[asset_id] = []
-                
-                # Crear objeto virtual compatible con UI
-                virtual_building = {
-                    "id": base["id"], # ID real de la tabla bases
-                    "building_type": "military_base", # Alias para la UI
+            if target_asset_id:
+                if target_asset_id not in buildings_by_asset: buildings_by_asset[target_asset_id] = []
+
+                # Crear el objeto edificio virtual para la UI
+                virtual_base = {
+                    "id": base["id"], # ID de la tabla bases (único)
+                    "building_type": "military_base", # Tipo especial para UI
                     "building_tier": base.get("tier", 1),
                     "sector_id": base["sector_id"],
-                    "planet_asset_id": asset_id,
+                    "planet_asset_id": target_asset_id,
                     "is_active": True,
                     "built_at_tick": base.get("created_at_tick", 0),
-                    # Datos extra de la base para tooltip si fuera necesario
-                    "modules": {
-                        "sensor_p": base.get("module_sensor_planetary", 0),
-                        "sensor_o": base.get("module_sensor_orbital", 0),
-                        "defense_g": base.get("module_defense_ground", 0)
-                    }
+                    "is_virtual": True # Flag opcional para depuración
                 }
                 
                 sec_id = base.get("sector_id")
                 sector = sector_map.get(sec_id)
-                virtual_building["sector_type"] = sector.get("sector_type") if sector else "Urbano"
-                virtual_building["sector_info"] = sector
-
-                # La base SIEMPRE consume un slot
+                virtual_base["sector_type"] = sector.get("sector_type") if sector else "Urbano"
+                virtual_base["sector_info"] = sector
+                
+                # La base SIEMPRE consume slot
                 if sector:
                     sector['buildings_count'] += 1
                 
-                buildings_by_asset[asset_id].append(virtual_building)
+                buildings_by_asset[target_asset_id].append(virtual_base)
 
         for asset in assets:
             planet_data = asset.get("planets", {})
@@ -386,7 +382,6 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
             # FIX V6.2: Mapeo explícito de population para el motor económico
             asset["population"] = planet_data.get("population", 0.0)
             
-            # Ensure planet data is accessible
             if "security" in planet_data: asset["security_from_planet"] = planet_data["security"]
 
             asset["buildings"] = buildings_by_asset.get(asset["id"], [])
@@ -410,7 +405,6 @@ def create_planet_asset(
         db = _get_db()
         existing_assets = get_all_player_planets(player_id)
         if not existing_assets:
-            # Boost para la primera colonia
             if initial_population == 1.0: 
                 initial_population = random.uniform(1.5, 1.7)
 
@@ -541,7 +535,7 @@ def get_planet_sectors_status(planet_id: int, player_id: Optional[int] = None) -
     Consulta el estado actual de los sectores de un planeta, calculando ocupación dinámica.
     V7.2: Soporta filtrado por conocimiento de jugador (is_explored_by_player).
     V10.2: Añadido campo 'is_discovered' para Fog of War.
-    V11.1: Incluye 'bases' en el conteo de slots ocupados.
+    V11.2: Incluye 'bases' en el conteo de slots ocupados.
     """
     try:
         db = _get_db()
@@ -724,12 +718,48 @@ def upgrade_infrastructure_module(planet_asset_id: int, module_key: str, player_
 # --- GESTIÓN DE EDIFICIOS ---
 
 def get_planet_buildings(planet_asset_id: int) -> List[Dict[str, Any]]:
+    """
+    Obtiene los edificios de un asset planetario.
+    Actualizado V11.2: Inyecta 'bases' como edificios virtuales de tipo 'military_base'.
+    """
     try:
-        response = _get_db().table("planet_buildings")\
+        db = _get_db()
+        
+        # 1. Edificios Estándar
+        response = db.table("planet_buildings")\
             .select("*")\
             .eq("planet_asset_id", planet_asset_id)\
             .execute()
-        return response.data if response and response.data else []
+        
+        buildings = response.data if response and response.data else []
+        
+        # 2. Inyectar Bases Militares
+        asset = get_planet_asset_by_id(planet_asset_id)
+        if asset:
+            planet_id = asset["planet_id"]
+            player_id = asset["player_id"]
+            
+            bases_res = db.table("bases")\
+                .select("*")\
+                .eq("planet_id", planet_id)\
+                .eq("player_id", player_id)\
+                .execute()
+            
+            if bases_res and bases_res.data:
+                for base in bases_res.data:
+                    virtual_base = {
+                        "id": base["id"], 
+                        "building_type": "military_base", 
+                        "building_tier": base.get("tier", 1),
+                        "sector_id": base["sector_id"],
+                        "planet_asset_id": planet_asset_id,
+                        "is_active": True,
+                        "built_at_tick": base.get("created_at_tick", 0),
+                        "is_virtual": True
+                    }
+                    buildings.append(virtual_base)
+                    
+        return buildings
     except Exception as e:
         log_event(f"Error obteniendo edificios: {e}", is_error=True)
         return []
@@ -1414,7 +1444,7 @@ def initialize_player_base(player_id: int, planet_id: int, sector_id: int) -> bo
     """
     Crea la Base Militar inicial (HQ) en la tabla 'bases'.
     Utilizado por Protocolo Génesis para despliegue gratuito.
-    Actualizado V11.1: Inicialización de módulos a Nivel 1.
+    Actualizado V11.2: Inicialización de módulos a Nivel 1.
     """
     try:
         db = _get_db()
@@ -1427,7 +1457,7 @@ def initialize_player_base(player_id: int, planet_id: int, sector_id: int) -> bo
             "sector_id": sector_id,
             "tier": 1,
             "created_at_tick": current_tick,
-            # FIX V11.1: Inicializar módulos en Nivel 1
+            # FIX V11.2: Inicializar módulos en Nivel 1
             "module_sensor_planetary": 1,
             "module_sensor_orbital": 1,
             "module_defense_ground": 1,
