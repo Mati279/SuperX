@@ -5,6 +5,7 @@ Maneja la lógica de construcción de puestos de avanzada y estructuras táctica
 iniciadas por unidades en el terreno.
 Refactorizado V19.0: Actualización de estado de unidad a CONSTRUCTING.
 Refactorizado V19.1: Restricción de soberanía para Puestos de Avanzada.
+Refactorizado V20.0: Restricciones de Sectores Urbanos y Soberanía Centralizada.
 """
 
 from typing import Dict, Any, Optional
@@ -30,17 +31,10 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
     """
     Intenta construir un Puesto de Avanzada en el sector actual de la unidad.
     
-    Validaciones:
-    - Unidad pertenece al jugador y tiene movimientos.
-    - Sector explorado y vacío.
+    Reglas Actualizadas V20.0:
+    - PROHIBIDO en sectores 'URBAN'.
+    - PROHIBIDO en CUALQUIER sector del planeta si el planeta tiene al menos un sector 'URBAN' (Soberanía Centralizada).
     - Soberanía: El jugador NO debe ser ya el dueño del planeta.
-    - Recursos suficientes.
-    
-    Efectos:
-    - Descuento de recursos.
-    - Creación de edificio (Time: Current Tick + 1).
-    - Fatiga de unidad (Se bloquea en estado CONSTRUCTING).
-    - Actualización de soberanía (Diferida hasta finalización).
     """
     db = get_supabase()
     
@@ -60,13 +54,11 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
     if unit.status == UnitStatus.CONSTRUCTING:
          return {"success": False, "error": "La unidad ya está ocupada construyendo."}
         
-    # Limite de movimientos (si está en sigilo es 1, sino MAX)
     limit = 1 if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
     if unit.local_moves_count >= limit:
         return {"success": False, "error": "La unidad está fatigada y no puede construir este turno."}
 
-    # 1.5 Validar Soberanía Planetaria (NUEVO V19.1)
-    # Si el jugador ya controla el planeta, no necesita (ni debe) construir outposts.
+    # 1.5 Validar Soberanía Planetaria Existente
     try:
         planet_check = db.table("planets")\
             .select("surface_owner_id")\
@@ -79,31 +71,39 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
             if surface_owner == player_id:
                 return {
                     "success": False, 
-                    "error": "Tu facción ya controla la soberanía de este planeta. No requieres Puestos de Avanzada adicionales; construye infraestructura directamente."
+                    "error": "Tu facción ya controla la soberanía de este planeta. Construye infraestructura civil directamente."
                 }
     except Exception as e:
-        # Si falla la verificación de soberanía, logueamos pero permitimos continuar por seguridad,
-        # o fallamos si es crítico. En este caso, fallamos seguro.
         return {"success": False, "error": f"Error verificando soberanía planetaria: {e}"}
 
     # 2. Validar Ubicación
     if unit.location_sector_id != sector_id:
         return {"success": False, "error": "La unidad no está en el sector objetivo."}
 
-    # 3. Validar Estado del Sector (Conocido y Vacío)
-    # Verificar conocimiento
-    knowledge_check = db.table("player_sector_knowledge")\
+    # --- REGLAS V20.0: RESTRICCIONES URBANAS ---
+    
+    # A. Verificar si el sector actual es URBANO
+    target_sector_res = db.table("sectors").select("sector_type").eq("id", sector_id).maybe_single().execute()
+    if target_sector_res.data and target_sector_res.data.get("sector_type") == "URBAN":
+        return {
+            "success": False, 
+            "error": "🚫 No se pueden construir Puestos de Avanzada en sectores URBANOS. Debes subyugar la población y construir una Base Militar."
+        }
+
+    # B. Verificar si el planeta tiene ALGÚN sector URBANO (Bloqueo Planetario)
+    urban_check = db.table("sectors")\
         .select("id")\
-        .eq("player_id", player_id)\
-        .eq("sector_id", sector_id)\
-        .maybe_single()\
+        .eq("planet_id", unit.location_planet_id)\
+        .eq("sector_type", "URBAN")\
         .execute()
         
-    # Nota: Sectores orbitales o urbanos iniciales pueden ser conocidos sin estar en esta tabla,
-    # pero un Outpost generalmente se construye en terreno salvaje explorado.
-    # Asumimos que si la UI lo permitió, es válido, pero doble check DB es mejor.
-    
-    # Verificar ocupación (Must be empty)
+    if urban_check.data and len(urban_check.data) > 0:
+        return {
+            "success": False,
+            "error": "🚫 Planeta Habitado: La soberanía se decide en los Centros Urbanos. No puedes reclamar territorio salvaje mediante Puestos de Avanzada."
+        }
+
+    # 3. Validar Estado del Sector (Ocupación)
     buildings_check = db.table("planet_buildings")\
         .select("id")\
         .eq("sector_id", sector_id)\
@@ -134,12 +134,11 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
             "materiales": new_materials
         })
 
-        # B. Insertar Edificio (Construction Time: 1 Tick)
+        # B. Insertar Edificio
         world = get_world_state()
         current_tick = world.get("current_tick", 1)
-        target_tick = current_tick + 1 # Tarda 1 tick en estar operativo
+        target_tick = current_tick + 1 
         
-        # Obtenemos el planet_asset_id. 
         planet_id = unit.location_planet_id
         
         asset_res = db.table("planet_assets")\
@@ -154,7 +153,6 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
         if asset_res and asset_res.data:
             asset_id = asset_res.data["id"]
         else:
-            # Si no tiene asset, creamos el asset contenedor.
             new_asset = create_planet_asset(
                 planet_id=planet_id,
                 system_id=unit.location_system_id,
@@ -162,11 +160,7 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
                 settlement_name="Puesto de Avanzada",
                 initial_population=0.0 
             )
-            
-            if new_asset:
-                asset_id = new_asset["id"]
-            else:
-                raise Exception("Fallo al crear activo planetario para el puesto.")
+            asset_id = new_asset["id"]
 
         building_data = {
             "planet_asset_id": asset_id,
@@ -182,8 +176,7 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
         
         db.table("planet_buildings").insert(building_data).execute()
 
-        # C. Fatiga y Estado de Unidad (V19.0)
-        # Se establece el estado a CONSTRUCTING y se agotan los movimientos.
+        # C. Fatiga
         db.table("units").update({
             "status": UnitStatus.CONSTRUCTING,
             "local_moves_count": MAX_LOCAL_MOVES_PER_TURN
@@ -205,11 +198,9 @@ def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> D
     """
     Intenta construir una Base Militar en un sector URBANO.
     
-    Requisitos:
-    - Sector Tipo: URBAN
-    - Costo: 500 CR, 100 Materiales
-    - Tabla destino: public.bases
-    - Unicidad: 1 Base por sector (manejado por índice DB, pero verificado aquí)
+    Reglas Actualizadas V20.0:
+    - Permitido en 'URBAN' SOLO si `is_subjugated=True`.
+    - No debe existir otra Base en el sector.
     """
     db = get_supabase()
     
@@ -237,14 +228,23 @@ def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> D
     if unit.location_sector_id != sector_id:
         return {"success": False, "error": "La unidad no está en el sector objetivo."}
 
-    # 3. Validar Tipo de Sector (Debe ser URBAN)
-    sector_res = db.table("sectors").select("sector_type").eq("id", sector_id).maybe_single().execute()
+    # 3. Validar Tipo de Sector y Subyugación (V20.0)
+    sector_res = db.table("sectors").select("sector_type, is_subjugated").eq("id", sector_id).maybe_single().execute()
     
     if not sector_res.data:
         return {"success": False, "error": "Sector no encontrado."}
-        
-    if sector_res.data.get("sector_type") != "URBAN":
+    
+    sector_data = sector_res.data
+    
+    if sector_data.get("sector_type") != "URBAN":
         return {"success": False, "error": "Las Bases Militares solo pueden construirse en sectores URBANOS."}
+
+    # REGLA V20.0: Check de Subyugación
+    if not sector_data.get("is_subjugated", False):
+        return {
+            "success": False, 
+            "error": "🚫 Sector Urbano hostil. Debes SUBYUGAR la población local antes de establecer una Base Militar."
+        }
 
     # 4. Validar Unicidad (No debe existir otra base en el sector)
     base_check = db.table("bases").select("id").eq("sector_id", sector_id).maybe_single().execute()
@@ -273,8 +273,7 @@ def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> D
             "materiales": new_materials
         })
 
-        # B. Insertar Base en tabla 'bases'
-        # Usamos el tick actual + 1 para created_at_tick para diferir la finalización
+        # B. Insertar Base
         world = get_world_state()
         current_tick = world.get("current_tick", 1)
         target_tick = current_tick + 1
@@ -284,7 +283,7 @@ def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> D
             "planet_id": unit.location_planet_id,
             "sector_id": sector_id,
             "tier": 1,
-            "created_at_tick": target_tick, # V19.0: Se difiere la finalización
+            "created_at_tick": target_tick,
             "module_sensor_planetary": 0,
             "module_sensor_orbital": 0,
             "module_defense_ground": 0,
@@ -294,21 +293,19 @@ def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> D
         insert_res = db.table("bases").insert(base_data).execute()
         
         if not insert_res.data:
-            # Rollback manual de recursos si falla insert (básico)
             update_player_resources(player_id, {
                 "creditos": current_credits,
                 "materiales": current_materials
             })
             raise Exception("Error DB al insertar base.")
 
-        # C. Fatiga y Estado de Unidad (V19.0)
+        # C. Fatiga
         db.table("units").update({
             "status": UnitStatus.CONSTRUCTING,
             "local_moves_count": MAX_LOCAL_MOVES_PER_TURN
         }).eq("id", unit_id).execute()
 
         # D. Actualizar Soberanía
-        # La base militar influye fuertemente en el control del planeta
         update_planet_sovereignty(unit.location_planet_id)
 
         msg = f"Unidad '{unit.name}' estableciendo Base Militar en Sector {sector_id} (ETA: 1 ciclo)."

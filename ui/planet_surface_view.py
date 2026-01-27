@@ -13,6 +13,7 @@ Refactor V18.1 (Fix): Inyección de botón de gestión para Bases Militares dete
 Refactor V18.2 (Fix): Corrección de visibilidad del botón de gestión (gear icon) independiente del asset_id y propiedad del sector.
 Refactor V19.0 (Fix): Lógica unificada en _render_sector_card para detección independiente de bases militares.
 Refactor V19.1: Restricción de construcción civil. Solo permitida si hay estructura de comando OPERATIVA en el sector.
+Refactor V20.0: Visibilidad global de Sectores Urbanos (Fow Lift).
 """
 
 import streamlit as st
@@ -254,14 +255,21 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     V18.1: Fix para visualizar botón de gestión en bases militares que no aparecen en la lista de edificios.
     V18.2: Fix de visibilidad de botón independiente del asset_id o propiedad del sector.
     V19.1: Restricción de construcción civil basada en presencia de Estructura de Comando operativa.
+    V20.0: Visibilidad Forzada de Sectores Urbanos.
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
+    is_known_globally = sector.get('is_known', False) # Flag global DB
+    
     is_orbital = sector.get('sector_type') == SECTOR_TYPE_ORBITAL
+    is_urban = sector.get('sector_type') == SECTOR_TYPE_URBAN
+    
+    # REGLA V20.0: Visibilidad si explorado OR conocido OR urbano OR orbital OR debug
+    is_visible = is_explored or is_known_globally or is_orbital or is_urban or debug_mode
+
     planet_id = planet['id']
     
-    # La órbita siempre es visible, independientemente del flag (safety check)
-    if not is_explored and not is_orbital and not debug_mode:
+    if not is_visible:
         # Renderizado Oculto
         st.markdown(f"### 🌫️ Sector Desconocido")
         st.caption("Zona no cartografiada. Sensores bloqueados.")
@@ -310,7 +318,10 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
             f_name = _get_faction_name_by_player(b_owner)
             st.caption(f"Ocupado por: :gray[**{f_name}**]")
         else:
-            st.caption("Sector No Reclamado")
+            if is_urban and not is_explored: # Urbano visible pero no explorado personalmente
+                st.caption("Soberanía: :gray[**Desconocido**]")
+            else:
+                st.caption("Sector No Reclamado")
 
     # Obtener tick actual
     world_state = get_world_state()
@@ -459,7 +470,10 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     
     if asset_id and used < total:
         if is_sector_empty and not is_my_sector:
-             st.caption("🔒 Sector libre. Utiliza una unidad para establecer un Puesto de Avanzada.")
+             if s_type == "Urbano":
+                 st.caption("🔒 Zona Urbana Hostil. Requiere Subyugación y Base Militar.")
+             else:
+                 st.caption("🔒 Sector libre. Utiliza una unidad para establecer un Puesto de Avanzada.")
 
         elif is_my_sector:
              # V19.1: Check de Estructura de Comando Operativa

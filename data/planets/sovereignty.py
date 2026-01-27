@@ -7,6 +7,7 @@ Actualizado v10.4: Soberanía Diferida (Filtro por built_at_tick).
 Refactor v11.0: INTEGRACIÓN DE SISTEMA DE BASES MILITARES (Tabla 'bases').
 Corrección v6.1: Fix crítico de tipos en seguridad (soporte Dict/Float).
 Refactor V19.0: Soberanía Estricta. Solo estructuras TERMINADAS (built_at_tick <= current) otorgan control.
+Refactor V20.0: Soberanía Disputada Estricta. Múltiples Outposts = Nadie controla.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -20,7 +21,12 @@ from .core import _get_db
 def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int] = None):
     """
     Recalcula y actualiza la soberanía de superficie y orbital.
-    Refactor V19.0: Verifica tick de finalización de estructuras para otorgar control.
+    
+    Reglas V20.0:
+    - Base Militar (Urbana) tiene precedencia absoluta.
+    - Si no hay Base, Outpost decide.
+    - UN SOLO jugador con Outposts = Soberanía Total.
+    - MÚLTIPLES jugadores con Outposts = ESTADO DISPUTADO (surface_owner_id = NULL).
     """
     try:
         db = _get_db()
@@ -33,46 +39,35 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
             return
 
         system_id = planet_info_res.data.get("system_id")
-        population = planet_info_res.data.get("population", 0.0)
-
-        # 1. Obtener Bases Militares (Nueva Lógica de Soberanía Civil/Militar)
-        # V19.0: Filtrar bases que ya estén completadas (created_at_tick <= current_tick)
+        
+        # 1. Obtener Bases Militares (Prioridad Máxima en Sectores Urbanos)
         bases_res = db.table("bases")\
             .select("player_id, sector_id, created_at_tick")\
             .eq("planet_id", planet_id)\
             .execute()
 
         raw_bases = bases_res.data if bases_res and bases_res.data else []
-        # Filtro estricto de finalización
         bases = [b for b in raw_bases if b.get('created_at_tick', 999999) <= current_tick]
 
+        # Si hay bases militares, el dueño de la primera base válida controla el planeta
+        # (Idealmente solo hay 1 base por planeta si hay reglas de bloqueo, o múltiples del mismo dueño)
         base_owner_id = bases[0]["player_id"] if bases else None
 
         # 2. Obtener Edificios (Para Outposts y Estaciones Orbitales)
         assets_res = db.table("planet_assets").select("id, player_id").eq("planet_id", planet_id).execute()
 
-        # Si no hay bases completadas ni assets, resetear soberanía
-        if not bases and (not assets_res or not assets_res.data):
-            db.table("planets").update({"surface_owner_id": None, "orbital_owner_id": enemy_fleet_owner_id}).eq("id", planet_id).execute()
-            if system_id:
-                recalculate_system_ownership(system_id)
-            return
-
         assets = assets_res.data if assets_res and assets_res.data else []
         player_map = {a["id"]: a["player_id"] for a in assets}
         asset_ids = list(player_map.keys())
 
-        # Consultar edificios relevantes en planet_buildings
         buildings = []
         if asset_ids:
-            # --- V10.4 / V19.0: Filtrar edificios completados ---
             buildings_res = db.table("planet_buildings")\
                 .select("building_type, planet_asset_id, is_active, built_at_tick")\
                 .in_("planet_asset_id", asset_ids)\
                 .execute()
 
             raw_buildings = buildings_res.data if buildings_res and buildings_res.data else []
-            # Filtro estricto de finalización
             buildings = [b for b in raw_buildings if b.get("built_at_tick", 0) <= current_tick]
 
         outpost_owners = set()
@@ -88,19 +83,25 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
             elif b_type == "orbital_station" and is_active:
                 orbital_station_owner = pid
 
-        # --- DETERMINAR SOBERANÍA DE SUPERFICIE ---
+        # --- DETERMINAR SOBERANÍA DE SUPERFICIE (LÓGICA V20.0) ---
         new_surface_owner = None
+        is_disputed = False
 
-        if population > 0:
-            # Regla V11: Si hay población, manda la Base Militar (Tabla 'bases')
+        if base_owner_id:
+            # Caso A: Base Militar impone soberanía (Planetas Urbanos)
             new_surface_owner = base_owner_id
-        else:
-            if base_owner_id:
-                new_surface_owner = base_owner_id
-            elif len(outpost_owners) == 1:
+        elif outpost_owners:
+            # Caso B: Outposts (Planetas Salvajes)
+            if len(outpost_owners) == 1:
+                # Soberanía Total
                 new_surface_owner = list(outpost_owners)[0]
             else:
+                # Conflicto: Múltiples facciones presentes -> DISPUTADO
                 new_surface_owner = None
+                is_disputed = True
+        else:
+            # Nadie tiene presencia
+            new_surface_owner = None
 
         # --- DETERMINAR SOBERANÍA ORBITAL ---
         new_orbital_owner = None
@@ -109,13 +110,14 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
         elif enemy_fleet_owner_id:
             new_orbital_owner = enemy_fleet_owner_id
         else:
+            # Si no hay estación ni flota enemiga, la órbita sigue a la superficie (si no está disputada)
             new_orbital_owner = new_surface_owner
 
         # Actualizar Planeta
         db.table("planets").update({
             "surface_owner_id": new_surface_owner,
             "orbital_owner_id": new_orbital_owner,
-            "is_disputed": (new_surface_owner is None and len(outpost_owners) > 1)
+            "is_disputed": is_disputed
         }).eq("id", planet_id).execute()
 
         # V9.0: Recalcular control del sistema en cascada

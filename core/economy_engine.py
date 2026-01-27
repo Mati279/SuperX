@@ -11,6 +11,7 @@ Actualizado V6.3: Implementación de Restricciones de Soberanía y Bloqueos.
 Actualizado V6.4: Penalización por Bloqueo Orbital Enemigo en Producción Industrial.
 Actualizado V8.0: Control del Sistema (Nivel Estelar) - Bonos de Sistema y Producción Estelar.
 Actualizado V9.0: Logística de Transporte Automático (Unidades en Tránsito).
+Refactorizado V20.0: Bloqueo total de ingresos en planetas DISPUTADOS.
 """
 
 from typing import Dict, List, Any, Tuple, Optional
@@ -420,6 +421,7 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
     Ejecuta el ciclo económico completo para un jugador.
     Actualizado V8.0: Soporte para bonos de sistema y estructuras estelares.
     Actualizado V9.0: Soporte para Logística de Transporte (Unidades en tránsito).
+    Refactor V20.0: Bloqueo de ingresos en estados disputados.
     """
     result = EconomyTickResult(player_id=player_id)
 
@@ -561,9 +563,12 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             # Si hay un dueño orbital diferente al dueño de superficie (yo) -> Bloqueo
             if orbital_owner is not None and orbital_owner != player_id:
                 is_blockaded = True
-
-            if is_disputed or is_blockaded:
-                penalty = DISPUTED_PENALTY_MULTIPLIER  # 0.3
+            
+            # --- REFACTOR V20.0: Bloqueo Total en Disputa ---
+            if is_disputed:
+                penalty = 0.0 # Ingreso CERO si está disputado
+            elif is_blockaded:
+                penalty = DISPUTED_PENALTY_MULTIPLIER # Penalización parcial si solo bloqueo orbital
 
             # Si no soy soberano, penalización total (0 ingresos)
             if not is_sovereign:
@@ -751,7 +756,10 @@ def get_player_projected_economy(player_id: int) -> Dict[str, int]:
             if orbital_owner is not None and orbital_owner != player_id:
                 is_blockaded = True
 
-            if is_disputed or is_blockaded:
+            # Refactor V20.0
+            if is_disputed:
+                penalty = 0.0
+            elif is_blockaded:
                 penalty = DISPUTED_PENALTY_MULTIPLIER
 
             if not is_sovereign:
