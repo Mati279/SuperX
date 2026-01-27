@@ -12,6 +12,7 @@ V15.0-V15.3: Compatibilidad Híbrida Pydantic V2/Dict, bloqueo de seguridad en t
 V16.0-V16.1: Validaciones de liderazgo, inclusión de tropas iniciales.
 V17.0: Visualización de tropas sueltas en Roster.
 V18.0: Refactorización modular en ui/logic, ui/components, ui/dialogs.
+V18.1: Implementación de botón de Reclutamiento Rápido (No-AI).
 
 Módulos relacionados:
 - ui/logic/roster_logic.py: Helpers de acceso seguro y lógica de datos.
@@ -43,7 +44,7 @@ from data.planet_repository import (
 from core.models import CharacterStatus, KnowledgeLevel
 
 # --- Servicios ---
-from services.character_generation_service import recruit_character_with_ai
+from services.character_generation_service import recruit_character_with_ai, recruit_initial_crew_fast
 
 # --- Módulos Refactorizados V18.0 ---
 from ui.logic.roster_logic import (
@@ -414,9 +415,12 @@ def render_comando_page():
 
         if non_commander_count == 0:
             st.info("La facción se está estableciendo. Necesitas personal para operar.")
-            col_center = st.columns([1, 2, 1])
-            with col_center[1]:
-                if st.button("Reunir al personal", type="primary", use_container_width=True):
+            
+            # Layout para los botones de reclutamiento inicial
+            c1, c2 = st.columns(2)
+            
+            with c1:
+                if st.button("Reunir al personal (Estándar con IA)", type="primary", use_container_width=True):
                     # Configuración jerárquica: 1x L5, 2x L3, 4x L1
                     recruitment_config = [
                         (5, KnowledgeLevel.KNOWN, "Oficial de Mando"),
@@ -486,6 +490,15 @@ def render_comando_page():
                         else:
                             status.update(label="Fallo crítico en el reclutamiento.", state="error")
                             st.error("No se pudo establecer la facción. Intenta nuevamente.")
+
+            with c2:
+                if st.button("⚡ Reclutamiento Rápido (No-AI)", type="secondary", use_container_width=True, help="Genera 7 unidades de nivel 1 de forma instantánea sin historias complejas."):
+                    with st.spinner("⚡ Ejecutando leva forzosa de personal..."):
+                        recruit_initial_crew_fast(player_id, count=7)
+                        st.success("Dotación inicial desplegada.")
+                        time.sleep(0.5)
+                        st.rerun()
+
             return
 
         # Si hay personal, continuar con carga normal
