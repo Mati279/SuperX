@@ -16,6 +16,7 @@ Refactor V19.1: Restricción de construcción civil. Solo permitida si hay estru
 Refactor V20.0: Visibilidad global de Sectores Urbanos (Fow Lift).
 Refactor V20.1: Excepción de construcción orbital (No requiere comando previo) y restricción civil para despliegue táctico.
 Refactor V21.0: Ajuste de Permisos de Construcción (Soberanía Planetaria).
+Refactor V21.1: Debug Hook para construcción forzada de Bases en zonas hostiles.
 """
 
 import streamlit as st
@@ -40,6 +41,7 @@ from core.world_constants import (
 )
 from ui.state import get_player_id
 from ui.base_management import render_base_management_panel
+from core.construction_engine import resolve_base_construction # V21.1: Debug Hook
 
 
 # --- Helpers de Facciones (Simplificado) ---
@@ -260,6 +262,7 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
     V20.0: Visibilidad Forzada de Sectores Urbanos.
     V20.1: Excepción de construcción orbital (No requiere comando previo) y restricción civil para despliegue táctico.
     V21.0: Ajuste de Permisos de Construcción (Soberanía Planetaria).
+    V21.1: Debug Hook para construcción forzada.
     """
     # --- LÓGICA DE NIEBLA DE SUPERFICIE ---
     is_explored = sector.get('is_explored_by_player', False)
@@ -478,6 +481,17 @@ def _render_sector_card(sector: dict, buildings: list, asset_id: int, player_id:
         if is_sector_empty and not is_my_sector:
              if s_type == "Urbano":
                  st.caption("🔒 Zona Urbana Hostil. Requiere Subyugación y Base Militar.")
+                 
+                 # 🧪 DEBUG HOOK V21.1: Forzar Base
+                 if debug_mode and not has_structures:
+                     if st.button("🧪 Debug: Forzar Base (Ignorar Subyugación)", key=f"dbg_force_base_{sector['id']}"):
+                         res = resolve_base_construction(None, sector['id'], player_id, bypass_subjugation=True)
+                         if res['success']:
+                             st.success(f"Debug: {res['message']}")
+                             st.rerun()
+                         else:
+                             st.error(f"Debug Error: {res['error']}")
+                             
              elif s_type == SECTOR_TYPE_ORBITAL:
                  st.caption("🔒 Espacio Orbital Neutral. Despliega una flota para establecer control.")
              else:

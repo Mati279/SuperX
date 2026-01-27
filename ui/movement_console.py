@@ -7,6 +7,7 @@ V15.0: Integración de Exploración Táctica de Sectores.
 V15.4: Desacople de visualización MRG a Vista Condicional.
 V16.0: Integración de Construcción de Puestos de Avanzada.
 V21.0: Integración de Construcción de Estaciones Orbitales y Refactor Soberanía.
+V21.1: Ocultación de Exploración en sectores URBANOS (Visibilidad automática).
 """
 
 import streamlit as st
@@ -51,7 +52,7 @@ from core.construction_engine import (
     ORBITAL_STATION_CREDITS,
     ORBITAL_STATION_MATERIALS
 )
-from core.world_constants import SECTOR_TYPE_ORBITAL
+from core.world_constants import SECTOR_TYPE_ORBITAL, SECTOR_TYPE_URBAN
 
 
 def _inject_movement_css():
@@ -730,13 +731,17 @@ def render_movement_console(unit_id: int):
         
         if unit.location_sector_id:
             # Check si el sector ya está explorado
-            is_orbital = loc_info.get('sector') == 'Orbital'
+            is_orbital = loc_info.get('sector') == SECTOR_TYPE_ORBITAL
             sectors = get_planet_sectors_status(unit.location_planet_id, player_id)
             sector_data = next((s for s in sectors if s['id'] == unit.location_sector_id), None)
             
             if sector_data:
+                # Regla V21.1: Si es URBANO, la exploración no está disponible (Visible por defecto)
+                is_urban = sector_data.get('sector_type') == SECTOR_TYPE_URBAN
+                
                 # Permitir re-explorar orbital para actualizar datos
-                if is_orbital or not sector_data.get('is_explored_by_player'):
+                # Y solo mostrar opción si NO es urbano (o si es urbano pero no descubierto, aunque urbano suele ser known)
+                if not is_urban and (is_orbital or not sector_data.get('is_explored_by_player')):
                     can_explore = True
                     explore_label = "Escanear Órbita" if is_orbital else "Explorar Sector"
         

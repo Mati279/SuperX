@@ -8,6 +8,7 @@ Refactorizado V19.1: Restricción de soberanía para Puestos de Avanzada.
 Refactorizado V20.0: Restricciones de Sectores Urbanos y Soberanía Centralizada.
 Refactorizado V20.1: Implementación de Construcción Orbital Táctica.
 Refactorizado V21.0: Implementación de Estaciones Orbitales (Stellar Buildings).
+Refactorizado V21.2: Soporte para Modo Debug (Bypass Subyugación) en Bases Militares.
 """
 
 from typing import Dict, Any, Optional
@@ -208,53 +209,67 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
         log_event(f"Error crítico construyendo outpost: {e}", player_id, is_error=True)
         return {"success": False, "error": f"Error del sistema: {e}"}
 
-def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> Dict[str, Any]:
+def resolve_base_construction(unit_id: Optional[int], sector_id: int, player_id: int, bypass_subjugation: bool = False) -> Dict[str, Any]:
     """
     Intenta construir una Base Militar en un sector URBANO.
     
     Reglas Actualizadas V20.0:
     - Permitido en 'URBAN' SOLO si `is_subjugated=True`.
     - No debe existir otra Base en el sector.
+    
+    Reglas V21.2 (Debug):
+    - Si bypass_subjugation=True, ignora subyugación y permite unit_id=None (Modo Admin/Debug).
     """
     db = get_supabase()
     
-    # 1. Validar Unidad y Fatiga
-    unit_data = get_unit_by_id(unit_id)
-    if not unit_data:
-        return {"success": False, "error": "Unidad no encontrada."}
-    
-    unit = UnitSchema.from_dict(unit_data)
-    
-    if unit.player_id != player_id:
-        return {"success": False, "error": "Error de autorización."}
-        
-    if unit.status == UnitStatus.TRANSIT:
-        return {"success": False, "error": "La unidad está en tránsito."}
-    
-    if unit.status == UnitStatus.CONSTRUCTING:
-         return {"success": False, "error": "La unidad ya está ocupada construyendo."}
-        
-    limit = 1 if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
-    if unit.local_moves_count >= limit:
-        return {"success": False, "error": "La unidad está fatigada y no puede construir este turno."}
-
-    # 2. Validar Ubicación
-    if unit.location_sector_id != sector_id:
-        return {"success": False, "error": "La unidad no está en el sector objetivo."}
-
-    # 3. Validar Tipo de Sector y Subyugación (V20.0)
-    sector_res = db.table("sectors").select("sector_type, is_subjugated").eq("id", sector_id).maybe_single().execute()
+    # 1. Recuperar info del Sector para ubicación y validación
+    sector_res = db.table("sectors").select("sector_type, is_subjugated, planet_id").eq("id", sector_id).maybe_single().execute()
     
     if not sector_res.data:
         return {"success": False, "error": "Sector no encontrado."}
     
     sector_data = sector_res.data
-    
+    location_planet_id = sector_data.get("planet_id")
+
+    unit_name = "Comando Central (Debug)"
+    unit = None
+
+    # 1. Validar Unidad y Fatiga (Si NO estamos en modo bypass unit_id)
+    if unit_id is not None:
+        unit_data = get_unit_by_id(unit_id)
+        if not unit_data:
+            return {"success": False, "error": "Unidad no encontrada."}
+        
+        unit = UnitSchema.from_dict(unit_data)
+        unit_name = unit.name
+        
+        if unit.player_id != player_id:
+            return {"success": False, "error": "Error de autorización."}
+            
+        if unit.status == UnitStatus.TRANSIT:
+            return {"success": False, "error": "La unidad está en tránsito."}
+        
+        if unit.status == UnitStatus.CONSTRUCTING:
+             return {"success": False, "error": "La unidad ya está ocupada construyendo."}
+            
+        limit = 1 if unit.status == UnitStatus.STEALTH_MODE else MAX_LOCAL_MOVES_PER_TURN
+        if unit.local_moves_count >= limit:
+            return {"success": False, "error": "La unidad está fatigada y no puede construir este turno."}
+
+        # 2. Validar Ubicación Física de la Unidad
+        if unit.location_sector_id != sector_id:
+            return {"success": False, "error": "La unidad no está en el sector objetivo."}
+    else:
+        # Modo Debug / Bypass Unit
+        if not bypass_subjugation:
+            return {"success": False, "error": "ID de unidad requerido para construcción estándar."}
+        
+    # 3. Validar Tipo de Sector y Subyugación (V20.0)
     if sector_data.get("sector_type") != "URBAN":
         return {"success": False, "error": "Las Bases Militares solo pueden construirse en sectores URBANOS."}
 
-    # REGLA V20.0: Check de Subyugación
-    if not sector_data.get("is_subjugated", False):
+    # REGLA V20.0: Check de Subyugación (Con Bypass)
+    if not bypass_subjugation and not sector_data.get("is_subjugated", False):
         return {
             "success": False, 
             "error": "🚫 Sector Urbano hostil. Debes SUBYUGAR la población local antes de establecer una Base Militar."
@@ -265,7 +280,8 @@ def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> D
     if base_check.data:
         return {"success": False, "error": "Ya existe una Base Militar en este sector."}
 
-    # 5. Validar Recursos
+    # 5. Validar Recursos (Incluso en debug, cobramos para mantener economía consistente, o se podría skippear)
+    # De momento se cobra siempre
     finances = get_player_finances(player_id)
     current_credits = finances.get("creditos", 0)
     current_materials = finances.get("materiales", 0)
@@ -294,7 +310,7 @@ def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> D
         
         base_data = {
             "player_id": player_id,
-            "planet_id": unit.location_planet_id,
+            "planet_id": location_planet_id,
             "sector_id": sector_id,
             "tier": 1,
             "created_at_tick": target_tick,
@@ -313,16 +329,18 @@ def resolve_base_construction(unit_id: int, sector_id: int, player_id: int) -> D
             })
             raise Exception("Error DB al insertar base.")
 
-        # C. Fatiga
-        db.table("units").update({
-            "status": UnitStatus.CONSTRUCTING,
-            "local_moves_count": MAX_LOCAL_MOVES_PER_TURN
-        }).eq("id", unit_id).execute()
+        # C. Fatiga (Solo si hay unidad real)
+        if unit_id is not None:
+            db.table("units").update({
+                "status": UnitStatus.CONSTRUCTING,
+                "local_moves_count": MAX_LOCAL_MOVES_PER_TURN
+            }).eq("id", unit_id).execute()
 
         # D. Actualizar Soberanía
-        update_planet_sovereignty(unit.location_planet_id)
+        update_planet_sovereignty(location_planet_id)
 
-        msg = f"Unidad '{unit.name}' estableciendo Base Militar en Sector {sector_id} (ETA: 1 ciclo)."
+        msg_prefix = "[DEBUG] " if bypass_subjugation else ""
+        msg = f"{msg_prefix}Unidad '{unit_name}' estableciendo Base Militar en Sector {sector_id} (ETA: 1 ciclo)."
         log_event(msg, player_id)
 
         return {"success": True, "message": msg}
