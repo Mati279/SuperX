@@ -324,7 +324,7 @@ def render_unit_row(
                 else:
                     if st.button("🚀", key=f"move_unit_{unit_id}", help="Control de Movimiento"):
                         st.session_state.selected_unit_movement = unit_id
-                        movement_dialog()
+                        movement_dialog(unit_id)
 
         # Botón de gestión
         with col_btn:
