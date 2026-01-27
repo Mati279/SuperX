@@ -43,6 +43,10 @@ Actualizado v9.2.0: Reglas de Soberanía Conflictiva y Excepción de Construcci�
 Actualizado v10.0: Helper get_player_base_coordinates para Ubicación SQL.
 Actualizado v10.3: Helper get_sector_by_id para exploración táctica.
 Actualizado v10.4: Soberanía Diferida (Filtro por built_at_tick).
+Refactor v11.0: INTEGRACIÓN DE SISTEMA DE BASES MILITARES (Tabla 'bases').
+                - update_planet_sovereignty ahora consulta 'bases' en lugar de 'hq'.
+                - Nueva función initialize_player_base para Genesis.
+                - Nueva función rename_settlement.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -684,26 +688,28 @@ def get_planet_buildings(planet_asset_id: int) -> List[Dict[str, Any]]:
 
 def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int] = None):
     """
-    Recalcula y actualiza la soberanía de superficie y orbital basada en edificios y flotas.
+    Recalcula y actualiza la soberanía de superficie y orbital.
 
-    Reglas V6.4 (Prioridad Orbital):
-    1. Dueño de 'orbital_station' activa.
-    2. Si no hay estación, 'enemy_fleet_owner_id' (ocupación por flota).
-    3. Si no hay estación ni flota enemiga, 'surface_owner_id' (herencia).
-
-    Reglas V9.2 (Soberanía Superficie Conflictiva):
-    - Si Población > 0: El soberano es el dueño del HQ (Base en Sector Urbano).
-    - Si Población == 0:
-      * 1 Jugador con Outposts -> Soberano.
-      * > 1 Jugador con Outposts (Conflicto) -> None (Tierra de nadie).
-      
-    V9.0: Al final, recalcula automáticamente el controlador del sistema (cascada).
-    V10.4: Filtra edificios en construcción (built_at_tick > current_tick).
+    Refactor V11.0: Integración de tabla 'bases'.
+    
+    Reglas de Superficie (V11.0):
+    1. Si Población > 0: El soberano es el propietario de la BASE MILITAR en el planeta.
+       (Se consulta la tabla 'bases', no 'planet_buildings' tipo 'hq').
+    2. Si Población == 0:
+       - 1 Jugador con Outposts (en planet_buildings) -> Soberano.
+       - > 1 Jugador con Outposts -> Conflicto (None).
+    
+    Reglas Orbitales (V6.4 - Inalteradas):
+    1. Estación Orbital activa.
+    2. Flota enemiga (enemy_fleet_owner_id).
+    3. Herencia de Superficie.
+    
+    Returns: None (Actualiza DB).
     """
     try:
         db = _get_db()
 
-        # 0. Obtener system_id y poblacion para reglas
+        # 0. Obtener info del planeta
         planet_info_res = db.table("planets").select("system_id, population").eq("id", planet_id).single().execute()
         if not planet_info_res or not planet_info_res.data:
             return
@@ -711,68 +717,80 @@ def update_planet_sovereignty(planet_id: int, enemy_fleet_owner_id: Optional[int
         system_id = planet_info_res.data.get("system_id")
         population = planet_info_res.data.get("population", 0.0)
 
-        # 1. Obtener todos los edificios del planeta
+        # 1. Obtener Bases Militares (Nueva Lógica de Soberanía Civil/Militar)
+        bases_res = db.table("bases")\
+            .select("player_id, sector_id")\
+            .eq("planet_id", planet_id)\
+            .execute()
+        
+        bases = bases_res.data if bases_res and bases_res.data else []
+        
+        # Como regla estricta, la base debe estar en sector Urbano, pero asumimos
+        # que la creación (initialize_player_base) ya valida el sector.
+        # Si hay múltiples bases (caso raro/bug), tomamos la primera válida.
+        base_owner_id = bases[0]["player_id"] if bases else None
+
+        # 2. Obtener Edificios (Para Outposts y Estaciones Orbitales)
+        # Necesitamos saber qué assets existen para filtrar outposts
         assets_res = db.table("planet_assets").select("id, player_id").eq("planet_id", planet_id).execute()
-        if not assets_res or not assets_res.data:
-            # Nadie en el planeta
+        
+        # Si no hay bases NI assets, el planeta está vacío
+        if not bases and (not assets_res or not assets_res.data):
             db.table("planets").update({"surface_owner_id": None, "orbital_owner_id": enemy_fleet_owner_id}).eq("id", planet_id).execute()
             if system_id:
                 recalculate_system_ownership(system_id)
             return
 
-        assets = assets_res.data
-        asset_ids = [a["id"] for a in assets]
+        assets = assets_res.data if assets_res and assets_res.data else []
         player_map = {a["id"]: a["player_id"] for a in assets}
+        asset_ids = list(player_map.keys())
 
-        # --- V10.4: Obtener Tick Actual ---
-        world = get_world_state()
-        current_tick = world.get("current_tick", 1)
+        # Consultar edificios relevantes en planet_buildings
+        buildings = []
+        if asset_ids:
+             # --- V10.4: Filtrar edificios en construcción ---
+            world = get_world_state()
+            current_tick = world.get("current_tick", 1)
 
-        # Obtener edificios relevantes (incluyendo built_at_tick)
-        buildings_res = db.table("planet_buildings")\
-            .select("building_type, planet_asset_id, is_active, built_at_tick")\
-            .in_("planet_asset_id", asset_ids)\
-            .execute()
+            buildings_res = db.table("planet_buildings")\
+                .select("building_type, planet_asset_id, is_active, built_at_tick")\
+                .in_("planet_asset_id", asset_ids)\
+                .execute()
+            
+            raw_buildings = buildings_res.data if buildings_res and buildings_res.data else []
+            buildings = [b for b in raw_buildings if b.get("built_at_tick", 0) <= current_tick]
 
-        buildings = buildings_res.data if buildings_res and buildings_res.data else []
-
-        hq_owner = None
         outpost_owners = set()
         orbital_station_owner = None
 
         for b in buildings:
-            # --- V10.4: Filtrar edificios en construcción ---
-            built_at = b.get("built_at_tick", 0)
-            if built_at > current_tick:
-                continue
-
             b_type = b.get("building_type")
             pid = player_map.get(b.get("planet_asset_id"))
             is_active = b.get("is_active", True)
 
-            if b_type == "hq":
-                hq_owner = pid
-            elif b_type == "outpost":
+            if b_type == "outpost":
                 outpost_owners.add(pid)
             elif b_type == "orbital_station" and is_active:
                 orbital_station_owner = pid
 
-        # Lógica de Soberanía Superficie (V9.2)
+        # --- DETERMINAR SOBERANÍA DE SUPERFICIE ---
         new_surface_owner = None
         
         if population > 0:
-            # Regla: Si hay población, manda el HQ (Base Urbana)
-            # Si se destruyó el HQ pero queda población, se pierde soberanía hasta reconstruirlo
-            new_surface_owner = hq_owner 
+            # Regla V11: Si hay población, manda la Base Militar (Tabla 'bases')
+            new_surface_owner = base_owner_id
         else:
             # Regla: Planeta Salvaje / Puestos de Avanzada
-            if len(outpost_owners) == 1:
+            # Si hay una Base Militar en un planeta despoblado (raro), también daría soberanía.
+            if base_owner_id:
+                 new_surface_owner = base_owner_id
+            elif len(outpost_owners) == 1:
                 new_surface_owner = list(outpost_owners)[0]
             else:
                 # 0 owners OR > 1 (Conflicto de Puestos)
                 new_surface_owner = None
 
-        # Lógica de Soberanía Orbital (V6.4)
+        # --- DETERMINAR SOBERANÍA ORBITAL ---
         new_orbital_owner = None
         if orbital_station_owner:
             new_orbital_owner = orbital_station_owner  # Prioridad 1
@@ -859,13 +877,15 @@ def build_structure(
             if 'max_slots' in s: s['slots'] = s['max_slots']
             s['buildings_count'] = sector_counts.get(s["id"], 0)
             
-        # --- V8.3: VALIDACIÓN DE REGLAS DE NEGOCIO (HQ Único) ---
-        # Como hemos eliminado la restricción DB 'unique_building_per_planet', 
-        # debemos asegurar que no se construyan múltiples HQs por código.
+        # --- V8.3 / V11.0: VALIDACIÓN DE REGLAS DE NEGOCIO (Base vs HQ) ---
+        # Si el usuario intenta construir un HQ antiguo, bloqueamos o redirigimos.
+        # Por ahora asumimos que 'hq' sigue en BUILDING_TYPES pero en desuso para nuevas construcciones
+        # o que build_structure NO se usa para 'bases'.
         if building_type == 'hq':
-             existing_hq = next((b for b in my_buildings if b["building_type"] == "hq"), None)
-             if existing_hq:
-                 log_event("Solo puedes tener un Comando Central por colonia.", player_id, is_error=True)
+             # Verificar si ya tiene una Base en la tabla 'bases'
+             existing_base = db.table("bases").select("id").eq("player_id", player_id).eq("planet_id", planet_id).maybe_single().execute()
+             if existing_base and existing_base.data:
+                 log_event("Ya posees una Base Militar en este planeta.", player_id, is_error=True)
                  return None
 
         # 2. Selección de Sector Objetivo y Validación de Bloqueo Local
@@ -884,7 +904,6 @@ def build_structure(
                     return None
         else:
             # Auto-asignación inteligente
-            # Priorizar Urbano para HQ, Orbital para Estación, etc.
             candidates = []
             for s in sectors:
                 # Chequeo de slots
@@ -1403,8 +1422,8 @@ def add_initial_building(
     building_type: str = 'hq'
 ) -> bool:
     """
-    Inserta el edificio inicial (HQ por defecto) para el Protocolo Génesis.
-    Usa los valores de BUILDING_TYPES para pops_required y energy_consumption.
+    Legacy: Mantenido para otros usos de edificios iniciales.
+    Genesis V11.0 usa initialize_player_base para el HQ (Base).
     """
     try:
         db = _get_db()
@@ -1442,8 +1461,6 @@ def add_initial_building(
             )
             
             # --- V7.5.1: Asegurar Sincronización de Soberanía ---
-            # Aunque create_planet_asset ya asignó los dueños, esto recalcula basado en el edificio real (HQ)
-            # garantizando integridad total.
             asset = get_planet_asset_by_id(planet_asset_id)
             if asset:
                  update_planet_sovereignty(asset["planet_id"])
@@ -1455,4 +1472,64 @@ def add_initial_building(
 
     except Exception as e:
         log_event(f"Error crítico en add_initial_building: {e}", player_id, is_error=True)
+        return False
+
+
+# --- V11.0: NUEVAS FUNCIONES PARA SISTEMA DE BASES ---
+
+def initialize_player_base(player_id: int, planet_id: int, sector_id: int) -> bool:
+    """
+    Crea la Base Militar inicial (HQ) en la tabla 'bases'.
+    Utilizado por Protocolo Génesis para despliegue gratuito.
+    
+    TODO: Para construcciones futuras (no-iniciales), validar que el sector esté DOBLEGADO
+          o que se cumplan requisitos de materiales/tiempo.
+    """
+    try:
+        db = _get_db()
+        world = get_world_state()
+        current_tick = world.get("current_tick", 1)
+
+        base_data = {
+            "player_id": player_id,
+            "planet_id": planet_id,
+            "sector_id": sector_id,
+            "tier": 1,
+            "created_at_tick": current_tick,
+            # Módulos por defecto en 0 según definición de tabla
+        }
+
+        response = db.table("bases").insert(base_data).execute()
+        
+        if response and response.data:
+            log_event(f"✅ Base Militar establecida en sector {sector_id}", player_id)
+            
+            # Recalcular soberanía inmediatamente (La base otorga control)
+            update_planet_sovereignty(planet_id)
+            return True
+        
+        log_event(f"Fallo al crear Base Militar en sector {sector_id}", player_id, is_error=True)
+        return False
+
+    except Exception as e:
+        log_event(f"Error crítico en initialize_player_base: {e}", player_id, is_error=True)
+        return False
+
+def rename_settlement(planet_asset_id: int, player_id: int, new_name: str) -> bool:
+    """Permite al jugador renombrar su colonia/asentamiento."""
+    if not new_name or len(new_name) < 3:
+        return False
+        
+    try:
+        # Verificar propiedad implícita en el where
+        response = _get_db().table("planet_assets").update({
+            "nombre_asentamiento": new_name
+        }).eq("id", planet_asset_id).eq("player_id", player_id).execute()
+        
+        if response and response.data:
+            log_event(f"Asentamiento renombrado a '{new_name}'", player_id)
+            return True
+        return False
+    except Exception as e:
+        log_event(f"Error renombrando asentamiento: {e}", player_id, is_error=True)
         return False

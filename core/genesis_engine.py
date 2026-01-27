@@ -17,6 +17,7 @@ Actualizado V7.5: Fix Soberanía Inicial (Sincronización Orbital en Creación).
 Actualizado V7.6: Estandarización de Planeta Inicial (Mass Class: Estándar).
 Actualizado V7.7: Refactor integral para uso de create_planet_asset (Seguridad y Fail-safes).
 Refactor V8.0: Eliminación de tripulación automática (Solo Start).
+Refactor V11.0: Integración de initialize_player_base para creación de Base Militar en lugar de 'hq' genérico.
 """
 
 import random
@@ -31,6 +32,7 @@ from data.planet_repository import (
     initialize_planet_sectors,
     claim_genesis_sector,
     add_initial_building,
+    initialize_player_base, # V11.0: Nueva función para bases
     update_planet_sovereignty
 )
 from core.world_constants import STAR_TYPES, ECONOMY_RATES, HABITABLE_BIRTH_BIOMES, SECTOR_TYPE_URBAN
@@ -151,7 +153,7 @@ def genesis_protocol(player_id: int) -> bool:
         apply_genesis_inventory(player_id)
         initialize_fog_of_war(player_id, system_id)
 
-        # --- V7.4: Descubrimiento, Asignación de Sector y Edificio Inicial ---
+        # --- V7.4 / V11.0: Descubrimiento, Asignación de Sector y Base Inicial ---
         try:
             # A. Garantizar existencia de sectores (Inicialización Lazy)
             # Usamos mass_class del select anterior, default a 'Estándar' si falta
@@ -170,24 +172,24 @@ def genesis_protocol(player_id: int) -> bool:
                 # D. Descubrir Sector (Niebla - player_sector_knowledge)
                 grant_sector_knowledge(player_id, landing_sector_id)
 
-                # E. Construir Edificio Inicial (HQ - Comando Central)
-                building_result = add_initial_building(
+                # E. Construir BASE MILITAR Inicial (V11.0)
+                # Reemplazamos 'add_initial_building(..., 'hq')' por la nueva función
+                base_result = initialize_player_base(
                     player_id=player_id,
-                    planet_asset_id=planet_asset_id,
-                    sector_id=landing_sector_id,
-                    building_type='hq'
+                    planet_id=target_planet['id'],
+                    sector_id=landing_sector_id
                 )
 
-                if claim_result and building_result:
+                if claim_result and base_result:
                     log_event(
-                        f"✅ Sector Urbano {landing_sector_id} asignado con Comando Central "
+                        f"✅ Sector Urbano {landing_sector_id} asignado con Base Militar "
                         f"para jugador {player_id} (Asset: {planet_asset_id})",
                         player_id
                     )
                 else:
                     log_event(
                         f"⚠ Advertencia: Sector {landing_sector_id} parcialmente configurado "
-                        f"(claim={claim_result}, building={building_result})",
+                        f"(claim={claim_result}, base={base_result})",
                         player_id,
                         is_error=True
                     )
@@ -196,7 +198,7 @@ def genesis_protocol(player_id: int) -> bool:
                 log_event("❌ CRITICAL: No se encontró Sector Urbano tras inicialización.", player_id, is_error=True)
 
         except Exception as e:
-            log_event(f"Error inicializando sectores/edificio inicial: {e}", player_id, is_error=True)
+            log_event(f"Error inicializando sectores/base inicial: {e}", player_id, is_error=True)
             traceback.print_exc()
 
         # Finalización del protocolo
