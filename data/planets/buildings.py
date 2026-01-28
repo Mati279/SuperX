@@ -12,6 +12,7 @@ Refactor v21.0: Validación de Construcción por Soberanía (Surface Owner ID).
 Refactor v23.0: Implementación de Mejoras Tier 2 y Limpieza de Lógica HQ.
 Refactor v23.2: Cobro inmediato de recursos y validación de duplicidad por sector.
 Refactor v25.0: Persistencia de Extracción de Lujo en Tier 2 (Insert/Delete en luxury_extraction_sites).
+Refactor v25.1: Sincronización estricta de activación de extracción de lujo (is_active=False inicial).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -371,7 +372,7 @@ def upgrade_structure(building_id: int, player_id: int) -> bool:
     El edificio se vuelve Nivel 2 pero la mejora tarda 1 tick (built_at_tick).
     
     Refactor V25.0: Persistencia de Extracción de Lujo.
-    Si el edificio está en un sector con recurso de lujo, crea entrada en luxury_extraction_sites.
+    Refactor V25.1: is_active = False inicial para sincronizar con el tiempo de construcción.
     """
     try:
         db = _get_db()
@@ -425,6 +426,7 @@ def upgrade_structure(building_id: int, player_id: int) -> bool:
         
         # --- V25.0: Persistencia de Extracción de Lujo ---
         # Si el sector tiene recurso de lujo, registramos el sitio de extracción inmediatamente.
+        # V25.1: Se crea con is_active=False. Se activará cuando el Time Engine procese la finalización.
         sector_id = building.get("sector_id")
         if sector_id:
             sector_res = db.table("sectors").select("luxury_resource, luxury_category").eq("id", sector_id).maybe_single().execute()
@@ -442,12 +444,12 @@ def upgrade_structure(building_id: int, player_id: int) -> bool:
                             "resource_key": lux_res,
                             "resource_category": lux_cat,
                             "extraction_rate": 1,
-                            "is_active": True,
+                            "is_active": False, # V25.1: Esperar activación del edificio
                             "pops_required": 0, # Tier 2 ya tiene requerimiento de pops en el edificio base
                             "building_id": building_id
                         }
                         db.table("luxury_extraction_sites").insert(site_data).execute()
-                        log_event(f"💎 Sitio de extracción activado: {lux_res} ({lux_cat})", player_id)
+                        log_event(f"⚙️ Instalación de equipo de extracción iniciada: {lux_res}", player_id)
 
         log_event(f"Mejora iniciada para {definition.get('name', 'Edificio')}. Nivel 2 disponible en próximo ciclo.", player_id)
         return True
@@ -480,7 +482,6 @@ def demolish_building(building_id: int, player_id: int) -> bool:
 
         # --- V25.0: Limpieza de Extracción de Lujo ---
         # Borrar explícitamente sitio de extracción vinculado para evitar huérfanos
-        # (Aunque FK debería tener cascade, es más seguro hacerlo explícito)
         db.table("luxury_extraction_sites").delete().eq("building_id", building_id).execute()
 
         # Eliminar Edificio
@@ -530,6 +531,7 @@ def sync_luxury_sites(player_id: int):
     """
     V25.0: Función de utilidad para sincronizar/reparar sitios de extracción.
     Busca edificios Tier 2 existentes que deberían tener un sitio de extracción pero no lo tienen.
+    V25.1: Sincroniza is_active con el estado del edificio padre.
     """
     try:
         db = _get_db()
@@ -537,7 +539,7 @@ def sync_luxury_sites(player_id: int):
         
         # 1. Obtener todos los edificios Tier >= 2 del jugador
         buildings = db.table("planet_buildings")\
-            .select("id, sector_id, planet_asset_id, building_tier")\
+            .select("id, sector_id, planet_asset_id, building_tier, is_active, built_at_tick")\
             .eq("player_id", player_id)\
             .gte("building_tier", 2)\
             .execute().data
@@ -547,42 +549,57 @@ def sync_luxury_sites(player_id: int):
 
         count_repaired = 0
         
+        # Obtener tick actual para validación adicional
+        world = get_world_state()
+        current_tick = world.get("current_tick", 1)
+        
         for b in buildings:
             sector_id = b.get("sector_id")
             building_id = b.get("id")
+            # El edificio es efectivo si está activo en DB Y ya pasó su tiempo de construcción
+            building_is_effective = b.get("is_active", True) and b.get("built_at_tick", 0) <= current_tick
             
             if not sector_id: continue
             
             # Verificar si ya tiene sitio
-            site_exists = db.table("luxury_extraction_sites")\
-                .select("id")\
+            site_res = db.table("luxury_extraction_sites")\
+                .select("id, is_active")\
                 .eq("building_id", building_id)\
-                .execute().data
+                .maybe_single().execute()
+            
+            site_exists = site_res.data
                 
             if not site_exists:
-                # Chequear si el sector tiene recurso
+                # CREAR SITIO FALTANTE
                 sector = db.table("sectors")\
                     .select("luxury_resource, luxury_category")\
                     .eq("id", sector_id)\
                     .single().execute().data
                 
                 if sector and sector.get("luxury_resource") and sector.get("luxury_resource") != "null":
-                    # Crear el sitio faltante
                     site_data = {
                         "planet_asset_id": b["planet_asset_id"],
                         "player_id": player_id,
                         "resource_key": sector["luxury_resource"],
                         "resource_category": sector["luxury_category"],
                         "extraction_rate": 1,
-                        "is_active": True,
+                        "is_active": building_is_effective, # Sincronizado
                         "pops_required": 0,
                         "building_id": building_id
                     }
                     db.table("luxury_extraction_sites").insert(site_data).execute()
                     count_repaired += 1
+            else:
+                # ACTUALIZAR ESTADO SI DIFIERE
+                # Si el edificio es efectivo pero el sitio no, activar
+                # Si el edificio NO es efectivo pero el sitio si, desactivar
+                site_active = site_exists.get("is_active", False)
+                if site_active != building_is_effective:
+                    db.table("luxury_extraction_sites").update({"is_active": building_is_effective}).eq("id", site_exists["id"]).execute()
+                    count_repaired += 1
         
         if count_repaired > 0:
-            log_event(f"✅ Reparados {count_repaired} sitios de extracción de lujo faltantes.", player_id)
+            log_event(f"✅ Reparados/Sincronizados {count_repaired} sitios de extracción de lujo.", player_id)
             
     except Exception as e:
         log_event(f"Error en sync_luxury_sites: {e}", player_id, is_error=True)

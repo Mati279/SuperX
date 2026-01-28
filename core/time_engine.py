@@ -4,6 +4,7 @@
 # V19.0: Reset de unidades CONSTRUCTING en fase de limpieza.
 # V22.1: Nueva fase 3.7 (Activación Estelar) y limpieza selectiva de construcción.
 # V23.2: Nueva fase 3.55 (Activación Planetaria) para edificios civiles.
+# V25.1: Activación sincronizada de extracción de lujo (Tier 2).
 
 from datetime import datetime, time
 import pytz
@@ -25,6 +26,8 @@ from data.log_repository import log_event, clear_player_logs
 # Imports para la lógica del MRG (Misiones)
 from data.database import get_supabase
 from data.character_repository import update_character, STATUS_ID_MAP
+# Import para sincronización de lujo
+from data.planets.buildings import sync_luxury_sites
 
 # Configuración de Logging Profesional
 logger = logging.getLogger(__name__)
@@ -587,6 +590,7 @@ def _phase_planetary_activation(current_tick: int):
     """
     Fase 3.55: Activación de Edificios Planetarios (V23.2).
     Activa edificios civiles (planet_buildings) que han completado su tiempo de construcción.
+    V25.1: Sincroniza activación de extracción de lujo Tier 2.
     """
     log_event("running phase 3.55: Activación de Edificios Planetarios...")
     try:
@@ -594,7 +598,7 @@ def _phase_planetary_activation(current_tick: int):
         
         # 1. Buscar edificios planetarios inactivos listos para activar
         ready_buildings = db.table("planet_buildings")\
-            .select("id, sector_id, player_id, building_type")\
+            .select("id, sector_id, player_id, building_type, building_tier")\
             .eq("is_active", False)\
             .lte("built_at_tick", current_tick)\
             .execute()
@@ -604,19 +608,35 @@ def _phase_planetary_activation(current_tick: int):
 
         # 2. Activar masivamente
         updates_count = 0
+        luxury_synced_count = 0
+        players_to_sync = set()
+
         for b in ready_buildings.data:
             bid = b['id']
             pid = b['player_id']
             btype = b['building_type']
+            tier = b.get("building_tier", 1)
             
             # Update single row to safe concurrency
             res = db.table("planet_buildings").update({"is_active": True}).eq("id", bid).execute()
             if res.data:
                 updates_count += 1
                 log_event(f"🏗️ Edificio '{btype}' operativo en sector {b['sector_id']}.", pid)
+                players_to_sync.add(pid)
+
+                # V25.1: Activar sitio de extracción de lujo si es Tier >= 2
+                if tier >= 2:
+                    lux_update = db.table("luxury_extraction_sites").update({"is_active": True}).eq("building_id", bid).execute()
+                    if lux_update.data:
+                        luxury_synced_count += 1
+                        log_event(f"Sistemas de extracción calibrados: Iniciada producción en Sector {b['sector_id']}", pid)
+        
+        # Sincronización final por seguridad
+        for pid in players_to_sync:
+            sync_luxury_sites(pid)
         
         if updates_count > 0:
-            log_event(f"✅ {updates_count} edificios civiles han entrado en línea.")
+            log_event(f"✅ {updates_count} edificios civiles han entrado en línea. ({luxury_synced_count} Tier 2)")
             
     except Exception as e:
         logger.error(f"Error en fase de activación planetaria: {e}")

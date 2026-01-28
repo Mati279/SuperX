@@ -17,6 +17,7 @@ Refactorizado V23.1: Proyección económica de recursos de lujo (UI) optimizada.
 Refactorizado V23.2: Validación estricta de built_at_tick para edificios activos.
 Refactorizado V24.0: Corrección de 'Bug de Desactivación Perpetua' y aplanamiento de estructura de stock de lujo.
 Refactorizado V25.0: Centralización de Extracción de Lujo (Eliminación de lógica ad-hoc Tier 2).
+Refactorizado V25.1: Sincronización estricta de proyección económica con activation.
 """
 
 from typing import Dict, List, Any, Tuple, Optional
@@ -417,18 +418,13 @@ def merge_luxury_resources(current: Dict[str, Any], extracted: Dict[str, int]) -
     for key, amount in extracted.items():
         # En V24.0, asumimos que 'key' ya viene como 'Categoria.Recurso' de calculate_luxury_extraction
         # Simplemente sumamos al inventario plano.
-        # Si la UI anterior guardaba cosas anidadas, esto empezará a guardar claves planas en el root.
-        
-        # Validar formato por seguridad
-        if "." in key:
-            # Opción A: Guardar plano (Preferido para UI genérica)
-            result[key] = result.get(key, 0) + amount
-            
-            # Nota de migración: Si existen claves viejas tipo result['Biologico']['Hongo'], 
-            # se mantendrán hasta que se limpien manualmente, pero las nuevas entradas serán planas.
+        # Forzar formato Categoria.Recurso si no lo tiene (Safety check V25.1)
+        if "." not in key:
+            # Si es legacy, no podemos inferir categoría facilmente aqui, 
+            # pero el input 'extracted' ya deberia venir saneado de calculate_luxury_extraction
+             result[key] = result.get(key, 0) + amount
         else:
-            # Fallback para claves simples
-            result[key] = result.get(key, 0) + amount
+             result[key] = result.get(key, 0) + amount
             
     return result
 
@@ -460,7 +456,7 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
     Refactor V23.0: Extracción de lujo por edificios Tier 2.
     Refactor V23.2: Filtrado robusto de edificios no terminados (built_at_tick).
     Fix V24.0: Corrección de 'Bug de Desactivación Perpetua' y Logs de Tier 2.
-    Refactor V25.0: Extracción de Lujo completamente delegada a tabla luxury_extraction_sites.
+    Refactor V25.0: Centralización de Extracción de Lujo (Eliminación de lógica ad-hoc Tier 2).
     """
     result = EconomyTickResult(player_id=player_id)
     db = get_supabase()
@@ -882,27 +878,11 @@ def get_player_projected_economy(player_id: int) -> Dict[str, Any]:
                 projection["datos"] += int(prod.datos * system_bonuses.data_multiplier)
                 projection["creditos"] += prod.creditos
                 
-                # --- V23.1: Proyección de Extracción de Lujo Tier 2 ---
-                # Verificar sectores con edificios Tier 2 activos
-                active_tier2_sectors = set()
-                for b in active_buildings:
-                    if b.get("building_tier", 1) >= 2 and b.get("sector_id"):
-                        active_tier2_sectors.add(b["sector_id"])
-                
-                # Iterar sobre la data de sectores que viene pre-cargada en el objeto planet
-                # Nota: Asumimos que get_all_player_planets_with_buildings incluye 'sectors'
-                planet_sectors = planet.get("sectors", [])
-                for sector in planet_sectors:
-                    s_id = sector.get("id")
-                    if s_id in active_tier2_sectors:
-                        lux_res = sector.get("luxury_resource")
-                        lux_cat = sector.get("luxury_category")
-                        
-                        if lux_res and lux_cat:
-                            # Fix V24.0: Usar clave plana también en proyección
-                            key = f"{lux_cat}.{lux_res}"
-                            # Probabilidad 100% (1 unidad) por tick
-                            projection["recursos_lujo"][key] = projection["recursos_lujo"].get(key, 0) + 1
+                # --- V25.0: Proyección de Extracción de Lujo ---
+                # ELIMINADO: Bucle ad-hoc de "Tier 2 Sectors".
+                # Ahora la proyección confía exclusivamente en 'get_luxury_extraction_sites_for_player'
+                # que respeta el flag 'is_active' gestionado por el Time Engine.
+                # Si el edificio está upgradeando, is_active=False -> No se proyecta -> CORRECTO.
 
             # Mantenimiento siempre se resta (Costo operativo)
             for b in active_buildings:
