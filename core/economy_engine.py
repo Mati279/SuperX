@@ -14,6 +14,7 @@ Actualizado V9.0: Logística de Transporte Automático (Unidades en Tránsito).
 Refactorizado V20.0: Bloqueo total de ingresos en planetas DISPUTADOS.
 Refactorizado V23.0: Soporte para Tiers de Edificios (1.1x) y Extracción de Lujo Automática en Tier 2.
 Refactorizado V23.1: Proyección económica de recursos de lujo (UI) optimizada.
+Refactorizado V23.2: Validación estricta de built_at_tick para edificios activos.
 """
 
 from typing import Dict, List, Any, Tuple, Optional
@@ -33,6 +34,7 @@ from data.planet_repository import (
 )
 # V9.0: Importar repositorio de unidades para coste logístico
 from data.unit_repository import get_troops_in_transit_count
+from data.world_repository import get_world_state
 
 from core.world_constants import (
     BUILDING_TYPES,
@@ -436,6 +438,7 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
     Actualizado V9.0: Soporte para Logística de Transporte (Unidades en tránsito).
     Refactor V20.0: Bloqueo de ingresos en estados disputados.
     Refactor V23.0: Extracción de lujo por edificios Tier 2.
+    Refactor V23.2: Filtrado robusto de edificios no terminados (built_at_tick).
     """
     result = EconomyTickResult(player_id=player_id)
     db = get_supabase()
@@ -454,6 +457,9 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
         if not finances:
              # Si no hay finanzas, no hay jugador válido (edge case)
              return result
+
+        world_state = get_world_state()
+        current_tick = world_state.get("current_tick", 1)
 
         luxury_sites = get_luxury_extraction_sites_for_player(player_id)
 
@@ -488,15 +494,21 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
         for sys_id in systems_planets.keys():
             # Obtener edificios estelares del jugador en este sistema
             stellar_buildings = get_stellar_buildings_for_system(sys_id, player_id)
+            
+            # V23.2: Filtrar edificios estelares válidos (ya terminados)
+            valid_stellar = [
+                b for b in stellar_buildings 
+                if b.get("built_at_tick", 0) <= current_tick
+            ]
 
-            if stellar_buildings:
+            if valid_stellar:
                 # Calcular bonos del sistema
-                system_bonuses = calculate_system_bonuses(stellar_buildings)
+                system_bonuses = calculate_system_bonuses(valid_stellar)
                 system_bonuses_cache[sys_id] = system_bonuses
 
                 # Procesar mantenimiento de edificios estelares
                 stellar_maint = process_stellar_building_maintenance(
-                    stellar_buildings,
+                    valid_stellar,
                     player_resources,
                     maintenance_multiplier=system_bonuses.maintenance_multiplier
                 )
@@ -596,8 +608,15 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             buildings = planet.get("buildings", [])
             pops_avail = float(planet.get("pops_activos", pop))
 
+            # V23.2: Filtrado robusto. El edificio debe estar activo EN DB (Phase 3.55)
+            # Y ADEMÁS, por seguridad, verificamos que el tick actual sea >= tick de construcción.
+            valid_buildings = [
+                b for b in buildings 
+                if b.get("is_active", False) and b.get("built_at_tick", 0) <= current_tick
+            ]
+
             # V8.0: Aplicar reducción de mantenimiento de logistics_hub
-            maint_res = process_building_maintenance(buildings, player_resources, pops_avail)
+            maint_res = process_building_maintenance(valid_buildings, player_resources, pops_avail)
 
             # V8.0: Aplicar multiplicador de mantenimiento del sistema
             for res, cost in maint_res.total_cost.items():
@@ -734,6 +753,7 @@ def get_player_projected_economy(player_id: int) -> Dict[str, Any]:
     Actualizado V8.0: Incluye bonos de sistema y producción estelar.
     Actualizado V9.0: Incluye costo de logística de transporte proyectado.
     Actualizado V23.1: Incluye proyección de recursos de lujo (Dedicated Sites + Tier 2).
+    Refactor V23.2: Filtrado robusto de edificios no terminados (built_at_tick).
     """
     projection = {
         k: 0 for k in ["creditos", "materiales", "componentes", "celulas_energia", "influencia", "datos"]
@@ -742,6 +762,9 @@ def get_player_projected_economy(player_id: int) -> Dict[str, Any]:
     projection["recursos_lujo"] = {}
 
     try:
+        world_state = get_world_state()
+        current_tick = world_state.get("current_tick", 1)
+
         planets = get_all_player_planets_with_buildings(player_id)
         
         # Proyectar también sitios de extracción dedicados
@@ -765,12 +788,16 @@ def get_player_projected_economy(player_id: int) -> Dict[str, Any]:
 
         for sys_id in systems_planets.keys():
             stellar_buildings = get_stellar_buildings_for_system(sys_id, player_id)
-            if stellar_buildings:
-                system_bonuses = calculate_system_bonuses(stellar_buildings)
+            
+            # V23.2: Validar edificios estelares proyectados
+            valid_stellar = [b for b in stellar_buildings if b.get("built_at_tick", 0) <= current_tick]
+
+            if valid_stellar:
+                system_bonuses = calculate_system_bonuses(valid_stellar)
                 system_bonuses_cache[sys_id] = system_bonuses
 
                 # V8.0: Proyectar producción estelar
-                active_stellar = [b for b in stellar_buildings if b.get("is_active", True)]
+                active_stellar = [b for b in valid_stellar if b.get("is_active", True)]
                 stellar_prod = calculate_stellar_production(active_stellar, system_bonuses)
                 projection["materiales"] += stellar_prod.materiales
                 projection["celulas_energia"] += stellar_prod.celulas_energia
@@ -834,7 +861,15 @@ def get_player_projected_economy(player_id: int) -> Dict[str, Any]:
             projection["creditos"] += income
 
             buildings = planet.get("buildings", [])
-            active_buildings = [b for b in buildings if b.get("is_active", True)]
+            
+            # V23.2: Filtrado robusto para proyección
+            # Nota: En proyección usamos 'is_active' del DB. Si el usuario está viendo esto
+            # antes de que pase el Tick, is_active=False. Esto es correcto, no se proyecta 
+            # hasta que se active.
+            active_buildings = [
+                b for b in buildings 
+                if b.get("is_active", False) and b.get("built_at_tick", 0) <= current_tick
+            ]
 
             # Solo sumar producción si es soberano
             if is_sovereign:

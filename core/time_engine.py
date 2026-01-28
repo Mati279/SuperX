@@ -3,6 +3,8 @@
 # V10.4: Añadida fase 3.5 (Actualización Diferida de Soberanía)
 # V19.0: Reset de unidades CONSTRUCTING en fase de limpieza.
 # V22.1: Nueva fase 3.7 (Activación Estelar) y limpieza selectiva de construcción.
+# V23.2: Nueva fase 3.55 (Activación Planetaria) para edificios civiles.
+
 from datetime import datetime, time
 import pytz
 import random
@@ -130,6 +132,7 @@ def _execute_game_logic_tick(execution_time: datetime):
     Lógica pesada del juego que ocurre cuando cambia el día.
     Refactorización V4.3.1: Ciclo de 8 Fases estricto.
     Refactorización V4.3.2: Unificación de lógica de Prestigio.
+    Refactorización V23.2: Fase 3.55 Activación de Edificios.
     """
     global _IS_PROCESSING_TICK
     if _IS_PROCESSING_TICK:
@@ -170,6 +173,9 @@ def _execute_game_logic_tick(execution_time: datetime):
         
         # 3.5 V10.4: Actualización de Soberanía Diferida (Construcciones Completadas)
         _phase_sovereignty_update(current_tick)
+
+        # 3.55 V23.2: Fase de Activación de Edificios Planetarios
+        _phase_planetary_activation(current_tick)
 
         # 3.6 V11.0: Fase de Mejora de Bases
         _phase_base_upgrades(current_tick)
@@ -576,6 +582,44 @@ def _phase_sovereignty_update(current_tick: int):
 
     except Exception as e:
         logger.error(f"Error en fase de soberanía: {e}")
+
+def _phase_planetary_activation(current_tick: int):
+    """
+    Fase 3.55: Activación de Edificios Planetarios (V23.2).
+    Activa edificios civiles (planet_buildings) que han completado su tiempo de construcción.
+    """
+    log_event("running phase 3.55: Activación de Edificios Planetarios...")
+    try:
+        db = _get_db()
+        
+        # 1. Buscar edificios planetarios inactivos listos para activar
+        ready_buildings = db.table("planet_buildings")\
+            .select("id, sector_id, player_id, building_type")\
+            .eq("is_active", False)\
+            .lte("built_at_tick", current_tick)\
+            .execute()
+            
+        if not ready_buildings.data:
+            return
+
+        # 2. Activar masivamente
+        updates_count = 0
+        for b in ready_buildings.data:
+            bid = b['id']
+            pid = b['player_id']
+            btype = b['building_type']
+            
+            # Update single row to safe concurrency
+            res = db.table("planet_buildings").update({"is_active": True}).eq("id", bid).execute()
+            if res.data:
+                updates_count += 1
+                log_event(f"🏗️ Edificio '{btype}' operativo en sector {b['sector_id']}.", pid)
+        
+        if updates_count > 0:
+            log_event(f"✅ {updates_count} edificios civiles han entrado en línea.")
+            
+    except Exception as e:
+        logger.error(f"Error en fase de activación planetaria: {e}")
 
 
 def _phase_base_upgrades(current_tick: int):

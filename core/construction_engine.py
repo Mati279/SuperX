@@ -12,6 +12,7 @@ Refactorizado V21.2: Soporte para Modo Debug (Bypass Subyugación) en Bases Mili
 Refactorizado V22.0: Homogeneización de firmas (player_id explícito) en Orbital Station.
 Refactorizado V22.1: Implementación de Construcción Diferida y Estandarización de Errores (message).
 Refactorizado V23.0: Estandarización de Costes Civiles (Outposts usan CIVILIAN_BUILD_COST).
+Refactorizado V23.2: Construcción Diferida Real (is_active=False inicial para Outposts).
 """
 
 from typing import Dict, Any, Optional
@@ -57,6 +58,9 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
     Actualización V22.1 (Diferido):
     - Tiempo de construcción: 1 Tick.
     - Persiste construction_end_tick = current_tick + 1.
+    
+    Actualización V23.2 (Inactivo):
+    - Se crea con is_active=False. Se activará en el Time Engine cuando current_tick >= built_at_tick.
     """
     db = get_supabase()
     
@@ -190,7 +194,7 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
             "building_type": OUTPOST_BUILDING_TYPE,
             "building_tier": 1,
             "sector_id": sector_id,
-            "is_active": True,
+            "is_active": False, # V23.2: Se inicia inactivo hasta que se complete (Tick Actual >= target_tick)
             "built_at_tick": target_tick,
             "pops_required": 0,
             "energy_consumption": 1
@@ -206,6 +210,8 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
         }).eq("id", unit_id).execute()
 
         # D. Actualizar Soberanía
+        # Nota: La soberanía definitiva se actualizará en Time Engine cuando is_active pase a True.
+        # Sin embargo, marcamos el intento inicial.
         update_planet_sovereignty(planet_id)
 
         msg = f"Unidad '{unit.name}' iniciando construcción de Puesto de Avanzada en Sector {sector_id} (ETA: 1 ciclo)."

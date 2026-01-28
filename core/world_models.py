@@ -9,6 +9,7 @@ Actualizado v7.2: Soporte para Niebla de Superficie (is_explored_by_player).
 Actualizado v7.8: Inclusión de nombres de soberanía (surface_owner_name, orbital_owner_name) para UI.
 Actualizado v8.0: Soporte para Sectores Estelares (Control de Sistema y Megaestructuras).
 Actualizado v9.1: Inclusión de Seguridad de Sistema (Promedio de planetas).
+Refactorizado v23.2: Helper methods en Sector para edificios en construcción.
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, Optional
@@ -57,6 +58,19 @@ class Sector:
     def is_stellar(self) -> bool:
         """V8.0: Retorna True si es un sector estelar (nivel de sistema)."""
         return self.system_id is not None and self.planet_id is None
+        
+    def get_operational_buildings(self) -> List[Dict[str, Any]]:
+        """
+        V23.2: Retorna solo los edificios que están marcados como activos (ya construidos).
+        Útil para UI que muestra producción.
+        """
+        return [b for b in self.buildings if b.get("is_active", True)]
+
+    def get_constructing_buildings(self) -> List[Dict[str, Any]]:
+        """
+        V23.2: Retorna edificios en proceso de construcción (is_active=False).
+        """
+        return [b for b in self.buildings if not b.get("is_active", True)]
 
 @dataclass
 class CelestialBody:
