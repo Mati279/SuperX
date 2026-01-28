@@ -13,6 +13,7 @@ Actualizado V8.0: Control del Sistema (Nivel Estelar) - Bonos de Sistema y Produ
 Actualizado V9.0: Logística de Transporte Automático (Unidades en Tránsito).
 Refactorizado V20.0: Bloqueo total de ingresos en planetas DISPUTADOS.
 Refactorizado V23.0: Soporte para Tiers de Edificios (1.1x) y Extracción de Lujo Automática en Tier 2.
+Refactorizado V23.1: Proyección económica de recursos de lujo (UI) optimizada.
 """
 
 from typing import Dict, List, Any, Tuple, Optional
@@ -201,6 +202,8 @@ def calculate_planet_production(active_buildings: List[Dict[str, Any]], penalty_
         multiplier = 1.15 if sector_type == SECTOR_TYPE_URBAN else 1.0
         
         # V23.0: Chequear bono de Tier (10% extra si Tier >= 2)
+        # Aplica multiplicativo sobre el bono de sector.
+        # Ej: Urbano (1.15) * Tier 2 (1.1) = 1.265 (Total 26.5% bonus)
         if building_tier >= 2:
             multiplier *= 1.1
 
@@ -725,16 +728,29 @@ def run_global_economy_tick() -> List[EconomyTickResult]:
 
 # --- FUNCIONES AUXILIARES PARA UI (Proyecciones) ---
 
-def get_player_projected_economy(player_id: int) -> Dict[str, int]:
+def get_player_projected_economy(player_id: int) -> Dict[str, Any]:
     """
     Calcula proyección (Delta) para UI sin modificar DB.
     Actualizado V8.0: Incluye bonos de sistema y producción estelar.
     Actualizado V9.0: Incluye costo de logística de transporte proyectado.
+    Actualizado V23.1: Incluye proyección de recursos de lujo (Dedicated Sites + Tier 2).
     """
-    projection = {k: 0 for k in ["creditos", "materiales", "componentes", "celulas_energia", "influencia", "datos"]}
+    projection = {
+        k: 0 for k in ["creditos", "materiales", "componentes", "celulas_energia", "influencia", "datos"]
+    }
+    # Inicializar diccionario para proyección de lujo
+    projection["recursos_lujo"] = {}
 
     try:
         planets = get_all_player_planets_with_buildings(player_id)
+        
+        # Proyectar también sitios de extracción dedicados
+        luxury_sites = get_luxury_extraction_sites_for_player(player_id)
+        luxury_extracted = calculate_luxury_extraction(luxury_sites)
+        
+        # Fusionar sitios dedicados en la proyección inicial
+        for key, amount in luxury_extracted.items():
+            projection["recursos_lujo"][key] = amount
 
         # V8.0: Agrupar por sistema y pre-calcular bonos
         systems_planets: Dict[int, List[Dict]] = {}
@@ -829,6 +845,27 @@ def get_player_projected_economy(player_id: int) -> Dict[str, int]:
                 projection["influencia"] += prod.influencia
                 projection["datos"] += int(prod.datos * system_bonuses.data_multiplier)
                 projection["creditos"] += prod.creditos
+                
+                # --- V23.1: Proyección de Extracción de Lujo Tier 2 ---
+                # Verificar sectores con edificios Tier 2 activos
+                active_tier2_sectors = set()
+                for b in active_buildings:
+                    if b.get("building_tier", 1) >= 2 and b.get("sector_id"):
+                        active_tier2_sectors.add(b["sector_id"])
+                
+                # Iterar sobre la data de sectores que viene pre-cargada en el objeto planet
+                # Nota: Asumimos que get_all_player_planets_with_buildings incluye 'sectors'
+                planet_sectors = planet.get("sectors", [])
+                for sector in planet_sectors:
+                    s_id = sector.get("id")
+                    if s_id in active_tier2_sectors:
+                        lux_res = sector.get("luxury_resource")
+                        lux_cat = sector.get("luxury_category")
+                        
+                        if lux_res and lux_cat:
+                            key = f"{lux_cat}.{lux_res}"
+                            # Probabilidad 100% (1 unidad) por tick
+                            projection["recursos_lujo"][key] = projection["recursos_lujo"].get(key, 0) + 1
 
             # Mantenimiento siempre se resta (Costo operativo)
             for b in active_buildings:
