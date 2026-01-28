@@ -1,4 +1,4 @@
-# data/planets/sectors.py
+# data/planets/sectors.py (Completo)
 """
 Gestión de Sectores Planetarios.
 Incluye consultas de estado, conocimiento de jugador y Fog of War.
@@ -7,6 +7,7 @@ Actualizado v10.3: Helper get_sector_by_id para exploración táctica.
 Actualizado v11.2: Conteo de slots de base en get_planet_sectors_status.
 Refactor v12.0: Validación estricta de slots ocupados por bases militares.
 Actualizado Refactor Soberanía V21.0: Implementación de has_urban_sector.
+Correcion V23.0: Inclusión de luxury_category en selectores.
 """
 
 from typing import Dict, List, Any, Optional
@@ -27,12 +28,14 @@ def get_planet_sectors_status(planet_id: int, player_id: Optional[int] = None) -
     V7.2: Soporta filtrado por conocimiento de jugador (is_explored_by_player).
     V10.2: Añadido campo 'is_discovered' para Fog of War.
     V11.2: Incluye 'bases' en el conteo de slots ocupados.
+    V23.0: Incluye 'luxury_category' para display de recursos.
     """
     try:
         db = _get_db()
         # 1. Obtener Sectores
+        # V23.0 Fix: Añadido luxury_category al select
         response = db.table("sectors")\
-            .select("id, sector_type, max_slots, resource_category, is_known, luxury_resource")\
+            .select("id, sector_type, max_slots, resource_category, is_known, luxury_resource, luxury_category")\
             .eq("planet_id", planet_id)\
             .execute()
 
@@ -107,6 +110,7 @@ def get_sector_by_id(sector_id: int) -> Optional[Dict[str, Any]]:
     Incluye join con planets para obtener el nombre del planeta (necesario para exploración).
     """
     try:
+        # Select * ya incluye luxury_category automáticamente si la columna existe en DB
         response = _get_db().table("sectors")\
             .select("*, planets(name)")\
             .eq("id", sector_id)\
