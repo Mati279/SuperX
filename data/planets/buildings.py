@@ -11,6 +11,7 @@ Refactor v19.0: Inyección de bases con player_id real de tabla 'bases' (no del 
 Refactor v21.0: Validación de Construcción por Soberanía (Surface Owner ID).
 Refactor v23.0: Implementación de Mejoras Tier 2 y Limpieza de Lógica HQ.
 Refactor v23.2: Cobro inmediato de recursos y validación de duplicidad por sector.
+Refactor v25.0: Persistencia de Extracción de Lujo en Tier 2 (Insert/Delete en luxury_extraction_sites).
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -368,6 +369,9 @@ def upgrade_structure(building_id: int, player_id: int) -> bool:
     Mejora un edificio de Nivel 1 a Nivel 2.
     Aplica coste de 500 Créditos y 35 Materiales.
     El edificio se vuelve Nivel 2 pero la mejora tarda 1 tick (built_at_tick).
+    
+    Refactor V25.0: Persistencia de Extracción de Lujo.
+    Si el edificio está en un sector con recurso de lujo, crea entrada en luxury_extraction_sites.
     """
     try:
         db = _get_db()
@@ -419,6 +423,32 @@ def upgrade_structure(building_id: int, player_id: int) -> bool:
             "built_at_tick": current_tick + 1
         }).eq("id", building_id).execute()
         
+        # --- V25.0: Persistencia de Extracción de Lujo ---
+        # Si el sector tiene recurso de lujo, registramos el sitio de extracción inmediatamente.
+        sector_id = building.get("sector_id")
+        if sector_id:
+            sector_res = db.table("sectors").select("luxury_resource, luxury_category").eq("id", sector_id).maybe_single().execute()
+            if sector_res.data:
+                lux_res = sector_res.data.get("luxury_resource")
+                lux_cat = sector_res.data.get("luxury_category")
+                
+                if lux_res and lux_cat and lux_res != "null":
+                    # Verificar si ya existe (idempotencia)
+                    existing = db.table("luxury_extraction_sites").select("id").eq("building_id", building_id).execute()
+                    if not existing.data:
+                        site_data = {
+                            "planet_asset_id": building["planet_asset_id"],
+                            "player_id": player_id,
+                            "resource_key": lux_res,
+                            "resource_category": lux_cat,
+                            "extraction_rate": 1,
+                            "is_active": True,
+                            "pops_required": 0, # Tier 2 ya tiene requerimiento de pops en el edificio base
+                            "building_id": building_id
+                        }
+                        db.table("luxury_extraction_sites").insert(site_data).execute()
+                        log_event(f"💎 Sitio de extracción activado: {lux_res} ({lux_cat})", player_id)
+
         log_event(f"Mejora iniciada para {definition.get('name', 'Edificio')}. Nivel 2 disponible en próximo ciclo.", player_id)
         return True
 
@@ -428,7 +458,10 @@ def upgrade_structure(building_id: int, player_id: int) -> bool:
 
 
 def demolish_building(building_id: int, player_id: int) -> bool:
-    """Demuele y decrementa el contador del sector (Implícito). Actualiza soberanía."""
+    """
+    Demuele y decrementa el contador del sector (Implícito). Actualiza soberanía.
+    Refactor V25.0: Elimina entrada en luxury_extraction_sites si existe.
+    """
     # Importación local para evitar dependencia circular
     from .sovereignty import update_planet_sovereignty
 
@@ -445,7 +478,12 @@ def demolish_building(building_id: int, player_id: int) -> bool:
 
         planet_id = b_res.data.get("planet_assets", {}).get("planet_id")
 
-        # Eliminar
+        # --- V25.0: Limpieza de Extracción de Lujo ---
+        # Borrar explícitamente sitio de extracción vinculado para evitar huérfanos
+        # (Aunque FK debería tener cascade, es más seguro hacerlo explícito)
+        db.table("luxury_extraction_sites").delete().eq("building_id", building_id).execute()
+
+        # Eliminar Edificio
         db.table("planet_buildings").delete().eq("id", building_id).execute()
 
         log_event(f"Edificio {building_id} demolido.", player_id)
@@ -486,3 +524,65 @@ def batch_update_building_status(updates: List[Tuple[int, bool]]) -> Tuple[int, 
             else: failed += 1
         except Exception: failed += 1
     return (success, failed)
+
+
+def sync_luxury_sites(player_id: int):
+    """
+    V25.0: Función de utilidad para sincronizar/reparar sitios de extracción.
+    Busca edificios Tier 2 existentes que deberían tener un sitio de extracción pero no lo tienen.
+    """
+    try:
+        db = _get_db()
+        log_event("🔄 Sincronizando sitios de extracción de lujo...", player_id)
+        
+        # 1. Obtener todos los edificios Tier >= 2 del jugador
+        buildings = db.table("planet_buildings")\
+            .select("id, sector_id, planet_asset_id, building_tier")\
+            .eq("player_id", player_id)\
+            .gte("building_tier", 2)\
+            .execute().data
+            
+        if not buildings:
+            return
+
+        count_repaired = 0
+        
+        for b in buildings:
+            sector_id = b.get("sector_id")
+            building_id = b.get("id")
+            
+            if not sector_id: continue
+            
+            # Verificar si ya tiene sitio
+            site_exists = db.table("luxury_extraction_sites")\
+                .select("id")\
+                .eq("building_id", building_id)\
+                .execute().data
+                
+            if not site_exists:
+                # Chequear si el sector tiene recurso
+                sector = db.table("sectors")\
+                    .select("luxury_resource, luxury_category")\
+                    .eq("id", sector_id)\
+                    .single().execute().data
+                
+                if sector and sector.get("luxury_resource") and sector.get("luxury_resource") != "null":
+                    # Crear el sitio faltante
+                    site_data = {
+                        "planet_asset_id": b["planet_asset_id"],
+                        "player_id": player_id,
+                        "resource_key": sector["luxury_resource"],
+                        "resource_category": sector["luxury_category"],
+                        "extraction_rate": 1,
+                        "is_active": True,
+                        "pops_required": 0,
+                        "building_id": building_id
+                    }
+                    db.table("luxury_extraction_sites").insert(site_data).execute()
+                    count_repaired += 1
+        
+        if count_repaired > 0:
+            log_event(f"✅ Reparados {count_repaired} sitios de extracción de lujo faltantes.", player_id)
+            
+    except Exception as e:
+        log_event(f"Error en sync_luxury_sites: {e}", player_id, is_error=True)

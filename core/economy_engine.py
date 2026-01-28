@@ -16,6 +16,7 @@ Refactorizado V23.0: Soporte para Tiers de Edificios (1.1x) y Extracción de Luj
 Refactorizado V23.1: Proyección económica de recursos de lujo (UI) optimizada.
 Refactorizado V23.2: Validación estricta de built_at_tick para edificios activos.
 Refactorizado V24.0: Corrección de 'Bug de Desactivación Perpetua' y aplanamiento de estructura de stock de lujo.
+Refactorizado V25.0: Centralización de Extracción de Lujo (Eliminación de lógica ad-hoc Tier 2).
 """
 
 from typing import Dict, List, Any, Tuple, Optional
@@ -459,6 +460,7 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
     Refactor V23.0: Extracción de lujo por edificios Tier 2.
     Refactor V23.2: Filtrado robusto de edificios no terminados (built_at_tick).
     Fix V24.0: Corrección de 'Bug de Desactivación Perpetua' y Logs de Tier 2.
+    Refactor V25.0: Extracción de Lujo completamente delegada a tabla luxury_extraction_sites.
     """
     result = EconomyTickResult(player_id=player_id)
     db = get_supabase()
@@ -497,7 +499,7 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
 
         # --- V8.0: FASE 1 - Agrupar planetas por sistema y calcular bonos estelares ---
         systems_planets: Dict[int, List[Dict]] = {}
-        all_active_tier_2_sectors = [] # Para recursos de lujo V23.0
+        # V25.0: Removed all_active_tier_2_sectors list (Logic Moved to Persistence)
 
         # Obtener lista de IDs de sistema únicos (planetas + assets conocidos)
         for planet in planets:
@@ -666,48 +668,14 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
 
                 result.production = result.production.add(prod)
 
-                # V23.0: Recolectar IDs de sector de edificios Tier 2 pagados para extracción de lujo
-                for pb in maint_res.paid_buildings:
-                    if pb.get("building_tier", 1) >= 2 and pb.get("sector_id"):
-                         all_active_tier_2_sectors.append(pb["sector_id"])
-
         # V8.0: Añadir producción estelar al total
         result.production = result.production.add(stellar_production_total)
 
-        # 3. Recursos de Lujo (Legacy + Tier 2 V23.0)
+        # 3. Recursos de Lujo (V25.0: Simplificado)
+        # Ahora todo viene de la tabla luxury_extraction_sites (gestionada por buildings.py)
+        # Ya no hay lógica ad-hoc de iteración de sectores aquí.
         luxury_extracted = calculate_luxury_extraction(luxury_sites)
         
-        # V23.0: Procesar Extracción de Lujo de Edificios Tier 2
-        if all_active_tier_2_sectors:
-            try:
-                # FIX V24.0: Consulta robusta para evitar nulos y errores de sintaxis PostgREST
-                sectors_res = db.table("sectors")\
-                    .select("id, luxury_resource, luxury_category, planet_id")\
-                    .in_("id", all_active_tier_2_sectors)\
-                    .neq("luxury_resource", "null")\
-                    .execute()
-                
-                if sectors_res.data:
-                    for s in sectors_res.data:
-                        cat = s.get("luxury_category")
-                        res_name = s.get("luxury_resource")
-                        
-                        if cat and res_name:
-                            # Normalizar string por seguridad
-                            res_name = res_name.strip()
-                            cat = cat.strip()
-                            
-                            # Usar clave plana (Mismo formato que calculate_luxury_extraction Fix V24.0)
-                            key = f"{cat}.{res_name}"
-                            luxury_extracted[key] = luxury_extracted.get(key, 0) + 1
-                            
-                            # Log de debug para confirmar extracción (temporal/informativo)
-                            # Se puede comentar si genera mucho spam, pero útil para verificar el fix.
-                            # log_event(f"💎 Tier 2 Extracción: {res_name}", player_id) 
-
-            except Exception as e:
-                log_event(f"Error procesando extracción de lujo Tier 2: {e}", player_id, is_error=True)
-
         result.luxury_extracted = luxury_extracted
 
         # --- V9.0: COSTO LOGÍSTICA DE TRANSPORTE (Unidades en Tránsito) ---
