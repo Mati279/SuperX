@@ -1,9 +1,10 @@
-# data/planets/assets.py
+# data/planets/assets.py (Completo)
 """
 Gestión de Activos Planetarios (planet_assets).
 Incluye colonización, población y consultas de activos del jugador.
 Actualizado v7.7.1: Restauración de updates secuenciales en create_planet_asset.
 Actualizado v7.7.2: Fix PGRST204 delegando 'base_tier' al default de la DB.
+Actualizado v24.0: Inclusión de datos de lujo en consulta de sectores para UI.
 """
 
 from typing import Dict, List, Any, Optional
@@ -128,6 +129,7 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
     Fix V5.9: Corrección de nombre de columna 'sector_type'.
     Refactor V6.0: Cálculo dinámico de 'buildings_count'.
     Actualizado V11.2: Fusión de 'planet_buildings' y 'bases' para la UI.
+    Actualizado V24.0: Inclusión de luxury_resource/category para proyección económica.
     """
     try:
         db = _get_db()
@@ -158,8 +160,9 @@ def get_all_player_planets_with_buildings(player_id: int) -> List[Dict[str, Any]
         bases = bases_response.data if bases_response and bases_response.data else []
 
         # 3. Obtener Sectores
+        # Fix V24.0: Incluir luxury_resource y luxury_category para proyecciones de UI
         sectors_response = db.table("sectors")\
-            .select("id, sector_type, planet_id, max_slots, resource_category, is_known")\
+            .select("id, sector_type, planet_id, max_slots, resource_category, is_known, luxury_resource, luxury_category")\
             .in_("planet_id", planet_ids)\
             .execute()
         sectors_data = sectors_response.data if sectors_response and sectors_response.data else []

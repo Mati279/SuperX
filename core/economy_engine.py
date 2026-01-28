@@ -15,6 +15,7 @@ Refactorizado V20.0: Bloqueo total de ingresos en planetas DISPUTADOS.
 Refactorizado V23.0: Soporte para Tiers de Edificios (1.1x) y Extracción de Lujo Automática en Tier 2.
 Refactorizado V23.1: Proyección económica de recursos de lujo (UI) optimizada.
 Refactorizado V23.2: Validación estricta de built_at_tick para edificios activos.
+Refactorizado V24.0: Corrección de 'Bug de Desactivación Perpetua' y aplanamiento de estructura de stock de lujo.
 """
 
 from typing import Dict, List, Any, Tuple, Optional
@@ -397,19 +398,37 @@ def calculate_luxury_extraction(sites: List[Dict[str, Any]]) -> Dict[str, int]:
         resource_key = site.get("resource_key")
         category = site.get("resource_category")
         rate = site.get("extraction_rate", 1)
-        key = f"{category}.{resource_key}"
+        # Fix V24.0: Usar clave plana compuesta para evitar nesting excesivo en UI
+        key = f"{category}.{resource_key}" 
         extracted[key] = extracted.get(key, 0) + rate
     return extracted
 
 
 def merge_luxury_resources(current: Dict[str, Any], extracted: Dict[str, int]) -> Dict[str, Any]:
+    """
+    Fusiona recursos de lujo extraídos con el inventario actual.
+    V24.0: Aplanamiento de estructura. Convierte la estructura anidada antigua
+    a claves planas 'Categoría.Recurso' para corregir visualización vacía en UI.
+    """
+    # Copiar el inventario actual
     result = dict(current) if current else {}
+    
     for key, amount in extracted.items():
-        parts = key.split(".")
-        if len(parts) != 2: continue
-        category, resource = parts
-        if category not in result: result[category] = {}
-        result[category][resource] = result[category].get(resource, 0) + amount
+        # En V24.0, asumimos que 'key' ya viene como 'Categoria.Recurso' de calculate_luxury_extraction
+        # Simplemente sumamos al inventario plano.
+        # Si la UI anterior guardaba cosas anidadas, esto empezará a guardar claves planas en el root.
+        
+        # Validar formato por seguridad
+        if "." in key:
+            # Opción A: Guardar plano (Preferido para UI genérica)
+            result[key] = result.get(key, 0) + amount
+            
+            # Nota de migración: Si existen claves viejas tipo result['Biologico']['Hongo'], 
+            # se mantendrán hasta que se limpien manualmente, pero las nuevas entradas serán planas.
+        else:
+            # Fallback para claves simples
+            result[key] = result.get(key, 0) + amount
+            
     return result
 
 
@@ -439,6 +458,7 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
     Refactor V20.0: Bloqueo de ingresos en estados disputados.
     Refactor V23.0: Extracción de lujo por edificios Tier 2.
     Refactor V23.2: Filtrado robusto de edificios no terminados (built_at_tick).
+    Fix V24.0: Corrección de 'Bug de Desactivación Perpetua' y Logs de Tier 2.
     """
     result = EconomyTickResult(player_id=player_id)
     db = get_supabase()
@@ -608,11 +628,13 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
             buildings = planet.get("buildings", [])
             pops_avail = float(planet.get("pops_activos", pop))
 
-            # V23.2: Filtrado robusto. El edificio debe estar activo EN DB (Phase 3.55)
-            # Y ADEMÁS, por seguridad, verificamos que el tick actual sea >= tick de construcción.
+            # FIX CRÍTICO V24.0 (Bug de Desactivación Perpetua):
+            # Anteriormente: if b.get("is_active", False) -> Si se apagó, nunca entra aquí para reactivarse.
+            # Solución: Eliminar check de is_active, solo validar si está terminado (built_at_tick).
+            # process_building_maintenance se encargará de checkear si hay fondos y poner is_active = True.
             valid_buildings = [
                 b for b in buildings 
-                if b.get("is_active", False) and b.get("built_at_tick", 0) <= current_tick
+                if b.get("built_at_tick", 0) <= current_tick
             ]
 
             # V8.0: Aplicar reducción de mantenimiento de logistics_hub
@@ -658,20 +680,31 @@ def run_economy_tick_for_player(player_id: int) -> EconomyTickResult:
         # V23.0: Procesar Extracción de Lujo de Edificios Tier 2
         if all_active_tier_2_sectors:
             try:
-                # Fetch en lote de recursos de lujo de los sectores relevantes
+                # FIX V24.0: Consulta robusta para evitar nulos y errores de sintaxis PostgREST
                 sectors_res = db.table("sectors")\
-                    .select("id, luxury_resource, luxury_category")\
+                    .select("id, luxury_resource, luxury_category, planet_id")\
                     .in_("id", all_active_tier_2_sectors)\
-                    .not_.is_("luxury_resource", "null")\
+                    .neq("luxury_resource", "null")\
                     .execute()
                 
                 if sectors_res.data:
                     for s in sectors_res.data:
                         cat = s.get("luxury_category")
                         res_name = s.get("luxury_resource")
+                        
                         if cat and res_name:
+                            # Normalizar string por seguridad
+                            res_name = res_name.strip()
+                            cat = cat.strip()
+                            
+                            # Usar clave plana (Mismo formato que calculate_luxury_extraction Fix V24.0)
                             key = f"{cat}.{res_name}"
                             luxury_extracted[key] = luxury_extracted.get(key, 0) + 1
+                            
+                            # Log de debug para confirmar extracción (temporal/informativo)
+                            # Se puede comentar si genera mucho spam, pero útil para verificar el fix.
+                            # log_event(f"💎 Tier 2 Extracción: {res_name}", player_id) 
+
             except Exception as e:
                 log_event(f"Error procesando extracción de lujo Tier 2: {e}", player_id, is_error=True)
 
@@ -898,6 +931,7 @@ def get_player_projected_economy(player_id: int) -> Dict[str, Any]:
                         lux_cat = sector.get("luxury_category")
                         
                         if lux_res and lux_cat:
+                            # Fix V24.0: Usar clave plana también en proyección
                             key = f"{lux_cat}.{lux_res}"
                             # Probabilidad 100% (1 unidad) por tick
                             projection["recursos_lujo"][key] = projection["recursos_lujo"].get(key, 0) + 1
