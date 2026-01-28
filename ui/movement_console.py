@@ -12,6 +12,7 @@ V21.2: Fix crítico - Conversión explícita a UnitSchema para evitar AttributeE
 V21.3: Fix validación movimientos locales (moves_this_turn -> local_moves_count).
 V22.0: Refactor integral de firmas de funciones y limpieza de UI.
 V22.1: Sincronización con MovementEngine V16.1 y Robustez en UI de Construcción.
+V22.2: Fix Navegación Orbital - Redirección correcta de menús para sectores Orbitales.
 """
 
 import streamlit as st
@@ -363,25 +364,33 @@ def _render_surface_options(
 
     with tab2:
         st.markdown(f"**🚀 Ascender a Órbita de {planet_name}**")
-        action_container = st.container()
         
-        if orbit_sector:
-            st.caption("Salida de atmósfera hacia espacio orbital.")
-            estimate = estimate_travel_time(system_id, system_id, orbital_ring, orbital_ring)
-            
-            with action_container:
-                _render_cost_display(estimate)
-
-                if st.button("Ascender a Órbita", type="primary", key="btn_ascend_orbit", use_container_width=True):
-                    selected_dest = DestinationData(
-                        system_id=system_id,
-                        planet_id=planet_id,
-                        sector_id=orbit_sector['id'],
-                        ring=orbital_ring
-                    )
-                    selected_type = MovementType.SURFACE_ORBIT
+        # Validación de seguridad: Si ya estamos en el sector orbital, no mostrar esta opción o deshabilitarla
+        is_already_in_orbit_sector = orbit_sector and current_sector_id == orbit_sector['id']
+        
+        if is_already_in_orbit_sector:
+             st.info("ℹ️ La unidad ya se encuentra posicionada en el sector orbital.")
+        
         else:
-            st.warning("Este planeta no tiene sector orbital definido.")
+            action_container = st.container()
+            
+            if orbit_sector:
+                st.caption("Salida de atmósfera hacia espacio orbital.")
+                estimate = estimate_travel_time(system_id, system_id, orbital_ring, orbital_ring)
+                
+                with action_container:
+                    _render_cost_display(estimate)
+
+                    if st.button("Ascender a Órbita", type="primary", key="btn_ascend_orbit", use_container_width=True):
+                        selected_dest = DestinationData(
+                            system_id=system_id,
+                            planet_id=planet_id,
+                            sector_id=orbit_sector['id'],
+                            ring=orbital_ring
+                        )
+                        selected_type = MovementType.SURFACE_ORBIT
+            else:
+                st.warning("Este planeta no tiene sector orbital definido.")
 
     if selected_dest and selected_type:
         return (selected_dest, selected_type, False)
@@ -393,7 +402,7 @@ def _render_orbit_options(
     player_id: int,
     current_tick: int
 ) -> Optional[Tuple[DestinationData, MovementType, bool]]:
-    """Opciones cuando la unidad está en órbita."""
+    """Opciones cuando la unidad está en órbita (Sector Orbital o ubicación genérica de órbita)."""
     st.markdown("#### Opciones de Movimiento")
 
     planet_id = unit.location_planet_id
@@ -408,6 +417,7 @@ def _render_orbit_options(
     selected_type = None
 
     sectors = get_planet_sectors_status(planet_id, player_id)
+    # Excluir 'Orbital' para las opciones de descenso
     surface_sectors = [s for s in sectors if s.get('sector_type') != 'Orbital']
 
     tab1, tab2 = st.tabs(["Descender", "Salir al espacio exterior"])
@@ -460,6 +470,7 @@ def _render_orbit_options(
             _render_cost_display(estimate)
 
             if st.button("Salir al Espacio Exterior", type="primary", key="btn_exit_orbit", use_container_width=True):
+                # Destino: Mismo sistema/anillo, pero SIN planeta ni sector asignado (Espacio profundo del anillo)
                 selected_dest = DestinationData(
                     system_id=system_id,
                     planet_id=None,
@@ -863,9 +874,15 @@ def render_movement_console(unit_id: int):
     # 5. Opciones de Movimiento Dinámicas
     selection = None
     
+    # Determinar contexto especial para Órbita (Sector Orbital)
+    is_orbital_sector = loc_info.get('sector') == SECTOR_TYPE_ORBITAL
+    
     if loc_type == 'surface_or_orbit':
-        # Estamos en un sector específico
-        selection = _render_surface_options(unit, player_id, current_tick)
+        # FIX V22.2: Si es específicamente un Sector Orbital, usamos el menú de órbita
+        if is_orbital_sector:
+             selection = _render_orbit_options(unit, player_id, current_tick)
+        else:
+             selection = _render_surface_options(unit, player_id, current_tick)
         
     elif loc_type == 'orbit':
         # Estamos en órbita genérica (sin sector asignado - legacy o error, pero manejado)
