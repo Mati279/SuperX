@@ -13,6 +13,7 @@ V21.3: Fix validación movimientos locales (moves_this_turn -> local_moves_count
 V22.0: Refactor integral de firmas de funciones y limpieza de UI.
 V22.1: Sincronización con MovementEngine V16.1 y Robustez en UI de Construcción.
 V22.2: Fix Navegación Orbital - Redirección correcta de menús para sectores Orbitales.
+V22.3: Fix TypeError en cálculo de distancia WARP (uso de math.sqrt in-line).
 """
 
 import streamlit as st
@@ -41,7 +42,7 @@ from core.movement_engine import (
     estimate_travel_time,
     initiate_movement,
     find_starlane_between,
-    calculate_euclidean_distance
+    # calculate_euclidean_distance # Eliminado: Se usa math.sqrt localmente para evitar overhead DB
 )
 from core.movement_constants import (
     RING_STELLAR, RING_MIN, RING_MAX, MAX_LOCAL_MOVES_PER_TURN, 
@@ -656,10 +657,15 @@ def _render_ring_options(
              for s in all_systems:
                  if s['id'] == system_id:
                      continue
-                 dist = calculate_euclidean_distance(
-                     current_sys['x'], current_sys['y'],
-                     s['x'], s['y']
+                 
+                 # FIX V22.3: Cálculo in-line de distancia euclidiana
+                 # Se elimina el uso incorrecto de calculate_euclidean_distance(x,y,x,y)
+                 # Usamos math.sqrt directamente con coordenadas para evitar llamadas extra a DB
+                 dist = math.sqrt(
+                     (s.get('x', 0) - current_sys.get('x', 0))**2 + 
+                     (s.get('y', 0) - current_sys.get('y', 0))**2
                  )
+                 
                  if dist <= WARP_MAX_DISTANCE:
                      valid_warp_targets.append({
                          'id': s['id'],
