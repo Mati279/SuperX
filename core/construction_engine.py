@@ -13,6 +13,7 @@ Refactorizado V22.0: Homogeneización de firmas (player_id explícito) en Orbita
 Refactorizado V22.1: Implementación de Construcción Diferida y Estandarización de Errores (message).
 Refactorizado V23.0: Estandarización de Costes Civiles (Outposts usan CIVILIAN_BUILD_COST).
 Refactorizado V23.2: Construcción Diferida Real (is_active=False inicial para Outposts).
+Refactorizado V23.3: Validación de terreno por exclusión lógica para Outposts.
 """
 
 from typing import Dict, Any, Optional
@@ -24,7 +25,7 @@ from data.log_repository import log_event
 from data.world_repository import get_world_state
 from core.models import UnitSchema, UnitStatus
 from core.movement_constants import MAX_LOCAL_MOVES_PER_TURN
-from core.world_constants import SECTOR_TYPE_ORBITAL, CIVILIAN_BUILD_COST
+from core.world_constants import SECTOR_TYPE_ORBITAL, CIVILIAN_BUILD_COST, FORBIDDEN_CIVILIAN_TYPES
 from config.app_constants import TEXT_MODEL_NAME
 from google.genai import types
 
@@ -61,6 +62,9 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
     
     Actualización V23.2 (Inactivo):
     - Se crea con is_active=False. Se activará en el Time Engine cuando current_tick >= built_at_tick.
+    
+    Actualización V23.3 (Terreno):
+    - Se valida el terreno por EXCLUSIÓN. Si el sector NO es de un tipo prohibido (Urbano, Inhospito, Orbital), es válido.
     """
     db = get_supabase()
     
@@ -106,17 +110,26 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
     if unit.location_sector_id != sector_id:
         return {"success": False, "message": "La unidad no está en el sector objetivo."}
 
-    # --- REGLAS V20.0: RESTRICCIONES URBANAS ---
+    # 3. Validar Tipo de Sector (V23.3: Lógica de Exclusión)
+    target_sector_res = db.table("sectors").select("sector_type, name").eq("id", sector_id).maybe_single().execute()
     
-    # A. Verificar si el sector actual es URBANO
-    target_sector_res = db.table("sectors").select("sector_type").eq("id", sector_id).maybe_single().execute()
-    if target_sector_res.data and target_sector_res.data.get("sector_type") == "URBAN":
+    if not target_sector_res.data:
+        return {"success": False, "message": "Error: Sector no encontrado."}
+    
+    target_sector_data = target_sector_res.data
+    sector_type = target_sector_data.get("sector_type", "")
+    
+    # --- REGLA V23.3: Exclusión explícita ---
+    # Si el tipo de sector está en la lista de prohibidos, rechazamos.
+    # Esto permite automáticamente cualquier sector de recursos, llanura, montaña o tipos personalizados no restringidos.
+    if sector_type in FORBIDDEN_CIVILIAN_TYPES:
         return {
-            "success": False, 
-            "message": "🚫 No se pueden construir Puestos de Avanzada en sectores URBANOS. Debes subyugar la población y construir una Base Militar."
+            "success": False,
+            "message": f"🚫 Terreno no apto. No se pueden construir Puestos de Avanzada en sectores de tipo {sector_type}."
         }
 
-    # B. Verificar si el planeta tiene ALGÚN sector URBANO (Bloqueo Planetario)
+    # --- REGLA V20.0: SOBERANÍA CENTRALIZADA (Bloqueo Planetario) ---
+    # Verificar si el planeta tiene ALGÚN sector URBANO
     urban_check = db.table("sectors")\
         .select("id")\
         .eq("planet_id", unit.location_planet_id)\
@@ -129,7 +142,7 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
             "message": "🚫 Planeta Habitado: La soberanía se decide en los Centros Urbanos. No puedes reclamar territorio salvaje mediante Puestos de Avanzada."
         }
 
-    # 3. Validar Estado del Sector (Ocupación)
+    # 4. Validar Ocupación (Ya hay edificios)
     buildings_check = db.table("planet_buildings")\
         .select("id")\
         .eq("sector_id", sector_id)\
@@ -138,7 +151,7 @@ def resolve_outpost_construction(unit_id: int, sector_id: int, player_id: int) -
     if buildings_check.data and len(buildings_check.data) > 0:
         return {"success": False, "message": "El sector ya tiene estructuras."}
 
-    # 4. Validar Recursos
+    # 5. Validar Recursos
     finances = get_player_finances(player_id)
     current_credits = finances.get("creditos", 0)
     current_materials = finances.get("materiales", 0)

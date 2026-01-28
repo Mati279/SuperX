@@ -18,6 +18,7 @@ Actualizado v8.0.0: Control del Sistema (Nivel Estelar) - Megaestructuras y Bono
 Actualizado v8.1.0: Estandarización de UI de Recursos (RESOURCE_UI_CONFIG).
 Actualizado V20.1: Ajuste de costos de Estación Orbital para construcción táctica.
 Actualizado V23.0: Refactorización Sistema de Edificios Terrestres (Tier System).
+Actualizado V23.3: Refactorización de Validación de Terreno (Lógica de Exclusión para Outposts).
 """
 from typing import Dict, List
 
@@ -332,11 +333,29 @@ VALID_SECTOR_TYPES = [
     SECTOR_TYPE_STELLAR
 ]
 
-# Definición de sectores válidos para Outposts (Todo menos Urbano, Inhóspito y Orbital)
-OUTPOST_ALLOWED_TERRAIN = [SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN] + list(SECTOR_NAMES_BY_CATEGORY.values())
+# --- REGLAS DE VALIDACIÓN DE TERRENO (V23.3) ---
+# Tipos de terreno explícitamente PROHIBIDOS para construcción civil terrestre (Outposts/Industria)
+FORBIDDEN_CIVILIAN_TYPES = [
+    SECTOR_TYPE_URBAN,
+    SECTOR_TYPE_INHOSPITABLE,
+    SECTOR_TYPE_ORBITAL,
+    SECTOR_TYPE_STELLAR
+]
+
+# Definición de sectores válidos para Outposts
+# NOTA V23.3: Se prioriza la lógica de exclusión (NOT IN FORBIDDEN_CIVILIAN_TYPES).
+# Esta lista se mantiene por compatibilidad UI y referencia, pero el Engine debe usar exclusión.
+OUTPOST_ALLOWED_TERRAIN = [
+    SECTOR_TYPE_PLAIN, 
+    SECTOR_TYPE_MOUNTAIN
+] + list(SECTOR_NAMES_BY_CATEGORY.values())
 
 # Terrenos válidos para nuevas estructuras civiles (V23.0)
-CIVILIAN_ALLOWED_TERRAIN = [SECTOR_TYPE_PLAIN, SECTOR_TYPE_MOUNTAIN] + list(SECTOR_NAMES_BY_CATEGORY.values())
+# Mismo principio: Lógica de exclusión preferida en el Engine.
+CIVILIAN_ALLOWED_TERRAIN = [
+    SECTOR_TYPE_PLAIN, 
+    SECTOR_TYPE_MOUNTAIN
+] + list(SECTOR_NAMES_BY_CATEGORY.values())
 
 BUILDING_TYPES = {
     "outpost": {
