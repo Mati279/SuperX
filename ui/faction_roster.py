@@ -6,7 +6,7 @@ Reescritura completa para mejorar estabilidad, UI y UX.
 
 import streamlit as st
 import time
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
 
 # --- Repositories ---
 from data.character_repository import get_all_player_characters
