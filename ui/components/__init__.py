@@ -2,21 +2,21 @@
 """Componentes reutilizables de UI."""
 
 from ui.components.roster_widgets import (
-    inject_compact_css,
-    render_loyalty_badge,
-    render_character_row,
-    render_troop_row,
-    render_unit_row,
-    render_create_unit_button,
-    render_starlanes_section,
+    inject_dashboard_css,
+    render_status_badge,
+    render_loyalty_indicator,
+    render_unit_card,
+    render_character_listing_compact,
+    render_empty_state_box,
+    render_create_unit_area,
 )
 
 __all__ = [
-    "inject_compact_css",
-    "render_loyalty_badge",
-    "render_character_row",
-    "render_troop_row",
-    "render_unit_row",
-    "render_create_unit_button",
-    "render_starlanes_section",
+    "inject_dashboard_css",
+    "render_status_badge",
+    "render_loyalty_indicator",
+    "render_unit_card",
+    "render_character_listing_compact",
+    "render_empty_state_box",
+    "render_create_unit_area",
 ]
