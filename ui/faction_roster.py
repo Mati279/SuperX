@@ -123,12 +123,16 @@ def render_comando_page():
         render_empty_state_box("Sin Presencia Activa", "No hay unidades desplegadas ni personal en sistemas conocidos.")
         return
 
-    # Create Tabs: Transit + Systems
+    # Create Tabs: Transit + Systems + Unlocated
     tabs_labels = []
     
-    has_transit = len(loc_index["units_in_transit"]) > 0
+    has_transit = len(loc_index.get("units_in_transit", [])) > 0
     if has_transit:
         tabs_labels.append("✈️ En Tránsito")
+        
+    has_unlocated = len(loc_index.get("unlocated", [])) > 0
+    if has_unlocated:
+        tabs_labels.append("📁 General")
         
     system_names = {}
     for sid in present_systems:
@@ -143,11 +147,18 @@ def render_comando_page():
         
     tabs = st.tabs(tabs_labels)
     
-    # Render Transit Tab
     current_tab_idx = 0
+    
+    # Render Transit Tab
     if has_transit:
         with tabs[current_tab_idx]:
             _render_transit_tab(loc_index["units_in_transit"], player_id)
+        current_tab_idx += 1
+        
+    # Render Unlocated Tab
+    if has_unlocated:
+        with tabs[current_tab_idx]:
+            _render_unlocated_tab(loc_index["unlocated"], player_id, all_troops, assigned_troops)
         current_tab_idx += 1
         
     # Render System Tabs
@@ -239,6 +250,63 @@ def _render_transit_tab(units_in_transit: List[Any], player_id: int):
     for u in units_in_transit:
         # Usamos available_chars vacio pues en transito no se edita composicion usualmente
         render_unit_card(u, player_id, [], [], show_location=True)
+
+
+def _render_unlocated_tab(
+    unlocated_entities: List[Any], 
+    player_id: int,
+    all_troops: List[Any],
+    assigned_troops: Set[int]
+):
+    """Muestra entidades sin ubicación confirmada (Recién reclutados, Limbo, etc)."""
+    st.info("Personal y unidades disponibles en reserva general (Sin asignación de sistema).")
+    
+    # Separar por tipo
+    units = []
+    chars = []
+    troops = []
+    
+    for e in unlocated_entities:
+        # Check type loosely
+        if get_prop(e, "entity_type") == "character" or get_prop(e, "biografia_corta"):
+            chars.append(e)
+        elif get_prop(e, "entity_type") == "troop" or get_prop(e, "type") == "INFANTRY":
+             # Troops usually originate from unit creation but standalone troops exist
+            troops.append(e)
+        elif get_prop(e, "members") is not None:
+            units.append(e)
+        else:
+            # Fallback assumes character based on schema typicality
+            chars.append(e)
+
+    if units:
+        st.subheader("Unidades")
+        for u in units:
+            render_unit_card(u, player_id, [], [], show_location=True)
+            
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Personal")
+        if chars:
+            for c in chars:
+                render_character_listing_compact(c, player_id)
+            
+            # Allow unit creation from Unlocated Pool?
+            # Requires a system ID usually, so maybe just listing for now.
+            st.caption("Para formar unidades, primero asigna un destino o muévelos a un sistema.")
+        else:
+            st.caption("No hay personal sin asignar.")
+            
+    with col2:
+        st.subheader("Tropas")
+        if troops:
+            for t in troops:
+                # Reuse character compact listing or custom one?
+                tname = get_prop(t, "name", "Tropa")
+                st.write(f"🪖 {tname}")
+        else:
+            st.caption("No hay tropas sueltas.")
 
 
 def _render_system_dashboard(

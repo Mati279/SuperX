@@ -130,6 +130,7 @@ def build_location_index(
         "systems_presence": set(),   # {sys_id}
         "space_forces": {},          # {sys_id: [units]}
         "ground_forces": {},         # {sys_id: [units]}
+        "unlocated": [],             # [entities] - Fallback for items with no system_id
     }
 
     # 1. Indexar Unidades
@@ -145,6 +146,7 @@ def build_location_index(
         
         # Si no tiene sistema, es una unidad anómala o en limbo
         if sys_id is None:
+            index["unlocated"].append(u)
             continue
             
         index["systems_presence"].add(sys_id)
@@ -182,7 +184,10 @@ def build_location_index(
         loc = get_prop(c, "location", {})
         sys_id = get_prop(loc, "system_id")
         
-        if not sys_id: continue
+        if not sys_id: 
+            # Intentar fallback a unlocated si tiene alguna data
+            index["unlocated"].append(c)
+            continue
         
         index["systems_presence"].add(sys_id)
         
@@ -209,7 +214,9 @@ def build_location_index(
         loc = get_prop(t, "location", {})
         sys_id = get_prop(loc, "system_id")
         
-        if not sys_id: continue
+        if not sys_id: 
+            index["unlocated"].append(t)
+            continue
         
         index["systems_presence"].add(sys_id)
         
