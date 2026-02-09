@@ -1,30 +1,14 @@
 # ui/faction_roster.py
 """
-Comando - Vista jerárquica de personajes, tropas y unidades organizados por ubicación.
-V18.0: Refactorización modular - Este archivo actúa como Page Controller.
-
-Historial de versiones:
-V11.1-V11.6: Hidratación de nombres, filtrado de sistemas, UI compacta.
-V12.0: Integración de diálogo de movimiento, gestión avanzada de miembros.
-V13.0-V13.5: Restricción de reclutamiento orbital, fix agrupación tránsito SCO.
-V14.1: Integración del Centro de Alertas Tácticas.
-V15.0-V15.3: Compatibilidad Híbrida Pydantic V2/Dict, bloqueo de seguridad en tránsito.
-V16.0-V16.1: Validaciones de liderazgo, inclusión de tropas iniciales.
-V17.0: Visualización de tropas sueltas en Roster.
-V18.0: Refactorización modular en ui/logic, ui/components, ui/dialogs.
-V18.1: Implementación de botón de Reclutamiento Rápido (No-AI).
-
-Módulos relacionados:
-- ui/logic/roster_logic.py: Helpers de acceso seguro y lógica de datos.
-- ui/components/roster_widgets.py: Componentes visuales reutilizables.
-- ui/dialogs/roster_dialogs.py: Diálogos modales (@st.dialog).
+Comando - Dashboard Táctico de Facción (V19.0)
+Reescritura completa para mejorar estabilidad, UI y UX.
 """
 
 import streamlit as st
 import time
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional
 
-# --- Repositorios de Datos ---
+# --- Repositories ---
 from data.character_repository import get_all_player_characters
 from data.unit_repository import (
     get_units_by_player,
@@ -33,544 +17,330 @@ from data.unit_repository import (
 )
 from data.world_repository import (
     get_all_systems_from_db,
-    get_planets_by_system_id,
+    get_system_by_id,
 )
-from data.planet_repository import (
-    get_planet_sectors_status,
-    get_player_base_coordinates,
-)
+from data.planet_repository import get_player_base_coordinates
 
-# --- Modelos Core ---
-from core.models import CharacterStatus, KnowledgeLevel
-
-# --- Servicios ---
+# --- Services ---
 from services.character_generation_service import recruit_character_with_ai, recruit_initial_crew_fast
 
-# --- Módulos Refactorizados V18.0 ---
+# --- Core Models ---
+from core.models import CharacterStatus, KnowledgeLevel
+
+# --- Logic & Components (New V19) ---
 from ui.logic.roster_logic import (
     get_prop,
-    get_assigned_entity_ids,
     hydrate_unit_members,
-    get_systems_with_presence,
+    get_assigned_entity_ids,
     build_location_index,
+    get_systems_with_presence,
 )
 from ui.components.roster_widgets import (
-    inject_compact_css,
-    render_character_row,
-    render_troop_row,
-    render_unit_row,
-    render_create_unit_button,
-    render_starlanes_section,
+    inject_dashboard_css,
+    render_unit_card,
+    render_character_listing_compact,
+    render_empty_state_box,
+    render_create_unit_area,
 )
+from ui.components.tactical import render_tactical_alert_center
 
-# V14.1: Componentes Tácticos
-from ui.components.tactical import (
-    render_tactical_alert_center,
-    render_debug_simulation_panel,
-)
-
-
-# --- FUNCIONES DE ESTRUCTURA JERÁRQUICA ---
-
-def _render_sector_content(
-    sector_id: int,
-    sector_type: str,
-    player_id: int,
-    location_data: Dict[str, Any],
-    location_index: dict,
-    is_space: bool,
-    assigned_char_ids: Set[int],
-    assigned_troop_ids: Set[int],
-    all_troops: List[Any],
-    planet_id: Optional[int] = None,
-    all_planet_sector_ids: Optional[Set[int]] = None
-):
-    """Renderiza contenido de un sector (unidades + personajes sueltos + tropas sueltas + botón crear)."""
-    units = location_index["units_by_sector"].get(sector_id, [])
-    chars = location_index["chars_by_sector"].get(sector_id, [])
-
-    # V17.0: Tropas sueltas en este sector
-    sector_troops = location_index.get("troops_by_sector", {}).get(sector_id, [])
-
-    # Personajes disponibles (no asignados a unidad)
-    available_chars_here = [c for c in chars if get_prop(c, "id") not in assigned_char_ids]
-
-    # Tropas disponibles (pool global no asignado)
-    available_troops_here = [t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids]
-
-    # Determinar si hay contenido real para mostrar
-    has_units = len(units) > 0
-    has_chars = len(chars) > 0
-    has_troops = len(sector_troops) > 0
-    # El botón de crear solo es relevante si hay recursos disponibles
-    can_create = len(available_chars_here) > 0
-
-    if not has_units and not has_chars and not has_troops and not can_create:
-        st.caption("Despejado.")
-        return
-
-    # Renderizar unidades primero
-    for unit in units:
-        render_unit_row(unit, player_id, is_space, available_chars_here, available_troops_here)
-
-    # Renderizar personajes sueltos
-    for char in chars:
-        render_character_row(char, player_id, is_space)
-
-    # V17.0: Renderizar tropas sueltas
-    for troop in sector_troops:
-        render_troop_row(troop, is_space)
-
-    # Botón crear unidad (solo con disponibles no asignados)
-    if can_create:
-        render_create_unit_button(
-            sector_id=sector_id,
-            player_id=player_id,
-            location_data=location_data,
-            available_chars=available_chars_here,
-            available_troops=available_troops_here,
-            is_orbit=is_space and planet_id is not None
-        )
-
-
-def _render_planet_node(
-    planet: dict,
-    player_id: int,
-    location_index: dict,
-    assigned_char_ids: Set[int],
-    assigned_troop_ids: Set[int],
-    all_troops: List[Any],
-    is_priority: bool
-):
-    """Renderiza un nodo de planeta con órbita y sectores."""
-    planet_id = planet["id"]
-    planet_name = planet.get("name", f"Planeta {planet_id}")
-
-    sectors = get_planet_sectors_status(planet_id, player_id)
-
-    orbit_sector = None
-    surface_sectors = []
-    all_surface_sector_ids: Set[int] = set()
-
-    # Calcular contadores
-    u_count = 0
-    surf_count = 0
-    space_count = 0
-
-    for s in sectors:
-        sid = s["id"]
-        stype = s.get("sector_type", "")
-
-        # Unidades en este sector
-        units_here = location_index["units_by_sector"].get(sid, [])
-        u_count += len(units_here)
-
-        # Personajes sueltos en este sector
-        chars_here = location_index["chars_by_sector"].get(sid, [])
-        c_count = len(chars_here)
-
-        # V17.0: Tropas sueltas en este sector
-        troops_here = location_index.get("troops_by_sector", {}).get(sid, [])
-        t_count = len(troops_here)
-
-        if stype == "Orbital":
-            orbit_sector = s
-            space_count += c_count + t_count
-        else:
-            surface_sectors.append(s)
-            all_surface_sector_ids.add(sid)
-            surf_count += c_count + t_count
-
-    # Lógica de Visibilidad Estricta
-    has_content = (u_count + surf_count + space_count) > 0
-
-    if has_content:
-        header = f"🪐 {planet_name} | 👥({u_count}) - 🪐({surf_count}) - 🌌({space_count})"
-        should_expand = is_priority
-
-        with st.expander(header, expanded=should_expand):
-            if orbit_sector:
-                st.markdown('<div class="comando-section-header">🌌 Órbita</div>', unsafe_allow_html=True)
-                orbit_loc = {
-                    "system_id": planet.get("system_id"),
-                    "planet_id": planet_id,
-                    "sector_id": orbit_sector["id"]
-                }
-                _render_sector_content(
-                    sector_id=orbit_sector["id"],
-                    sector_type="Orbital",
-                    player_id=player_id,
-                    location_data=orbit_loc,
-                    location_index=location_index,
-                    is_space=True,
-                    assigned_char_ids=assigned_char_ids,
-                    assigned_troop_ids=assigned_troop_ids,
-                    all_troops=all_troops,
-                    planet_id=planet_id,
-                    all_planet_sector_ids=all_surface_sector_ids
-                )
-
-            if surface_sectors:
-                visible_surface = []
-                for s in surface_sectors:
-                    sid = s["id"]
-                    if location_index["units_by_sector"].get(sid) or location_index["chars_by_sector"].get(sid):
-                        visible_surface.append(s)
-
-                if visible_surface:
-                    st.markdown('<div class="comando-section-header">🌍 Superficie</div>', unsafe_allow_html=True)
-                    for sector in visible_surface:
-                        sector_id = sector["id"]
-                        sector_name = sector.get("sector_type", "Desconocido")
-                        if not sector.get("is_discovered", False):
-                            sector_name = f"Sector Desconocido [ID: {sector_id}]"
-
-                        st.caption(f"**{sector_name}**")
-                        surface_loc = {
-                            "system_id": planet.get("system_id"),
-                            "planet_id": planet_id,
-                            "sector_id": sector_id
-                        }
-                        _render_sector_content(
-                            sector_id=sector_id,
-                            sector_type=sector_name,
-                            player_id=player_id,
-                            location_data=surface_loc,
-                            location_index=location_index,
-                            is_space=False,
-                            assigned_char_ids=assigned_char_ids,
-                            assigned_troop_ids=assigned_troop_ids,
-                            all_troops=all_troops
-                        )
-
-
-def _render_system_node(
-    system: dict,
-    player_id: int,
-    location_index: dict,
-    assigned_char_ids: Set[int],
-    assigned_troop_ids: Set[int],
-    all_troops: List[Any],
-    is_priority: bool
-):
-    """Renderiza un nodo de sistema con sectores estelares, anillos y planetas."""
-    system_id = system["id"]
-    system_name = system.get("name", f"Sistema {system_id}")
-
-    icon = "⭐" if is_priority else "🌟"
-    planets = get_planets_by_system_id(system_id)
-
-    # --- Pre-cálculo de contadores del Sistema ---
-    sys_u_count = 0
-    sys_space_count = 0
-    sys_surf_count = 0
-
-    # 1. Unidades y Personajes en espacio (Estrella + Anillos)
-    chars_by_ring = location_index.get("chars_by_system_ring", {})
-    troops_by_ring = location_index.get("troops_by_system_ring", {})
-
-    for r in range(7):
-        key = (system_id, r)
-        units = location_index["units_by_system_ring"].get(key, [])
-        chars = chars_by_ring.get(key, [])
-        troops = troops_by_ring.get(key, [])
-
-        sys_u_count += len(units)
-        sys_space_count += len(chars) + len(troops)  # V17.0: Sumar tropas sueltas
-
-    # 2. Contenido de Planetas
-    for planet in planets:
-        p_sectors = get_planet_sectors_status(planet["id"], player_id)
-        for s in p_sectors:
-            sid = s["id"]
-            stype = s.get("sector_type", "")
-
-            u_here = len(location_index["units_by_sector"].get(sid, []))
-            c_here = len(location_index["chars_by_sector"].get(sid, []))
-            t_here = len(location_index.get("troops_by_sector", {}).get(sid, []))
-
-            sys_u_count += u_here
-
-            if stype == "Orbital":
-                sys_space_count += c_here + t_here
-            else:
-                sys_surf_count += c_here + t_here
-
-    # Lógica de Visibilidad Estricta
-    has_content = (sys_u_count + sys_space_count + sys_surf_count) > 0
-
-    if has_content:
-        header = f"{icon} Sistema {system_name} | 👥({sys_u_count}) - 🪐({sys_surf_count}) - 🌌({sys_space_count})"
-
-        with st.expander(header, expanded=is_priority):
-            # Sector Estelar (Ring 0)
-            stellar_key = (system_id, 0)
-            stellar_units = location_index["units_by_system_ring"].get(stellar_key, [])
-            stellar_chars = location_index.get("chars_by_system_ring", {}).get(stellar_key, [])
-            stellar_troops = location_index.get("troops_by_system_ring", {}).get(stellar_key, [])
-
-            if stellar_units or stellar_chars or stellar_troops:
-                st.markdown('<div class="comando-section-header">🌌 Sector Estelar</div>', unsafe_allow_html=True)
-                available_chars_space: List[dict] = []
-                available_troops_space = [t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids]
-
-                # Render Units
-                for unit in stellar_units:
-                    render_unit_row(unit, player_id, is_space=True,
-                                    available_chars=available_chars_space,
-                                    available_troops=available_troops_space)
-                # Render Chars
-                for char in stellar_chars:
-                    render_character_row(char, player_id, is_space=True)
-                # V17.0: Render Troops
-                for troop in stellar_troops:
-                    render_troop_row(troop, is_space=True)
-
-                # --- NUEVO V15.3: Botón Crear Unidad en Espacio Profundo (Ring 0) ---
-                if stellar_chars:
-                    # Generar ID único negativo para evitar colisión con sector_ids reales
-                    pseudo_sector_id = -(system_id * 10000)
-                    loc_data = {"system_id": system_id, "ring": 0, "sector_id": None}
-                    # Tropas disponibles (Pool global no asignado, según lógica existente)
-                    avail_troops = [t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids]
-
-                    render_create_unit_button(
-                        sector_id=pseudo_sector_id,
-                        player_id=player_id,
-                        location_data=loc_data,
-                        available_chars=stellar_chars,
-                        available_troops=avail_troops,
-                        is_orbit=True
-                    )
-
-            # Anillos 1-6
-            for ring in range(1, 7):
-                ring_key = (system_id, ring)
-                ring_units = location_index["units_by_system_ring"].get(ring_key, [])
-                ring_chars = location_index.get("chars_by_system_ring", {}).get(ring_key, [])
-                ring_troops = location_index.get("troops_by_system_ring", {}).get(ring_key, [])
-
-                if ring_units or ring_chars or ring_troops:
-                    st.markdown(f'<div class="comando-section-header">🌌 Anillo {ring}</div>', unsafe_allow_html=True)
-                    # Render Units
-                    for unit in ring_units:
-                        render_unit_row(unit, player_id, is_space=True,
-                                        available_chars=[],
-                                        available_troops=[t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids])
-                    # Render Chars
-                    for char in ring_chars:
-                        render_character_row(char, player_id, is_space=True)
-                    # V17.0: Render Troops
-                    for troop in ring_troops:
-                        render_troop_row(troop, is_space=True)
-
-                    # --- NUEVO V15.3: Botón Crear Unidad en Anillo (Ring 1-6) ---
-                    if ring_chars:
-                        pseudo_sector_id = -(system_id * 10000 + ring)
-                        loc_data = {"system_id": system_id, "ring": ring, "sector_id": None}
-                        avail_troops = [t for t in all_troops if get_prop(t, "id") not in assigned_troop_ids]
-
-                        render_create_unit_button(
-                            sector_id=pseudo_sector_id,
-                            player_id=player_id,
-                            location_data=loc_data,
-                            available_chars=ring_chars,
-                            available_troops=avail_troops,
-                            is_orbit=True
-                        )
-
-            # Planetas ordenados
-            planets_sorted = sorted(planets, key=lambda p: p.get("orbital_ring", 1))
-            for planet in planets_sorted:
-                _render_planet_node(planet, player_id, location_index,
-                                    assigned_char_ids, assigned_troop_ids, all_troops, is_priority)
-
-
-# --- FUNCIÓN PRINCIPAL ---
+# --- CONSTANTS ---
+RECRUITMENT_CONFIG = [
+    (5, KnowledgeLevel.KNOWN, "Oficial de Mando"),
+    (3, KnowledgeLevel.KNOWN, "Oficial Técnico"),
+    (3, KnowledgeLevel.KNOWN, "Oficial Táctico"),
+    (1, KnowledgeLevel.UNKNOWN, "Recluta"),
+    (1, KnowledgeLevel.UNKNOWN, "Recluta"),
+    (1, KnowledgeLevel.UNKNOWN, "Recluta"),
+    (1, KnowledgeLevel.UNKNOWN, "Recluta")
+]
 
 def render_comando_page():
-    """Punto de entrada principal - Página de Comando."""
+    """Entry point for the Command Dashboard."""
+    # Lazy import to avoid circular dependency
     from ui.state import get_player
 
-    inject_compact_css()
-
-    st.title("Comando")
-
+    inject_dashboard_css()
+    
     player = get_player()
     if not player:
-        st.warning("Error de sesión. Por favor, inicia sesión nuevamente.")
+        st.error("Sesión inválida. Por favor recarga la página.")
         return
 
-    player_id = player.id
+    st.title("Comando Táctico")
 
-    # Cargar datos
-    with st.spinner("Cargando estructura de comando..."):
-        all_characters = get_all_player_characters(player_id)
-
-        # FILTRO DE SEGURIDAD V11.4/11.5:
-        roster_characters = [c for c in all_characters if get_prop(c, "status_id") != CharacterStatus.CANDIDATE.value]
-
-        # --- NUEVO: Flujo inicial de reclutamiento ---
-        non_commander_count = sum(1 for c in roster_characters if not get_prop(c, "es_comandante", False))
-
-        if non_commander_count == 0:
-            st.info("La facción se está estableciendo. Necesitas personal para operar.")
+    # 1. DATA LOADING
+    with st.spinner("Sincronizando red táctica..."):
+        try:
+            player_id = player.id
+            all_chars = get_all_player_characters(player_id)
             
-            # Layout para los botones de reclutamiento inicial
-            c1, c2 = st.columns(2)
+            # Filter candidates (safety check)
+            active_chars = [c for c in all_chars if get_prop(c, "status_id") != CharacterStatus.CANDIDATE.value]
             
-            with c1:
-                if st.button("Reunir al personal (Estándar con IA)", type="primary", use_container_width=True):
-                    # Configuración jerárquica: 1x L5, 2x L3, 4x L1
-                    recruitment_config = [
-                        (5, KnowledgeLevel.KNOWN, "Oficial de Mando"),
-                        (3, KnowledgeLevel.KNOWN, "Oficial Técnico"),
-                        (3, KnowledgeLevel.KNOWN, "Oficial Táctico"),
-                        (1, KnowledgeLevel.UNKNOWN, "Recluta"),
-                        (1, KnowledgeLevel.UNKNOWN, "Recluta"),
-                        (1, KnowledgeLevel.UNKNOWN, "Recluta"),
-                        (1, KnowledgeLevel.UNKNOWN, "Recluta")
-                    ]
+            # Check initialization state
+            has_commander = any(get_prop(c, "es_comandante", False) for c in active_chars)
+            total_active = len(active_chars)
+            
+            # --- INITIAL SETUP FLOW ---
+            if total_active <= 1: # Only commander or empty
+                _render_initial_setup(player_id, active_chars)
+                return
 
-                    success_count = 0
-                    total_ops = len(recruitment_config)
-
-                    # --- V16.1: Obtener coordenadas base para las tropas ---
-                    base_coords = get_player_base_coordinates(player_id)
-                    loc_data = {
-                        "system_id": base_coords.get("system_id"),
-                        "planet_id": base_coords.get("planet_id"),
-                        "sector_id": base_coords.get("sector_id"),
-                        "ring": 0
-                    }
-
-                    with st.status("Estableciendo cadena de mando...", expanded=True) as status:
-                        # 1. Reclutar Personajes
-                        for idx, (level, k_level, label) in enumerate(recruitment_config):
-                            status.update(label=f"Reclutando {label} (Nivel {level}) - [{idx+1}/{total_ops}]...")
-                            try:
-                                recruit_character_with_ai(
-                                    player_id=player_id,
-                                    min_level=level,
-                                    max_level=level,
-                                    initial_knowledge_level=k_level
-                                )
-                                st.write(f"✅ {label} reclutado exitosamente.")
-                                success_count += 1
-                            except Exception as e:
-                                st.write(f"❌ Error reclutando {label}: {e}")
-                                print(f"Error en reclutamiento inicial ({label}): {e}")
-
-                        # 2. Generar Tropas Básicas (Infantería)
-                        if success_count > 0:
-                            status.update(label="Desplegando guarnición de infantería...", state="running")
-                            troops_created = 0
-                            for i in range(1, 5):
-                                t_name = f"Escuadrón de Infantería {i}"
-                                try:
-                                    new_troop = create_troop(
-                                        player_id=player_id,
-                                        name=t_name,
-                                        troop_type="INFANTRY",
-                                        level=1,
-                                        location_data=loc_data
-                                    )
-                                    if new_troop:
-                                        st.write(f"✅ {t_name} desplegado en base.")
-                                        troops_created += 1
-                                    else:
-                                        st.write(f"⚠️ Fallo al desplegar {t_name}.")
-                                except Exception as e:
-                                    st.write(f"❌ Error crítico en despliegue de tropa: {e}")
-
-                        if success_count > 0:
-                            status.update(label="¡Personal reunido! Iniciando sistemas...", state="complete", expanded=False)
-                            time.sleep(0.5)
-                            st.rerun()
-                        else:
-                            status.update(label="Fallo crítico en el reclutamiento.", state="error")
-                            st.error("No se pudo establecer la facción. Intenta nuevamente.")
-
-            with c2:
-                if st.button("⚡ Reclutamiento Rápido (No-AI)", type="secondary", use_container_width=True, help="Genera 7 unidades de nivel 1 de forma instantánea sin historias complejas."):
-                    with st.spinner("⚡ Ejecutando leva forzosa de personal..."):
-                        recruit_initial_crew_fast(player_id, count=7)
-                        st.success("Dotación inicial desplegada.")
-                        time.sleep(0.5)
-                        st.rerun()
-
+            # Load full tactical data
+            units = get_units_by_player(player_id)
+            troops = get_troops_by_player(player_id)
+            
+            # Hydration
+            char_map = {get_prop(c, "id"): get_prop(c, "nombre", "???") for c in active_chars}
+            troop_map = {get_prop(t, "id"): get_prop(t, "name", "Tropa") for t in troops}
+            
+            units = hydrate_unit_members(units, char_map, troop_map)
+            
+            # Assignments
+            assigned_chars, assigned_troops = get_assigned_entity_ids(units)
+            
+            # Build Index
+            loc_index = build_location_index(active_chars, units, assigned_chars, troops, assigned_troops)
+            
+        except Exception as e:
+            st.error(f"Error crítico cargando datos tácticos: {str(e)}")
+            st.code(str(e)) # Debug info
             return
 
-        # Si hay personal, continuar con carga normal
-        troops = get_troops_by_player(player_id)
-        units = get_units_by_player(player_id)
-        systems = get_all_systems_from_db()
-
-        # Mapas de nombres para hidratación
-        char_map: Dict[int, str] = {get_prop(c, "id"): get_prop(c, "nombre", f"Personaje {get_prop(c, 'id')}") for c in all_characters}
-        troop_map: Dict[int, str] = {get_prop(t, "id"): get_prop(t, "name", f"Tropa {get_prop(t, 'id')}") for t in troops}
-
-        # Hidratar nombres de miembros
-        units = hydrate_unit_members(units, char_map, troop_map)
-
-        # Obtener IDs asignados
-        assigned_chars, assigned_troops = get_assigned_entity_ids(units)
-
-        # Construir índice de ubicaciones USANDO ROSTER FILTRADO
-        # V17.0: Incluir tropas para visualización de tropas sueltas
-        location_index = build_location_index(
-            roster_characters, units, assigned_chars,
-            troops=troops, assigned_troop_ids=assigned_troops
-        )
-
-        # Obtener sistemas con presencia del jugador USANDO ROSTER FILTRADO
-        systems_with_presence = get_systems_with_presence(location_index, roster_characters, assigned_chars)
-
-    # Estadísticas rápidas
-    roster_loose_chars = len(roster_characters) - len([cid for cid in assigned_chars if any(get_prop(c, "id") == cid for c in roster_characters)])
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Personajes", len(all_characters), f"{roster_loose_chars} sueltos (Roster)")
-    with col2:
-        st.metric("Unidades", len(units))
-    with col3:
-        st.metric("En Tránsito", len(location_index["units_in_transit"]))
-
-    # V14.1: Centro de Alertas Tácticas
+    # 2. DASHBOARD HEADER
+    _render_dashboard_header(len(active_chars), len(units), len(loc_index.get("units_in_transit", [])))
+    
+    # 3. TACTICAL ALERTS
     if units:
-        with st.expander("📡 Centro de Alertas Tácticas", expanded=False):
+         with st.expander("📡 Centro de Alertas Tácticas", expanded=False):
             render_tactical_alert_center(player_id, units, show_header=False)
 
-    st.divider()
-
-    # Filtrar solo sistemas con presencia
-    systems_to_show = [s for s in systems if s["id"] in systems_with_presence]
-
-    if not systems_to_show and not location_index["units_in_transit"]:
-        st.info("No hay personal desplegado en ningún sistema. Recluta personajes y forma unidades.")
+    # 4. SYSTEM TABS
+    present_systems = get_systems_with_presence(loc_index, active_chars, assigned_chars)
+    
+    if not present_systems and not loc_index["units_in_transit"]:
+        render_empty_state_box("Sin Presencia Activa", "No hay unidades desplegadas ni personal en sistemas conocidos.")
         return
 
-    # Renderizar sistemas con presencia
-    for system in systems_to_show:
-        is_priority = True  # Todos los que se muestran tienen presencia
-        _render_system_node(
-            system, player_id, location_index,
-            assigned_chars, assigned_troops, troops, is_priority
-        )
+    # Create Tabs: Transit + Systems
+    tabs_labels = []
+    
+    has_transit = len(loc_index["units_in_transit"]) > 0
+    if has_transit:
+        tabs_labels.append("✈️ En Tránsito")
+        
+    system_names = {}
+    for sid in present_systems:
+        sys_data = get_system_by_id(sid)
+        sname = sys_data.get("name", f"Sistema {sid}") if sys_data else f"Sistema {sid}"
+        system_names[sid] = sname
+        tabs_labels.append(f"☀️ {sname}")
+        
+    if not tabs_labels:
+        st.info("Iniciando sistemas de rastreo...")
+        return
+        
+    tabs = st.tabs(tabs_labels)
+    
+    # Render Transit Tab
+    current_tab_idx = 0
+    if has_transit:
+        with tabs[current_tab_idx]:
+            _render_transit_tab(loc_index["units_in_transit"], player_id)
+        current_tab_idx += 1
+        
+    # Render System Tabs
+    for sid in present_systems:
+        with tabs[current_tab_idx]:
+            _render_system_dashboard(sid, loc_index, player_id, active_chars, troops, assigned_chars, assigned_troops)
+        current_tab_idx += 1
 
-    # Starlanes
-    if location_index["units_in_transit"]:
-        st.divider()
-        with st.expander("🌌 Rutas Estelares (Starlanes)", expanded=True):
-            render_starlanes_section(location_index, player_id, [], [])
 
-    # V14.1: Panel de Debug para Simulación de Detección
+def _render_initial_setup(player_id: int, active_chars: List[Any]):
+    """Renderiza la pantalla de inicialización de facción (Conozca al Personal)."""
+    st.info("⚠️ La facción requiere personal operativo para iniciar operaciones.")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 📋 Protocolo de Reclutamiento Estándar")
+        st.write("El sistema de IA seleccionará y reclutará automáticamente el personal necesario para establecer tu cadena de mando inicial.")
+        st.write("**Incluye:** Oficiales, Técnicos, Reclutas y Guarnición de Infantería.")
+        
+        if st.button("⚜️ Ejecutar Protocolo de Inicio", type="primary", use_container_width=True):
+            _execute_initial_recruitment(player_id)
+            
+    with col2:
+        st.markdown("### ⚡ Protocolo de Emergencia")
+        st.write("Leva forzosa de personal básico. Rápido, pero sin antecedentes verificados.")
+        
+        if st.button("⚡ Despliegue Rápido", type="secondary", use_container_width=True):
+            with st.spinner("Reclutando..."):
+                recruit_initial_crew_fast(player_id, count=7)
+                st.success("Personal desplegado.")
+                time.sleep(1)
+                st.rerun()
+
+def _execute_initial_recruitment(player_id: int):
+    """Ejecuta la lógica de reclutamiento inicial con feedback visual."""
+    base_coords = get_player_base_coordinates(player_id)
+    # Default to home system if base not set (rare)
+    loc_data = {
+        "system_id": base_coords.get("system_id"),
+        "planet_id": base_coords.get("planet_id"),
+        "sector_id": base_coords.get("sector_id"),
+        "ring": 0
+    }
+
+    progress_bar = st.progress(0, text="Iniciando reclutamiento...")
+    status_text = st.empty()
+    
+    total_steps = len(RECRUITMENT_CONFIG) + 1 # +1 for troops
+    current_step = 0
+    
+    # 1. Recruit Characters
+    for level, k_level, label in RECRUITMENT_CONFIG:
+        status_text.text(f"Reclutando: {label}...")
+        try:
+            recruit_character_with_ai(player_id, level, level, k_level)
+            current_step += 1
+            progress_bar.progress(current_step / total_steps)
+        except Exception as e:
+            st.toast(f"Error parcial en reclutamiento: {e}")
+            
+    # 2. Recruit Troops
+    status_text.text("Desplegando guarnición...")
+    for i in range(1, 5):
+        try:
+            create_troop(player_id, f"Inf. Alpha-{i}", "INFANTRY", 1, loc_data)
+        except: pass
+        
+    progress_bar.progress(1.0)
+    status_text.text("¡Personal Listo!")
+    st.success("Cadena de mando establecida.")
+    time.sleep(1.5)
+    st.rerun()
+
+
+def _render_dashboard_header(num_chars, num_units, num_transit):
+    """Métricas clave en la parte superior."""
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Personal Activo", num_chars)
+    c2.metric("Unidades Operativas", num_units)
+    c3.metric("Movimientos Pendientes", num_transit, delta_color="off")
     st.divider()
-    render_debug_simulation_panel(player_id, units)
 
 
-# Alias para compatibilidad
+def _render_transit_tab(units_in_transit: List[Any], player_id: int):
+    """Muestra unidades en tránsito."""
+    st.caption("Unidades viajando entre sistemas o sectores.")
+    
+    for u in units_in_transit:
+        # Usamos available_chars vacio pues en transito no se edita composicion usualmente
+        render_unit_card(u, player_id, [], [], show_location=True)
+
+
+def _render_system_dashboard(
+    system_id: int, 
+    loc_index: Dict[str, Any], 
+    player_id: int,
+    all_active_chars: List[Any], # Para filtrar disponibles
+    all_troops: List[Any], 
+    assigned_chars: Set[int],
+    assigned_troops: Set[int]
+):
+    """Panel principal para un sistema."""
+    
+    # Split View: Space vs Ground
+    c_space, c_ground = st.columns([1, 1], gap="large")
+    
+    # --- SPACE COLUMN ---
+    with c_space:
+        st.markdown("#### 🌌 Flotas y Estaciones")
+        
+        # Unidades Espaciales
+        space_units = loc_index.get("space_forces", {}).get(system_id, [])
+        if space_units:
+            for u in space_units:
+                render_unit_card(u, player_id, [], [], show_location=True)
+        else:
+            render_empty_state_box("Órbita Despejada", "Sin unidades espaciales.", "🛰️")
+            
+        # Unassigned Personnel in Space (e.g. on stations)
+        st.divider()
+        st.caption("Personal en Espacio (Sin Asignar)")
+        
+        # Filter chars in this system AND in space (ring != None or sector type)
+        # Simplified: We use the index
+        space_chars = []
+        # Check by ring
+        for key, chars in loc_index.get("chars_by_system_ring", {}).items():
+            if key[0] == system_id:
+                space_chars.extend(chars)
+                
+        if space_chars:
+            for c in space_chars:
+                render_character_listing_compact(c, player_id)
+        else:
+            st.caption("Ninguno.")
+            
+        # Create Unit Button Area (Space)
+        # Default to Ring 0 (Deep Space) or first available
+        loc_data = {"system_id": system_id, "ring": 0, "sector_id": None}
+        avail_space_chars = [c for c in space_chars if get_prop(c, "id") not in assigned_chars]
+        avail_global_troops = [t for t in all_troops if get_prop(t, "id") not in assigned_troops]
+        
+        if avail_space_chars:
+            render_create_unit_area(player_id, loc_data, avail_space_chars, avail_global_troops, is_orbit=True)
+
+
+    # --- GROUND COLUMN ---
+    with c_ground:
+        st.markdown("#### 🌍 Fuerzas Planetarias")
+        
+        # Unidades Terrestres
+        ground_units = loc_index.get("ground_forces", {}).get(system_id, [])
+        if ground_units:
+             for u in ground_units:
+                render_unit_card(u, player_id, [], [], show_location=True)
+        else:
+             render_empty_state_box("Sin Guarnición", "No hay fuerzas en superficie.", "⛺")
+
+        # Unassigned Personnel on Ground
+        st.divider()
+        st.caption("Personal en Superficie (Sin Asignar)")
+        
+        ground_chars = []
+        # Check by sector (exclude known space sectors if any, strictly surface)
+        # Logic: If in chars_by_sector and NOT in space lists (this is a simplification)
+        # Better: iterate all chars in sector index, check if sector is orbital? 
+        # For now, let's grab all chars in index for this system that strictly aren't in ring index
+        
+        # Helper: Get all chars in this system from main list to be sure
+        for c in all_active_chars:
+            loc = get_prop(c, "location", {})
+            if get_prop(loc, "system_id") == system_id:
+                # Exclude if in hydration list of space chars
+                cid = get_prop(c, "id")
+                if not any(get_prop(sc, "id") == cid for sc in space_chars):
+                     if cid not in assigned_chars:
+                         ground_chars.append(c)
+
+        if ground_chars:
+            for c in ground_chars:
+                render_character_listing_compact(c, player_id)
+        else:
+            st.caption("Ninguno.")
+
+        # Create Unit Button Area (Ground)
+        # We need a valid sector. Pick the first one from chars or default base
+        if ground_chars:
+            target_sector = get_prop(get_prop(ground_chars[0], "location"), "sector_id")
+            if target_sector:
+                loc_data_ground = {"system_id": system_id, "sector_id": target_sector}
+                render_create_unit_area(player_id, loc_data_ground, ground_chars, avail_global_troops, is_orbit=False)
+
+# Alias for compatibility
 def render_faction_roster():
-    """Alias para compatibilidad con código existente."""
     render_comando_page()

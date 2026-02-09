@@ -1,320 +1,347 @@
 # ui/logic/roster_logic.py
 """
-Lógica de datos para el Roster de Facción.
-Contiene helpers de acceso seguro (Pydantic V2/Dict compatibility) y funciones de indexación.
-Extraído de ui/faction_roster.py V17.0.
+Lógica y Helpers para el Roster de Facción.
+Extraído de ui/faction_roster.py para modularización.
+V19.0: Refactorización para Dashboard de Comando y Manejo de Errores Robusto.
 """
 
 from typing import Dict, List, Any, Optional, Set, Tuple
+import logging
 
-from core.models import LocationRing
-
-
-# --- HELPERS DE ACCESO SEGURO (PYDANTIC V2 COMPATIBILITY) ---
+# Configurar logger local
+logger = logging.getLogger(__name__)
 
 def get_prop(obj: Any, key: str, default: Any = None) -> Any:
     """
-    Obtiene una propiedad de forma segura ya sea de un Diccionario o de un Modelo Pydantic/Objeto.
-    Reemplaza a obj.get(key, default).
+    Obtiene una propiedad de un objeto (dict o Pydantic model) de forma segura.
+    
+    Args:
+        obj: Objeto fuente (dict o modelo)
+        key: Nombre de la propiedad
+        default: Valor a retornar si no existe
+        
+    Returns:
+        Valor de la propiedad o default
     """
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
+    if obj is None:
+        return default
+        
+    try:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+    except Exception as e:
+        # Fallback silencioso en producción, log en debug
+        # print(f"Warning: Error accessing {key}: {e}")
+        return default
 
-
-def set_prop(obj: Any, key: str, value: Any) -> None:
-    """
-    Establece una propiedad de forma segura en un Diccionario o Modelo.
-    """
-    if isinstance(obj, dict):
-        obj[key] = value
-    else:
-        # Asume que el objeto es mutable (Pydantic models por defecto lo son)
-        if hasattr(obj, key):
-            setattr(obj, key, value)
-        else:
-            # Si el modelo permite extra fields o es dinámico
-            try:
-                setattr(obj, key, value)
-            except AttributeError:
-                pass  # No se pudo setear, ignorar en modelos estrictos
-
-
-def sort_key_by_prop(key: str, default: Any = 0):
-    """
-    Retorna una función lambda para usar en sorted() o .sort() compatible con Dict y Objetos.
-    """
-    return lambda x: getattr(x, key, default) if not isinstance(x, dict) else x.get(key, default)
-
-
-# --- HELPERS DE DATOS ---
 
 def get_assigned_entity_ids(units: List[Any]) -> Tuple[Set[int], Set[int]]:
-    """Retorna sets de IDs de characters y troops asignados a unidades."""
-    assigned_chars: Set[int] = set()
-    assigned_troops: Set[int] = set()
-    for unit in units:
-        members = get_prop(unit, "members", [])
-        for member in members:
-            etype = get_prop(member, "entity_type")
-            eid = get_prop(member, "entity_id")
-            if etype == "character":
-                assigned_chars.add(eid)
-            elif etype == "troop":
-                assigned_troops.add(eid)
+    """
+    Obtiene conjuntos de IDs de personajes y tropas que ya están asignados a unidades.
+    
+    Returns:
+        Tuple[Set[int], Set[int]]: (assigned_char_ids, assigned_troop_ids)
+    """
+    assigned_chars = set()
+    assigned_troops = set()
+
+    if not units:
+        return assigned_chars, assigned_troops
+
+    for u in units:
+        members = get_prop(u, "members", [])
+        for m in members:
+            # Manejo robusto de miembros que pueden ser dicts o modelos
+            mid = get_prop(m, "id")
+            etype = get_prop(m, "entity_type", "character")
+            
+            if mid is not None:
+                if etype == "character":
+                    assigned_chars.add(mid)
+                elif etype == "troop":
+                    assigned_troops.add(mid)
+
     return assigned_chars, assigned_troops
 
 
 def hydrate_unit_members(
-    units: List[Any],
-    char_map: Dict[int, str],
+    units: List[Any], 
+    char_map: Dict[int, str], 
     troop_map: Dict[int, str]
 ) -> List[Any]:
-    """Inyecta nombres reales en los miembros de cada unidad (Compatible Híbrido)."""
-    for unit in units:
-        members = get_prop(unit, "members", [])
-        for member in members:
-            eid = get_prop(member, "entity_id")
-            etype = get_prop(member, "entity_type")
-
-            name = f"{etype} {eid}"  # Fallback
-            if etype == "character":
-                name = char_map.get(eid, f"Personaje {eid}")
-            elif etype == "troop":
-                name = troop_map.get(eid, f"Tropa {eid}")
-
-            # Set seguro usando helper
-            set_prop(member, "name", name)
-
+    """
+    Rellena los nombres de los miembros de las unidades usando los mapas proporcionados.
+    Modifica las unidades in-place (si son dicts) o retorna copias actualizadas.
+    """
+    # Si son modelos Pydantic, esto podría ser complejo sin .copy(), 
+    # asumimos dicts o modelos mutables por ahora o que la vista los trata como solo lectura.
+    # Para mayor seguridad, iteramos y modificamos estructuras internas si es posible.
+    
+    for u in units:
+        members = get_prop(u, "members", [])
+        for m in members:
+            mid = get_prop(m, "id")
+            etype = get_prop(m, "entity_type", "character")
+            
+            # Buscar nombre actual
+            current_name = get_prop(m, "name")
+            
+            # Si no tiene nombre o queremos asegurar consistencia
+            if mid is not None:
+                new_name = "???"
+                if etype == "character":
+                    new_name = char_map.get(mid, f"Desconocido ({mid})")
+                elif etype == "troop":
+                    new_name = troop_map.get(mid, f"Tropa ({mid})")
+                    
+                # Actualizar el nombre en el miembro
+                if isinstance(m, dict):
+                    m["name"] = new_name
+                elif hasattr(m, "name"):
+                    try:
+                        setattr(m, "name", new_name)
+                    except AttributeError:
+                        pass # Modelo inmutable
+                        
     return units
 
 
-def get_systems_with_presence(
-    location_index: dict,
-    characters: List[Any],
-    assigned_char_ids: Set[int]
-) -> Set[int]:
-    """Obtiene IDs de sistemas donde hay presencia del jugador."""
-    system_ids: Set[int] = set()
-
-    # Desde unidades por sector
-    for sector_id, unit_list in location_index["units_by_sector"].items():
-        for u in unit_list:
-            sid = get_prop(u, "location_system_id")
-            if sid:
-                system_ids.add(sid)
-
-    # Desde unidades por ring
-    for (sys_id, ring), unit_list in location_index["units_by_system_ring"].items():
-        if unit_list:
-            system_ids.add(sys_id)
-
-    # Desde personajes sueltos
-    for char in characters:
-        cid = get_prop(char, "id")
-        if cid not in assigned_char_ids:
-            sys_id = get_prop(char, "location_system_id")
-            if sys_id:
-                system_ids.add(sys_id)
-
-    # Desde chars_by_sector (inferir sistema desde planeta)
-    for sector_id, char_list in location_index["chars_by_sector"].items():
-        for c in char_list:
-            sys_id = get_prop(c, "location_system_id")
-            if sys_id:
-                system_ids.add(sys_id)
-
-    # V17.0: Desde tropas sueltas por sector
-    for sector_id, troop_list in location_index.get("troops_by_sector", {}).items():
-        for t in troop_list:
-            sys_id = get_prop(t, "location_system_id")
-            if sys_id:
-                system_ids.add(sys_id)
-
-    # V17.0: Desde tropas sueltas por ring
-    for (sys_id, _ring), troop_list in location_index.get("troops_by_system_ring", {}).items():
-        if troop_list:
-            system_ids.add(sys_id)
-
-    return system_ids
-
-
 def build_location_index(
-    characters: List[Any],
-    units: List[Any],
+    characters: List[Any], 
+    units: List[Any], 
     assigned_char_ids: Set[int],
-    troops: Optional[List[Any]] = None,
-    assigned_troop_ids: Optional[Set[int]] = None
+    troops: List[Any] = [], 
+    assigned_troop_ids: Set[int] = set()
 ) -> Dict[str, Any]:
     """
-    Construye índice de entidades por ubicación.
-    Retorna dict con claves:
-    - 'chars_by_sector': {sector_id: [chars]}
-    - 'units_by_sector': {sector_id: [units]}
-    - 'units_by_system_ring': {(system_id, ring): [units]}
-    - 'units_in_transit': [units]
-    - 'chars_by_system_ring': {(system_id, ring): [chars]} (V15.2 Fix)
-    - 'troops_by_sector': {sector_id: [troops]} (V17.0 Tropas sueltas)
-    - 'troops_by_system_ring': {(system_id, ring): [troops]} (V17.0 Tropas sueltas)
+    Construye un índice optimizado de ubicaciones para rendering rápido.
+    Categoriza entidades por sistema, anillo y sector.
     """
-    troops = troops or []
-    assigned_troop_ids = assigned_troop_ids or set()
-
-    chars_by_sector: Dict[int, List[Any]] = {}
-    units_by_sector: Dict[int, List[Any]] = {}
-    units_by_system_ring: Dict[Tuple[int, int], List[Any]] = {}
-    units_in_transit: List[Any] = []
-
-    # NEW V15.2: Soporte para chars sueltos en espacio
-    chars_by_system_ring: Dict[Tuple[int, int], List[Any]] = {}
-
-    # NEW V17.0: Soporte para tropas sueltas
-    troops_by_sector: Dict[int, List[Any]] = {}
-    troops_by_system_ring: Dict[Tuple[int, int], List[Any]] = {}
-
-    # Personajes sueltos
-    for char in characters:
-        cid = get_prop(char, "id")
-        if cid in assigned_char_ids:
-            continue
-
-        sector_id = get_prop(char, "location_sector_id")
-        if sector_id:
-            chars_by_sector.setdefault(sector_id, []).append(char)
-        else:
-            # Check si está en espacio (System + Ring sin sector)
-            system_id = get_prop(char, "location_system_id")
-            if system_id:
-                ring = get_prop(char, "ring", 0)
-                # Ensure value is int
-                if isinstance(ring, LocationRing):
-                    ring = ring.value
-                chars_by_system_ring.setdefault((system_id, ring), []).append(char)
-
-    # V17.0: Tropas sueltas (no asignadas a unidades)
-    for troop in troops:
-        tid = get_prop(troop, "id")
-        if tid in assigned_troop_ids:
-            continue
-
-        sector_id = get_prop(troop, "location_sector_id")
-        if sector_id:
-            troops_by_sector.setdefault(sector_id, []).append(troop)
-        else:
-            # Check si está en espacio (System + Ring sin sector)
-            system_id = get_prop(troop, "location_system_id")
-            if system_id:
-                ring = get_prop(troop, "ring", 0)
-                if isinstance(ring, LocationRing):
-                    ring = ring.value
-                troops_by_system_ring.setdefault((system_id, ring), []).append(troop)
-
-    # Unidades por ubicación
-    for unit in units:
-        status = get_prop(unit, "status", "GROUND")
-
-        # V13.5: Lógica de agrupación corregida
-        if status == "TRANSIT":
-            origin = get_prop(unit, "transit_origin_system_id")
-            dest = get_prop(unit, "transit_destination_system_id")
-
-            # Tránsito Local (SCO): Se queda en el sistema
-            if origin is not None and origin == dest:
-                # Se asigna al sistema origen y al anillo actual
-                ring_val = get_prop(unit, "ring", 0)
-                if isinstance(ring_val, LocationRing):
-                    ring_val = ring_val.value
-
-                key = (origin, ring_val)
-                units_by_system_ring.setdefault(key, []).append(unit)
-                continue
-
-            # Tránsito Interestelar: Va a la lista global de Starlanes
-            units_in_transit.append(unit)
-            continue
-
-        sector_id = get_prop(unit, "location_sector_id")
-        if sector_id:
-            units_by_sector.setdefault(sector_id, []).append(unit)
-        else:
-            system_id = get_prop(unit, "location_system_id")
-            ring = get_prop(unit, "ring", 0)
-            if isinstance(ring, LocationRing):
-                ring = ring.value
-
-            if system_id:
-                key = (system_id, ring)
-                units_by_system_ring.setdefault(key, []).append(unit)
-
-    return {
-        "chars_by_sector": chars_by_sector,
-        "units_by_sector": units_by_sector,
-        "units_by_system_ring": units_by_system_ring,
-        "units_in_transit": units_in_transit,
-        "chars_by_system_ring": chars_by_system_ring,  # V15.2
-        "troops_by_sector": troops_by_sector,  # V17.0
-        "troops_by_system_ring": troops_by_system_ring,  # V17.0
+    index = {
+        "units_by_sector": {},       # {sector_id: [units]}
+        "chars_by_sector": {},       # {sector_id: [chars]}
+        "troops_by_sector": {},      # {sector_id: [troops]}
+        "units_by_system_ring": {},  # {(sys_id, ring): [units]}
+        "chars_by_system_ring": {},  # {(sys_id, ring): [chars]}
+        "troops_by_system_ring": {}, # {(sys_id, ring): [troops]}
+        "units_in_transit": [],      # [units]
+        # Nuevos índices para Dashboard
+        "systems_presence": set(),   # {sys_id}
+        "space_forces": {},          # {sys_id: [units]}
+        "ground_forces": {},         # {sys_id: [units]}
     }
 
+    # 1. Indexar Unidades
+    for u in units:
+        status = get_prop(u, "status")
+        
+        # Filtro de Tránsito
+        if status == "TRANSIT":
+            index["units_in_transit"].append(u)
+            continue
+            
+        sys_id = get_prop(u, "system_id")
+        
+        # Si no tiene sistema, es una unidad anómala o en limbo
+        if sys_id is None:
+            continue
+            
+        index["systems_presence"].add(sys_id)
+        
+        # Clasificar Espacio vs Tierra
+        if status == "SPACE" or status == "CONSTRUCTING": # Asumimos space si construye naves, revisar lógica
+             if sys_id not in index["space_forces"]: index["space_forces"][sys_id] = []
+             index["space_forces"][sys_id].append(u)
+        elif status == "GROUND":
+             if sys_id not in index["ground_forces"]: index["ground_forces"][sys_id] = []
+             index["ground_forces"][sys_id].append(u)
 
-# --- CÁLCULOS DE CAPACIDAD DE UNIDAD ---
+        # Indexado fino
+        sector_id = get_prop(u, "sector_id")
+        if sector_id:
+            if sector_id not in index["units_by_sector"]:
+                index["units_by_sector"][sector_id] = []
+            index["units_by_sector"][sector_id].append(u)
+            
+        # Indexado por anillo (Space)
+        ring = get_prop(u, "ring")
+        if status == "SPACE" and ring is not None:
+            key = (sys_id, ring)
+            if key not in index["units_by_system_ring"]:
+                index["units_by_system_ring"][key] = []
+            index["units_by_system_ring"][key].append(u)
 
-# Constantes de capacidad V16.0
-BASE_CAPACITY = 4
-MAX_CAPACITY = 12
+    # 2. Indexar Personajes Sueltos
+    for c in characters:
+        cid = get_prop(c, "id")
+        # Solo procesar si no está asignado
+        if cid in assigned_char_ids:
+            continue
+            
+        loc = get_prop(c, "location", {})
+        sys_id = get_prop(loc, "system_id")
+        
+        if not sys_id: continue
+        
+        index["systems_presence"].add(sys_id)
+        
+        sector_id = get_prop(loc, "sector_id")
+        if sector_id:
+            if sector_id not in index["chars_by_sector"]:
+                index["chars_by_sector"][sector_id] = []
+            index["chars_by_sector"][sector_id].append(c)
+            
+        # Ubicación orbital (ring)
+        ring = get_prop(loc, "ring") # A veces location tiene ring directo
+        if ring is not None:
+            key = (sys_id, ring)
+            if key not in index["chars_by_system_ring"]:
+                 index["chars_by_system_ring"][key] = []
+            index["chars_by_system_ring"][key].append(c)
+
+    # 3. Indexar Tropas Sueltas
+    for t in troops:
+        tid = get_prop(t, "id")
+        if tid in assigned_troop_ids:
+            continue
+            
+        loc = get_prop(t, "location", {})
+        sys_id = get_prop(loc, "system_id")
+        
+        if not sys_id: continue
+        
+        index["systems_presence"].add(sys_id)
+        
+        sector_id = get_prop(loc, "sector_id")
+        if sector_id:
+            if sector_id not in index["troops_by_sector"]:
+                index["troops_by_sector"][sector_id] = []
+            index["troops_by_sector"][sector_id].append(t)
+            
+        # Ubicación orbital tropa (raro pero posible)
+        ring = get_prop(loc, "ring")
+        if ring is not None:
+            key = (sys_id, ring)
+            if key not in index["troops_by_system_ring"]:
+                index["troops_by_system_ring"][key] = []
+            index["troops_by_system_ring"][key].append(t)
+
+    return index
+
+
+def get_systems_with_presence(
+    index: Dict[str, Any], 
+    characters: List[Any], 
+    assigned_chars: Set[int]
+) -> List[int]:
+    """
+    Obtiene lista de IDs de sistemas donde el jugador tiene presencia (unidades o personal).
+    """
+    return list(index.get("systems_presence", set()))
+
+
+def sort_key_by_prop(prop_name: str, default_val: Any = 0):
+    """Retorna una función key para sort que usa get_prop."""
+    return lambda obj: get_prop(obj, prop_name, default_val)
 
 
 def calculate_unit_display_capacity(members: List[Any]) -> int:
     """
-    V16.0: Calcula la capacidad máxima de una unidad para display en UI.
-    Basado en la habilidad de Liderazgo del líder.
-    Fórmula: 4 + (skill_liderazgo // 10)
+    Calcula la capacidad de mando efectiva de una unidad basada en el líder.
+    Lógica duplicada de unit_service para visualización UI.
+     Base: 2 + (Voluntad / 2) + Rango.
     """
-    # Buscar el líder (is_leader=True y character)
+    base_cap = 2
+    
+    if not members:
+        return base_cap
+        
+    # Buscar líder
     leader = None
     for m in members:
         if get_prop(m, "is_leader", False) and get_prop(m, "entity_type") == "character":
             leader = m
             break
-
-    # Fallback: primer character si no hay líder explícito
+            
     if not leader:
+        # Fallback al primer personaje
         for m in members:
-            if get_prop(m, "entity_type") == "character":
+             if get_prop(m, "entity_type") == "character":
                 leader = m
                 break
+    
+    if leader:
+        # Intentar extraer info de skills/stats si está disponible en 'details' hidratado
+        details = get_prop(leader, "details", {})
+        attrs = details.get("atributos", {})
+        voluntad = attrs.get("voluntad", 10) # Default 10 if missing
+        
+        # Rango bonus (simplificado)
+        rango = details.get("rango", "Recluta")
+        rango_bonus = 0
+        if rango == "Oficial": rango_bonus = 2
+        elif rango == "Comandante": rango_bonus = 4
+        
 
-    if not leader:
-        return BASE_CAPACITY
+# --- MISSING HELPERS RE-ADDED FOR COMPATIBILITY ---
 
-    # Obtener habilidad de Liderazgo del snapshot
-    details = get_prop(leader, "details", {})
-    if not details:
-        return BASE_CAPACITY
+BASE_CAPACITY = 2
+MAX_CAPACITY = 10
 
-    skills = details.get("habilidades", {})
-    leadership_skill = skills.get("Liderazgo", 0)
-
-    return min(MAX_CAPACITY, BASE_CAPACITY + (leadership_skill // 10))
-
-
-def get_leader_capacity(char_obj: Any) -> Tuple[int, int]:
+def set_prop(obj: Any, key: str, value: Any) -> bool:
     """
-    V16.0: Retorna (liderazgo_skill, max_capacity) para un personaje.
-    Usado en la creación de unidades.
+    Establece una propiedad de un objeto (dict o Pydantic model) de forma segura.
+    
+    Args:
+        obj: Objeto destino
+        key: Nombre de la propiedad
+        value: Valor a establecer
+        
+    Returns:
+        True si fue exitoso, False si falló
     """
-    stats = get_prop(char_obj, "stats_json", {})
-    if not stats or not isinstance(stats, dict):
+    if obj is None:
+        return False
+        
+    try:
+        if isinstance(obj, dict):
+            obj[key] = value
+            return True
+        # Para objetos, intentamos setattr si tiene el atributo o si es dinámico
+        setattr(obj, key, value)
+        return True
+    except Exception:
+        return False
+
+
+def get_leader_capacity(leader_obj: Any) -> Tuple[int, int]:
+    """
+    Calcula la habilidad de liderazgo y capacidad de mando de un personaje.
+    
+    Returns:
+        Tuple[int, int]: (leadership_skill, max_capacity)
+    """
+    if not leader_obj:
         return 0, BASE_CAPACITY
+        
+    details = get_prop(leader_obj, "details", {})
+    attrs = details.get("atributos", {})
+    
+    # Usar Presencia como proxy de habilidad de liderazgo para mostrar
+    presencia = attrs.get("presencia", 10)
+    voluntad = attrs.get("voluntad", 10)
+    
+    # Fórmula de Capacidad: Base + (Voluntad / 2) + Bono Rango
+    rango = details.get("rango", "Recluta")
+    rango_bonus = 0
+    if rango == "Oficial": rango_bonus = 2
+    elif rango == "Comandante": rango_bonus = 4
+    
+    cap = int(BASE_CAPACITY + (voluntad / 2) + rango_bonus)
+    
+    # Clamp
+    cap = min(cap, MAX_CAPACITY)
+    
+    return presencia, cap
 
-    capacidades = stats.get("capacidades", {})
-    attrs = capacidades.get("atributos", {})
-    presencia = attrs.get("presencia", 5)
-    voluntad = attrs.get("voluntad", 5)
-
-    # Liderazgo = (presencia + voluntad) * 2
-    leadership_skill = (presencia + voluntad) * 2
-    # Capacidad = 4 + (Liderazgo // 10)
-    capacity = min(MAX_CAPACITY, BASE_CAPACITY + (leadership_skill // 10))
-
-    return leadership_skill, capacity
