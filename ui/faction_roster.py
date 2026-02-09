@@ -158,7 +158,7 @@ def render_comando_page():
     # Render Unlocated Tab
     if has_unlocated:
         with tabs[current_tab_idx]:
-            _render_unlocated_tab(loc_index["unlocated"], player_id, all_troops, assigned_troops)
+            _render_unlocated_tab(loc_index["unlocated"], player_id, troops, assigned_troops)
         current_tab_idx += 1
         
     # Render System Tabs
