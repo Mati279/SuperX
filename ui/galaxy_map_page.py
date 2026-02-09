@@ -411,6 +411,15 @@ def show_galaxy_map_page():
         except: pass
         st.rerun()
 
+    if "enter_system_id" in st.query_params:
+        try:
+            e_id = int(st.query_params["enter_system_id"])
+            st.session_state.selected_system_id = e_id
+            st.session_state.map_view = "system"
+            del st.query_params["enter_system_id"]
+        except: pass
+        st.rerun()
+
     # Router de Vistas
     if st.session_state.map_view == "galaxy":
         _render_interactive_galaxy_map()
@@ -771,6 +780,31 @@ def _render_interactive_galaxy_map():
                     st.session_state.map_view = "system"
                     st.rerun()
 
+    # --- MODO DE VISUALIZACIÓN ---
+    map_layer = st.selectbox("Capa del mapa", ["Clase Estelar", "Político (Control)", "Seguridad (Ss)", "Económico (Pob)"], index=0)
+
+    # Fetch player info for political mode
+    player_info_map = {}
+    try:
+        players_res = get_supabase().table("players").select("id, nombre, faccion_nombre").execute()
+        if players_res and players_res.data:
+            for p in players_res.data:
+                player_info_map[p['id']] = {
+                    'name': p['nombre'],
+                    'faction': p['faccion_nombre'],
+                    'color': '#888888' # Default
+                }
+        
+        # Try to get faction colors
+        factions_res = get_supabase().table("factions").select("nombre, color_hex").execute()
+        if factions_res and factions_res.data:
+            faction_colors = {f['nombre']: f['color_hex'] for f in factions_res.data}
+            for pid, info in player_info_map.items():
+                if info['faction'] in faction_colors:
+                    info['color'] = faction_colors[info['faction']]
+    except:
+        pass
+
     systems_payload = []
     
     # Debug: Saber si estamos en modo omnisciencia (aunque aquí renderizamos todo)
@@ -791,16 +825,33 @@ def _render_interactive_galaxy_map():
         else:
             calculated_ss = sys.get('security', 0.0) or 0.0
         
+        # Determinar color según capa
+        ctl_id = sys.get('controlling_player_id')
+        ctl_info = player_info_map.get(ctl_id, {'name': 'Neutral', 'color': '#555555'})
+        
+        display_color = STAR_COLORS.get(star_class, "#FFFFFF")
+        if map_layer == "Político (Control)":
+            display_color = ctl_info['color']
+        elif map_layer == "Seguridad (Ss)":
+            display_color = "rgb(0, 255, 0)" if calculated_ss >= 70 else "rgb(255, 165, 0)" if calculated_ss >= 40 else "rgb(255, 0, 0)"
+        elif map_layer == "Económico (Pob)":
+            # Escala de azules según población
+            val = min(255, int(total_pop_real * 5))
+            display_color = f"rgb({50}, {100}, {val})"
+
         systems_payload.append({
             "id": sys['id'], 
             "name": sys.get('name', f"Sys {sys['id']}"),
             "class": star_class, 
             "x": round(x, 2), 
             "y": round(y, 2),
-            "color": STAR_COLORS.get(star_class, "#FFFFFF"), 
+            "color": display_color, 
+            "star_color": STAR_COLORS.get(star_class, "#FFFFFF"), # Siempre guardar el original para el glow
             "radius": round(base_radius, 2),
             "ss": round(calculated_ss, 1),
-            "pop": round(total_pop_real, 2)
+            "pop": round(total_pop_real, 2),
+            "controller": ctl_info['name'],
+            "is_home": sid == player_home_system_id
         })
 
     connections = _build_connections_from_starlanes(starlanes, scaled_positions) if show_routes and starlanes else _build_connections_fallback(systems, scaled_positions) if show_routes else []
@@ -810,90 +861,192 @@ def _render_interactive_galaxy_map():
     player_home_json = json.dumps([player_home_system_id] if player_home_system_id else [])
 
     html_template = f"""
-    <!DOCTYPE html><html><head><script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+    <!DOCTYPE html><html><head>
+    <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
     <style>
-        body{{margin:0;background:#000;overflow:hidden;font-family:'Courier New', monospace;}}
-        .map-frame{{width:100%;height:860px;border-radius:12px;background:radial-gradient(circle at 50% 35%,#0f1c2d,#070b12 75%);border:1px solid #1f2a3d;position:relative;}}
+        body{{margin:0;background:#030508;overflow:hidden;font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;}}
+        .map-frame{{
+            width:100%; height:860px; border-radius:12px; 
+            background: radial-gradient(circle at 50% 50%, #0d1b2e 0%, #050a14 100%);
+            border: 1px solid #1a2639; position:relative;
+            box-shadow: inset 0 0 100px rgba(0,0,0,0.8);
+        }}
         svg{{width:100%;height:100%;cursor:grab}}
-        .star{{cursor:pointer;transition:all 0.2s}}
-        .star:hover{{stroke:white;stroke-width:2px;filter:drop-shadow(0 0 8px rgba(255,255,255,0.8));}}
-        .star.player-home{{stroke:#4dff88;stroke-width:3px;animation:pulse 2s infinite}}
-        @keyframes pulse{{0%{{stroke-opacity:0.5}}50%{{stroke-opacity:1}}100%{{stroke-opacity:0.5}}}}
-        .route{{stroke:#5b7bff;stroke-opacity:0.2;stroke-width:1.5;pointer-events:none}}
+        .star{{cursor:pointer;transition:all 0.3s cubic-bezier(0.4, 0, 0.2, 1);}}
+        .star:hover{{ filter: url(#glow); stroke: white; stroke-width: 1px; }}
+        .star.selected{{ stroke: #fff; stroke-width: 2px; filter: drop-shadow(0 0 12px rgba(255,255,255,0.9)); }}
+        .star.player-home{{ stroke: #4dff88; stroke-width: 2px; animation: pulse-home 3s infinite; }}
+        
+        @keyframes pulse-home {{
+            0% {{ stroke-opacity: 0.4; stroke-width: 2px; }}
+            50% {{ stroke-opacity: 1; stroke-width: 4px; }}
+            100% {{ stroke-opacity: 0.4; stroke-width: 2px; }}
+        }}
+        
+        .route{{stroke: #3a5bbd; stroke-opacity: 0.15; stroke-width: 1; pointer-events:none; transition: stroke-opacity 0.3s;}}
+        .route.active{{stroke-opacity: 0.8; stroke-width: 2; stroke: #4dff88;}}
+        
         .ruler-line{{stroke:#ffff00;stroke-width:2px;stroke-dasharray:5,5;stroke-linecap:round;filter:drop-shadow(0 0 5px #ffff00);pointer-events:none;}}
+        
         #tooltip {{
             position: absolute;
-            background: rgba(10, 15, 20, 0.95);
-            border: 1px solid #4dff88;
-            color: #e0e0e0;
-            padding: 8px 12px;
-            border-radius: 4px;
-            font-size: 12px;
+            background: rgba(6, 11, 20, 0.92);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(77, 255, 136, 0.3);
+            color: #fff;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 13px;
             pointer-events: none;
             display: none;
             z-index: 1000;
-            box-shadow: 0 0 10px rgba(77, 255, 136, 0.2);
-            white-space: nowrap;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 15px rgba(77, 255, 136, 0.1);
+            min-width: 180px;
+            line-height: 1.5;
+        }}
+        .tt-header {{ font-weight: bold; font-size: 15px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 8px; padding-bottom: 4px; display: flex; justify-content: space-between; }}
+        .tt-label {{ color: #8a9eb5; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }}
+        .tt-value {{ color: #e0e6ed; font-family: 'Consolas', monospace; }}
+        .tt-sec-high {{ color: #4dff88; }}
+        .tt-sec-med {{ color: #ffcc00; }}
+        .tt-sec-low {{ color: #ff4d4d; }}
+        
+        .layer-hint {{
+            position: absolute; bottom: 20px; right: 20px; 
+            background: rgba(0,0,0,0.5); padding: 5px 12px; border-radius: 20px;
+            color: #8a9eb5; font-size: 11px; border: 1px solid rgba(255,255,255,0.1);
         }}
     </style>
     </head><body>
     <div class="map-frame">
         <div id="tooltip"></div>
+        <div class="layer-hint">Capa Activa: {map_layer}</div>
         <svg id="galaxy-map" viewBox="0 0 {canvas_width} {canvas_height}">
+            <defs>
+                <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+                    <feGaussianBlur stdDeviation="4" result="blur" />
+                    <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                </filter>
+                <radialGradient id="nebulaGradient" cx="50%" cy="50%" r="50%">
+                    <stop offset="0%" stop-color="#162436" stop-opacity="0.2" />
+                    <stop offset="100%" stop-color="#050a14" stop-opacity="0" />
+                </radialGradient>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#nebulaGradient)" />
             <g id="routes"></g>
             <g id="ruler-layer"></g>
             <g id="stars"></g>
         </svg>
     </div>
     <script>
-    const systems={systems_json},routes={connections_json},homes=new Set({player_home_json});
+    const systems={systems_json},routes={connections_json};
     const rulerData={ruler_data_json};
     const sLayer=document.getElementById("stars"),rLayer=document.getElementById("routes"),ruleLayer=document.getElementById("ruler-layer");
     const tooltip=document.getElementById("tooltip");
+    const previewId = {st.session_state.preview_system_id or 'null'};
 
     // Render Routes
-    routes.forEach(r=>{{const l=document.createElementNS("http://www.w3.org/2000/svg","line");l.setAttribute("x1",r.ax);l.setAttribute("y1",r.ay);l.setAttribute("x2",r.bx);l.setAttribute("y2",r.by);l.classList.add("route");rLayer.appendChild(l)}});
+    routes.forEach(r=>{{
+        const l=document.createElementNS("http://www.w3.org/2000/svg","line");
+        l.setAttribute("x1",r.ax);l.setAttribute("y1",r.ay);l.setAttribute("x2",r.bx);l.setAttribute("y2",r.by);
+        l.classList.add("route");
+        l.dataset.a = r.a_id; l.dataset.b = r.b_id;
+        rLayer.appendChild(l);
+    }});
     
     // Render Ruler (if active)
     if (rulerData.active) {{
         const l = document.createElementNS("http://www.w3.org/2000/svg","line");
-        l.setAttribute("x1", rulerData.x1);
-        l.setAttribute("y1", rulerData.y1);
-        l.setAttribute("x2", rulerData.x2);
-        l.setAttribute("y2", rulerData.y2);
+        l.setAttribute("x1", rulerData.x1); l.setAttribute("y1", rulerData.y1);
+        l.setAttribute("x2", rulerData.x2); l.setAttribute("y2", rulerData.y2);
         l.classList.add("ruler-line");
         ruleLayer.appendChild(l);
     }}
 
     // Render Stars
     systems.forEach(s=>{{
+        const g = document.createElementNS("http://www.w3.org/2000/svg","g");
+        
+        // Custom Glow per star class
+        if (s.star_color && "{map_layer}" === "Clase Estelar") {{
+            const filter = document.createElementNS("http://www.w3.org/2000/svg","circle");
+            filter.setAttribute("cx",s.x); filter.setAttribute("cy",s.y); filter.setAttribute("r",s.radius * 2.5);
+            filter.setAttribute("fill", s.star_color); filter.setAttribute("fill-opacity", "0.15");
+            filter.style.pointerEvents = "none";
+            g.appendChild(filter);
+        }}
+
         const c=document.createElementNS("http://www.w3.org/2000/svg","circle");
         c.setAttribute("cx",s.x);c.setAttribute("cy",s.y);c.setAttribute("r",s.radius);c.setAttribute("fill",s.color);
         c.classList.add("star");
-        if(homes.has(s.id))c.classList.add("player-home");
+        if(s.is_home) c.classList.add("player-home");
+        if(s.id === previewId) c.classList.add("selected");
         
-        c.onclick=()=>{{const u=new URL(window.parent.location.href);u.searchParams.set("preview_id",s.id);window.parent.location.href=u.toString()}};
+        // Single Click -> Select
+        c.onclick=(e)=>{{
+            e.stopPropagation();
+            const u=new URL(window.parent.location.href);
+            u.searchParams.set("preview_id",s.id);
+            window.parent.location.href=u.toString();
+        }};
+        
+        // Double Click -> Enter
+        c.ondblclick=(e)=>{{
+            e.stopPropagation();
+            // We use a custom query param to tell streamlit to enter
+            const u=new URL(window.parent.location.href);
+            u.searchParams.set("enter_system_id", s.id);
+            window.parent.location.href=u.toString();
+        }};
         
         c.onmouseenter = () => {{
             tooltip.style.display = 'block';
-            tooltip.innerHTML = `<strong>${{s.name}}</strong> (Clase ${{s.class}})<br>` +
-                                `<span style="color:#aaa">Población:</span> ${{s.pop}}B<br>` +
-                                `<span style="color:#aaa">Seguridad (Ss):</span> ${{s.ss}}`;
+            const secClass = s.ss >= 70 ? 'tt-sec-high' : (s.ss >= 40 ? 'tt-sec-med' : 'tt-sec-low');
+            
+            tooltip.innerHTML = `
+                <div class="tt-header">
+                    <span>${{s.name}}</span>
+                    <span style="font-size:10px; color:#8a9eb5">CLASS ${{s.class}}</span>
+                </div>
+                <div><span class="tt-label">Control:</span> <span class="tt-value">${{s.controller}}</span></div>
+                <div><span class="tt-label">Seguridad:</span> <span class="tt-value ${{secClass}}">${{s.ss}}/100</span></div>
+                <div><span class="tt-label">Población:</span> <span class="tt-value">${{s.pop.toLocaleString()}}B</span></div>
+                <div style="margin-top:8px; font-size:10px; color:#4dff88; text-align:center; border-top: 1px solid rgba(255,255,255,0.05); padding-top:4px;">
+                    Doble clic para entrar
+                </div>
+            `;
+            
+            // Highlight connections
+            document.querySelectorAll(".route").forEach(r => {{
+                if(r.dataset.a == s.id || r.dataset.b == s.id) r.classList.add("active");
+            }});
         }};
         
         c.onmousemove = (e) => {{
-            tooltip.style.left = (e.clientX + 15) + 'px';
-            tooltip.style.top = (e.clientY + 15) + 'px';
+            const x = e.clientX + 15;
+            const y = e.clientY + 15;
+            // Bound checking for tooltip
+            const ttRect = tooltip.getBoundingClientRect();
+            const finalX = (x + ttRect.width > window.innerWidth) ? x - ttRect.width - 30 : x;
+            const finalY = (y + ttRect.height > window.innerHeight) ? y - ttRect.height - 30 : y;
+            
+            tooltip.style.left = finalX + 'px';
+            tooltip.style.top = finalY + 'px';
         }};
         
         c.onmouseleave = () => {{
             tooltip.style.display = 'none';
+            document.querySelectorAll(".route").forEach(r => r.classList.remove("active"));
         }};
 
-        sLayer.appendChild(c)
+        sLayer.appendChild(g);
+        g.appendChild(c);
     }});
     
-    const panZoom = svgPanZoom("#galaxy-map",{{zoomEnabled:true,controlIconsEnabled:false,fit:true,center:true,minZoom:0.5,maxZoom:10}});
+    const panZoom = svgPanZoom("#galaxy-map",{{
+        zoomEnabled:true, controlIconsEnabled:false, fit:true, center:true, 
+        minZoom:0.5, maxZoom:15, zoomScaleSensitivity: 0.4
+    }});
     </script></body></html>
     """
     with col_map:
